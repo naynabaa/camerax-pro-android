@@ -1,56 +1,23 @@
-name: Build Android APK
-
-on:
-  push:
-    branches: [ "main", "master" ]
-  pull_request:
-    branches: [ "main", "master" ]
-  workflow_dispatch:
-
-jobs:
-  build:
-    name: Build & Package Debug APK
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      # Step 1: Install JDK 17
       - name: Set up JDK 17 (Temurin)
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
 
-      # Step 2: Set up Android SDK environment
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      # Step 3: Accept licenses & install API 34 platform + build-tools
-      - name: Install Android Platform 34 & Build-Tools
+      - name: Install Android SDK packages
+        shell: bash
         run: |
-          yes | sdkmanager --licenses || true
-          sdkmanager --install "platforms;android-34" "build-tools;34.0.0" "platform-tools"
+          export ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}"
+          export PATH="${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin:${ANDROID_SDK_ROOT}/platform-tools:${PATH}"
 
-      # Step 4: Ensure gradlew is executable
+          yes | sdkmanager --licenses || true
+          sdkmanager --install "cmdline-tools;latest" "platforms;android-34" "build-tools;34.0.0" "platform-tools"
+
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew || true
 
-      # Step 5: Compile the APK
       - name: Build Debug APK with Gradle
         run: ./gradlew assembleDebug --no-daemon --stacktrace
-
-      # Step 6: Verify app-debug.apk exists
-      - name: Verify APK was generated
-        run: |
-          ls -la app/build/outputs/apk/debug/
-          test -f app/build/outputs/apk/debug/app-debug.apk
-
-      # Step 7: Upload the APK as a downloadable Artifact
-      - name: Upload APK Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: app-debug.apk
-          path: app/build/outputs/apk/debug/app-debug.apk
-          retention-days: 14
