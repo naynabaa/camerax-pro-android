@@ -1,0 +1,3 @@
+# CameraX Pro Android App
+
+Initializing project repository...
