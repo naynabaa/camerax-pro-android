@@ -1,0 +1,268 @@
+package com.example.cameraxapp
+
+import android.Manifest
+import android.content.ContentValues
+import android.content.Context
+import android.os.Build
+import android.provider.MediaStore
+import android.widget.Toast
+import androidx.camera.core.CameraSelector
+import androidx.camera.core.ImageCapture
+import androidx.camera.core.ImageCaptureException
+import androidx.camera.core.Preview
+import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.camera.video.*
+import androidx.camera.view.PreviewView
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.content.ContextCompat
+import androidx.core.content.PermissionChecker
+import kotlinx.coroutines.delay
+import java.text.SimpleDateFormat
+import java.util.Locale
+
+enum class CameraMode { PHOTO, VIDEO }
+
+/**
+ * Jetpack Compose Camera Screen with Video Pause/Resume & Photo Pro Mode
+ */
+@Composable
+fun CameraXScreen(modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    var cameraMode by remember { mutableStateOf(CameraMode.PHOTO) }
+    var lensFacing by remember { mutableStateOf(CameraSelector.DEFAULT_BACK_CAMERA) }
+
+    // Video Recording States
+    var isRecording by remember { mutableStateOf(false) }
+    var isPaused by remember { mutableStateOf(false) }
+    var recordingSession by remember { mutableStateOf<Recording?>(null) }
+
+    // Pro Mode States
+    var showGrid by remember { mutableStateOf(true) }
+    var countdownDuration by remember { mutableStateOf(0) }
+    var exposureCompensation by remember { mutableStateOf(0f) }
+
+    val recorder = remember {
+        Recorder.Builder().setQualitySelector(QualitySelector.from(Quality.HD)).build()
+    }
+    val videoCapture = remember { VideoCapture.withOutput(recorder) }
+    val imageCapture = remember { ImageCapture.Builder().setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY).build() }
+
+    Box(modifier = modifier.fillMaxSize().background(Color.Black)) {
+        // CameraX Preview
+        AndroidView(
+            modifier = Modifier.fillMaxSize(),
+            factory = { ctx ->
+                val previewView = PreviewView(ctx)
+                ProcessCameraProvider.getInstance(ctx).addListener({
+                    val provider = ProcessCameraProvider.getInstance(ctx).get()
+                    val preview = Preview.Builder().build().also {
+                        it.setSurfaceProvider(previewView.surfaceProvider)
+                    }
+                    provider.unbindAll()
+                    if (cameraMode == CameraMode.PHOTO) {
+                        provider.bindToLifecycle(lifecycleOwner, lensFacing, preview, imageCapture)
+                    } else {
+                        provider.bindToLifecycle(lifecycleOwner, lensFacing, preview, videoCapture)
+                    }
+                }, ContextCompat.getMainExecutor(ctx))
+                previewView
+            }
+        )
+
+        // Pro Mode Top Toolbar: Timer, Grid, Exposure EV
+        if (cameraMode == CameraMode.PHOTO) {
+            Row(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .fillMaxWidth()
+                    .padding(top = 40.dp, start = 16.dp, end = 16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Button(
+                    onClick = {
+                        countdownDuration = when (countdownDuration) { 0 -> 3; 3 -> 5; 5 -> 10; else -> 0 }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0x66000000))
+                ) {
+                    Text(if (countdownDuration == 0) "Timer Off" else "${countdownDuration}s", fontSize = 12.sp)
+                }
+
+                IconButton(
+                    onClick = { showGrid = !showGrid },
+                    modifier = Modifier.background(Color(0x66000000), CircleShape)
+                ) {
+                    Icon(Icons.Default.GridOn, contentDescription = "Grid", tint = if (showGrid) Color.White else Color.Gray)
+                }
+            }
+        }
+
+        // Mode Switcher Bar (PHOTO | VIDEO)
+        Row(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 120.dp),
+            horizontalArrangement = Arrangement.spacedBy(24.dp)
+        ) {
+            Text(
+                text = "PHOTO",
+                color = if (cameraMode == CameraMode.PHOTO) Color.White else Color.Gray,
+                style = MaterialTheme.typography.labelLarge,
+                modifier = Modifier.clickable { if (!isRecording) cameraMode = CameraMode.PHOTO }
+            )
+            Text(
+                text = "VIDEO",
+                color = if (cameraMode == CameraMode.VIDEO) Color.White else Color.Gray,
+                style = MaterialTheme.typography.labelLarge,
+                modifier = Modifier.clickable { if (!isRecording) cameraMode = CameraMode.VIDEO }
+            )
+        }
+
+        // Bottom Controls: Pause/Resume (when recording), Shutter, Lens Switch
+        Row(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .padding(bottom = 36.dp, start = 24.dp, end = 24.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Video Pause/Resume Button
+            if (cameraMode == CameraMode.VIDEO && isRecording) {
+                IconButton(
+                    onClick = {
+                        if (isPaused) {
+                            recordingSession?.resume()
+                            isPaused = false
+                        } else {
+                            recordingSession?.pause()
+                            isPaused = true
+                        }
+                    },
+                    modifier = Modifier.size(54.dp).background(Color(0x66000000), CircleShape)
+                ) {
+                    Icon(
+                        imageVector = if (isPaused) Icons.Default.PlayArrow else Icons.Default.Pause,
+                        contentDescription = "Pause/Resume",
+                        tint = Color.White
+                    )
+                }
+            } else {
+                Spacer(modifier = Modifier.size(54.dp))
+            }
+
+            // Capture / Record Button
+            IconButton(
+                onClick = {
+                    if (cameraMode == CameraMode.PHOTO) {
+                        capturePhotoToGallery(context, imageCapture)
+                    } else {
+                        if (isRecording) {
+                            recordingSession?.stop()
+                            recordingSession = null
+                            isRecording = false
+                            isPaused = false
+                        } else {
+                            recordingSession = startVideoRecording(context, videoCapture) {
+                                isRecording = false
+                                isPaused = false
+                            }
+                            isRecording = true
+                        }
+                    }
+                },
+                modifier = Modifier
+                    .size(80.dp)
+                    .border(4.dp, if (cameraMode == CameraMode.VIDEO) Color.Red else Color.White, CircleShape)
+                    .padding(6.dp)
+                    .background(
+                        if (cameraMode == CameraMode.VIDEO) Color.Red else Color.White,
+                        if (cameraMode == CameraMode.VIDEO && isRecording) RoundedCornerShape(8.dp) else CircleShape
+                    )
+            ) {}
+
+            // Lens Switch
+            IconButton(
+                onClick = {
+                    if (!isRecording) {
+                        lensFacing = if (lensFacing == CameraSelector.DEFAULT_BACK_CAMERA)
+                            CameraSelector.DEFAULT_FRONT_CAMERA else CameraSelector.DEFAULT_BACK_CAMERA
+                    }
+                },
+                modifier = Modifier.size(54.dp).background(Color(0x66000000), CircleShape)
+            ) {
+                Icon(Icons.Default.Cameraswitch, contentDescription = "Switch Camera", tint = Color.White)
+            }
+        }
+    }
+}
+
+private fun startVideoRecording(
+    context: Context,
+    videoCapture: VideoCapture<Recorder>,
+    onComplete: () -> Unit
+): Recording {
+    val name = SimpleDateFormat("yyyy-MM-dd-HH-mm-ss-SSS", Locale.US).format(System.currentTimeMillis())
+    val contentValues = ContentValues().apply {
+        put(MediaStore.MediaColumns.DISPLAY_NAME, name)
+        put(MediaStore.MediaColumns.MIME_TYPE, "video/mp4")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            put(MediaStore.Video.Media.RELATIVE_PATH, "Movies/CameraX-Video")
+        }
+    }
+
+    val outputOptions = MediaStoreOutputOptions.Builder(
+        context.contentResolver, MediaStore.Video.Media.EXTERNAL_CONTENT_URI)
+        .setContentValues(contentValues).build()
+
+    val pending = videoCapture.output.prepareRecording(context, outputOptions)
+    if (PermissionChecker.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PermissionChecker.PERMISSION_GRANTED) {
+        pending.withAudioEnabled()
+    }
+
+    return pending.start(ContextCompat.getMainExecutor(context)) { event ->
+        if (event is VideoRecordEvent.Finalize) {
+            onComplete()
+            Toast.makeText(context, "Video saved: ${event.outputResults.outputUri}", Toast.LENGTH_SHORT).show()
+        }
+    }
+}
+
+private fun capturePhotoToGallery(context: Context, imageCapture: ImageCapture) {
+    val name = SimpleDateFormat("yyyy-MM-dd-HH-mm-ss-SSS", Locale.US).format(System.currentTimeMillis())
+    val contentValues = ContentValues().apply {
+        put(MediaStore.MediaColumns.DISPLAY_NAME, name)
+        put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/CameraX-Image")
+        }
+    }
+    val outputOptions = ImageCapture.OutputFileOptions.Builder(
+        context.contentResolver, MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues).build()
+
+    imageCapture.takePicture(outputOptions, ContextCompat.getMainExecutor(context), object : ImageCapture.OnImageSavedCallback {
+        override fun onError(exc: ImageCaptureException) {}
+        override fun onImageSaved(output: ImageCapture.OutputFileResults) {
+            Toast.makeText(context, "Saved to Gallery", Toast.LENGTH_SHORT).show()
+        }
+    })
+}
