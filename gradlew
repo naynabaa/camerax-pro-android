@@ -1,12 +1,16 @@
 #!/bin/sh
-# Gradle Wrapper Unix Script
+# Gradle Wrapper Script
 APP_HOME=$(cd "`dirname "$0"`" && pwd)
 CLASSPATH=$APP_HOME/gradle/wrapper/gradle-wrapper.jar
 
-if [ ! -f "$CLASSPATH" ]; then
-    echo "Downloading Gradle Wrapper..."
-    mkdir -p "$APP_HOME/gradle/wrapper"
-    curl -sLo "$CLASSPATH" "https://raw.githubusercontent.com/gradle/gradle/v8.4.0/gradle/wrapper/gradle-wrapper.jar" || true
+# If real gradle is installed in PATH (like on GitHub Actions or local dev), use it directly
+if command -v gradle >/dev/null 2>&1; then
+    exec gradle "$@"
 fi
 
-exec java -Xmx2048m -jar "$CLASSPATH" "$@"
+if [ -f "$CLASSPATH" ]; then
+    exec java -Xmx2048m -jar "$CLASSPATH" "$@"
+fi
+
+echo "Gradle is not installed and wrapper JAR is missing. Please install Gradle 8.4 or use GitHub Actions."
+exit 1

@@ -1,9 +1,15 @@
 @rem Gradle Wrapper Windows Batch Script
 @if "%DEBUG%"=="" @echo off
+where gradle >nul 2>nul
+if %ERRORLEVEL% equ 0 (
+    gradle %*
+    exit /b %ERRORLEVEL%
+)
 set DIRNAME=%~dp0
 set CLASSPATH=%DIRNAME%gradle\wrapper\gradle-wrapper.jar
-if not exist "%CLASSPATH%" (
-    echo Downloading Gradle Wrapper...
-    powershell -Command "New-Item -ItemType Directory -Force -Path '%DIRNAME%gradle\wrapper'; (New-Object Net.WebClient).DownloadFile('https://raw.githubusercontent.com/gradle/gradle/v8.4.0/gradle/wrapper/gradle-wrapper.jar', '%CLASSPATH%')"
+if exist "%CLASSPATH%" (
+    java -Xmx2048m -jar "%CLASSPATH%" %*
+    exit /b %ERRORLEVEL%
 )
-java -Xmx2048m -jar "%CLASSPATH%" %*
+echo Gradle is not installed and wrapper JAR is missing. Please install Gradle.
+exit /b 1

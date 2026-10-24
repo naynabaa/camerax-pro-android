@@ -40,10 +40,7 @@ android {
 
 dependencies {
     // CameraX Stable Release Dependencies
-    // Note: camera-effects was published at 1.3.0 and 1.4.x on Google Maven;
-    // version 1.3.4 was omitted for camera-effects, so it resolves to 1.3.0 if 1.3.4 is selected.
     val cameraxVersion = "1.3.0"
-    val cameraxEffectsVersion = if (cameraxVersion == "1.3.4") "1.3.0" else cameraxVersion
 
     implementation("androidx.camera:camera-core:$cameraxVersion")
     implementation("androidx.camera:camera-camera2:$cameraxVersion")
@@ -51,7 +48,6 @@ dependencies {
     implementation("androidx.camera:camera-video:$cameraxVersion")
     implementation("androidx.camera:camera-view:$cameraxVersion")
     implementation("androidx.camera:camera-extensions:$cameraxVersion")
-    implementation("androidx.camera:camera-effects:$cameraxEffectsVersion")
 
     // GPUImage & OpenGL Shader Pipeline
     implementation("jp.co.cyberagent.android:gpuimage:2.1.0")
