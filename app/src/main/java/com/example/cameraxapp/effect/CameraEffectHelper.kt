@@ -7,6 +7,7 @@ import android.graphics.Paint
 import android.graphics.RectF
 import android.util.Log
 import androidx.camera.core.CameraEffect
+import androidx.camera.core.UseCaseGroup
 import androidx.core.util.Consumer
 import java.util.concurrent.Executor
 import java.text.SimpleDateFormat
