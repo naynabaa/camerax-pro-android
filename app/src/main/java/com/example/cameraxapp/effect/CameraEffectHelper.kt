@@ -7,7 +7,7 @@ import android.graphics.Paint
 import android.graphics.RectF
 import android.util.Log
 import androidx.camera.core.CameraEffect
-import androidx.camera.core.UseCaseGroup
+import androidx.core.util.Consumer
 import java.util.concurrent.Executor
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -34,22 +34,22 @@ class CameraEffectHelper(private val context: Context) {
         executor: Executor,
         config: WatermarkConfig = WatermarkConfig()
     ): CameraEffect {
-        // CameraEffect handles real-time post-processing across Preview and VideoCapture
-        return CameraEffect(
+        val processor = object : androidx.camera.core.SurfaceProcessor {
+            override fun onInputSurface(surfaceRequest: androidx.camera.core.SurfaceRequest) {
+                Log.d("CameraEffectHelper", "Custom effect input surface attached")
+            }
+            override fun onOutputSurface(surfaceOutput: androidx.camera.core.SurfaceOutput) {
+                Log.d("CameraEffectHelper", "Custom effect output surface attached")
+            }
+        }
+        return object : CameraEffect(
             CameraEffect.PREVIEW or CameraEffect.VIDEO_CAPTURE,
             executor,
-            androidx.camera.core.ProcessingException.javaClass.cast(null) ?: run {
-                // Return SurfaceProcessor instance
-                object : androidx.camera.core.SurfaceProcessor {
-                    override fun onInputSurface(surfaceRequest: androidx.camera.core.SurfaceRequest) {
-                        Log.d("CameraEffectHelper", "Custom effect input surface attached")
-                    }
-                    override fun onOutputSurface(surfaceOutput: androidx.camera.core.SurfaceOutput) {
-                        Log.d("CameraEffectHelper", "Custom effect output surface attached")
-                    }
-                }
+            processor,
+            Consumer { error: Throwable ->
+                Log.e("CameraEffectHelper", "Effect error: ${error.message}", error)
             }
-        )
+        ) {}
     }
 
     /**

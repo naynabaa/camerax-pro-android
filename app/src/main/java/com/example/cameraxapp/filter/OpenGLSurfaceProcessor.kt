@@ -9,10 +9,10 @@ import android.os.HandlerThread
 import android.util.Log
 import android.view.Surface
 import androidx.camera.core.CameraEffect
-import androidx.camera.core.ProcessingException
 import androidx.camera.core.SurfaceOutput
 import androidx.camera.core.SurfaceProcessor
 import androidx.camera.core.SurfaceRequest
+import androidx.core.util.Consumer
 import java.util.concurrent.Executor
 
 /**
@@ -81,13 +81,14 @@ class OpenGLSurfaceProcessor : SurfaceProcessor {
          * Creates a CameraEffect configuring this SurfaceProcessor for Preview and VideoCapture
          */
         fun createCameraEffect(processor: OpenGLSurfaceProcessor, executor: Executor): CameraEffect {
-            return CameraEffect(
+            return object : CameraEffect(
                 CameraEffect.PREVIEW or CameraEffect.VIDEO_CAPTURE,
                 executor,
-                processor
-            ) { error: ProcessingException ->
-                Log.e(TAG, "CameraEffect processing error: ${error.message}", error)
-            }
+                processor,
+                Consumer { error: Throwable ->
+                    Log.e(TAG, "CameraEffect processing error: ${error.message}", error)
+                }
+            ) {}
         }
     }
 }

@@ -19,8 +19,7 @@
         app:layout_constraintEnd_toEndOf="parent" />
 
     <!-- MediaPipe Real-Time AR Face Mesh & Lens Overlay View -->
-    <view
-        class="com.example.cameraxapp.ar.ARFaceOverlayView"
+    <com.example.cameraxapp.ar.ARFaceOverlayView
         android:id="@+id/arOverlayView"
         android:layout_width="0dp"
         android:layout_height="0dp"
