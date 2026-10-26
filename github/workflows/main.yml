@@ -1,0 +1,61 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build & Package Debug APK
+    runs-on: ubuntu-latest
+
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      # Step 1: Install JDK 17
+      - name: Set up JDK 17 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      # Step 2: Install official Gradle 8.4 distribution
+      - name: Set up Gradle 8.4
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: '8.4'
+
+      # Step 3: Configure Android SDK, accept licenses & install API 34 tools
+      - name: Configure Android SDK & Licenses
+        run: |
+          mkdir -p $ANDROID_HOME
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
+          export PATH=$PATH:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools
+          yes | sdkmanager --licenses || true
+          sdkmanager --install "platforms;android-34" "build-tools;34.0.0" "platform-tools"
+
+      # Step 4: Build APK directly with the installed Gradle distribution
+      - name: Build Debug APK with Gradle
+        run: gradle assembleDebug --no-daemon --stacktrace
+
+      # Step 5: Verify APK was generated
+      - name: Verify APK was generated
+        run: |
+          ls -la app/build/outputs/apk/debug/
+          test -f app/build/outputs/apk/debug/app-debug.apk
+
+      # Step 6: Upload APK as downloadable artifact
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug.apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 14
