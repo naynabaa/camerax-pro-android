@@ -8,6 +8,13 @@ if command -v gradle >/dev/null 2>&1; then
     exec gradle "$@"
 fi
 
+# Fetch official Gradle wrapper JAR if missing
+if [ ! -f "$CLASSPATH" ]; then
+    mkdir -p "$APP_HOME/gradle/wrapper"
+    curl -sLo "$CLASSPATH" "https://raw.githubusercontent.com/gradle/gradle/v8.4.0/gradle/wrapper/gradle-wrapper.jar" 2>/dev/null || \
+    wget -qO "$CLASSPATH" "https://raw.githubusercontent.com/gradle/gradle/v8.4.0/gradle/wrapper/gradle-wrapper.jar" 2>/dev/null || true
+fi
+
 if [ -f "$CLASSPATH" ]; then
     exec java -Xmx2048m -jar "$CLASSPATH" "$@"
 fi
