@@ -12,10 +12,6 @@ jobs:
     name: Build & Package Debug APK
     runs-on: ubuntu-latest
 
-    env:
-      ANDROID_SDK_ROOT: ${{ github.workspace }}/android-sdk
-      ANDROID_HOME: ${{ github.workspace }}/android-sdk
-
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -31,12 +27,19 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      # Step 3: Install Android SDK packages (API 34 + Build Tools 34.0.0)
-      - name: Install Android SDK packages
+      # Step 3: Install cmdline-tools, API 34 platform & accept licenses
+      - name: Install Android SDK packages & accept licenses
         run: |
-          echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
+          mkdir -p "$ANDROID_HOME/licenses" || true
+          printf "24333f8a63b6825ea9c5514f83c2829b004d1fee
+d56f5187479451eabf01fb78af6dfcb131a6481e
+84831b9409646a2a3e039d69b8c3ca4952093dae
+" > "$ANDROID_HOME/licenses/android-sdk-license"
+          printf "84831b9409646a2a3e039d69b8c3ca4952093dae
+" > "$ANDROID_HOME/licenses/android-sdk-preview-license"
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
           yes | sdkmanager --licenses || true
-          sdkmanager --install "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+          sdkmanager --install "cmdline-tools;latest" "platform-tools" "platforms;android-34" "build-tools;34.0.0" || true
 
       # Step 4: Ensure Gradle wrapper script is executable
       - name: Make Gradle Wrapper Executable
