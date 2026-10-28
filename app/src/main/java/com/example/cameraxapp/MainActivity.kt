@@ -128,13 +128,8 @@ class MainActivity : AppCompatActivity() {
 
         cameraExecutor = Executors.newSingleThreadExecutor()
 
-        // Initialize Filter & AR Engines
+        // Initialize Filter Engine
         filterManager = FilterManager(this)
-        openGLProcessor = OpenGLSurfaceProcessor()
-        cameraEffect = OpenGLSurfaceProcessor.createCameraEffect(
-            openGLProcessor!!,
-            ContextCompat.getMainExecutor(this)
-        )
 
         setupClickListeners()
         setupBurstMode()
@@ -210,55 +205,14 @@ class MainActivity : AppCompatActivity() {
             .build()
         videoCapture = VideoCapture.withOutput(recorder)
 
-        // ImageAnalysis for Real-Time MediaPipe Face Mesh & AR Lenses
-        faceMeshHelper?.clear()
-        faceMeshHelper = FaceMeshHelper(this, object : FaceMeshHelper.FaceMeshListener {
-            override fun onFaceLandmarksDetected(
-                result: FaceLandmarkerResult,
-                inputWidth: Int,
-                inputHeight: Int
-            ) {
-                viewBinding.arOverlayView.updateResults(
-                    result,
-                    inputWidth,
-                    inputHeight,
-                    lensFacing == CameraSelector.DEFAULT_FRONT_CAMERA
-                )
-            }
-
-            override fun onError(error: String) {
-                Log.e(TAG, "MediaPipe error: $error")
-            }
-        })
-        faceMeshHelper?.setFrontFacing(lensFacing == CameraSelector.DEFAULT_FRONT_CAMERA)
-
-        imageAnalysis = ImageAnalysis.Builder()
-            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-            .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
-            .build().also {
-                it.setAnalyzer(cameraExecutor, faceMeshHelper!!)
-            }
-
         try {
             cameraProvider.unbindAll()
 
-            // Build UseCaseGroup to bind Preview, ImageCapture, VideoCapture, and CameraEffect
-            val useCaseGroupBuilder = UseCaseGroup.Builder()
-                .addUseCase(preview)
-                .addUseCase(imageCapture!!)
-                .addUseCase(imageAnalysis!!)
-
-            if (cameraMode == CameraMode.VIDEO) {
-                useCaseGroupBuilder.addUseCase(videoCapture!!)
+            if (cameraMode == CameraMode.PHOTO) {
+                camera = cameraProvider.bindToLifecycle(this, lensFacing, preview, imageCapture!!)
+            } else {
+                camera = cameraProvider.bindToLifecycle(this, lensFacing, preview, videoCapture!!)
             }
-
-            // Attach OpenGL CameraEffect for real-time Preview and Video Recording filter
-            cameraEffect?.let {
-                useCaseGroupBuilder.addEffect(it)
-            }
-
-            val useCaseGroup = useCaseGroupBuilder.build()
-            camera = cameraProvider.bindToLifecycle(this, lensFacing, useCaseGroup)
 
             cameraControl = camera?.cameraControl
 
@@ -267,7 +221,7 @@ class MainActivity : AppCompatActivity() {
 
         } catch (exc: Exception) {
             Log.e(TAG, "Use case binding failed", exc)
-            Toast.makeText(this, "Failed to start camera: ${exc.message}", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Camera start error: ${exc.message}", Toast.LENGTH_SHORT).show()
         }
     }
 

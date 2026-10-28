@@ -18,16 +18,6 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />
 
-    <!-- MediaPipe Real-Time AR Face Mesh & Lens Overlay View -->
-    <com.example.cameraxapp.ar.ARFaceOverlayView
-        android:id="@+id/arOverlayView"
-        android:layout_width="0dp"
-        android:layout_height="0dp"
-        app:layout_constraintTop_toTopOf="@id/viewFinder"
-        app:layout_constraintBottom_toBottomOf="@id/viewFinder"
-        app:layout_constraintStart_toStartOf="@id/viewFinder"
-        app:layout_constraintEnd_toEndOf="@id/viewFinder" />
-
     <!-- Rule of Thirds Grid Overlay -->
     <androidx.constraintlayout.widget.ConstraintLayout
         android:id="@+id/gridOverlay"
@@ -41,7 +31,7 @@
         <View
             android:layout_width="1dp"
             android:layout_height="0dp"
-            android:background="#44FFFFFF"
+            android:background="#33FFFFFF"
             app:layout_constraintHeight_percent="1"
             app:layout_constraintHorizontal_bias="0.333"
             app:layout_constraintStart_toStartOf="parent"
@@ -52,7 +42,7 @@
         <View
             android:layout_width="1dp"
             android:layout_height="0dp"
-            android:background="#44FFFFFF"
+            android:background="#33FFFFFF"
             app:layout_constraintHeight_percent="1"
             app:layout_constraintHorizontal_bias="0.666"
             app:layout_constraintStart_toStartOf="parent"
@@ -63,7 +53,7 @@
         <View
             android:layout_width="0dp"
             android:layout_height="1dp"
-            android:background="#44FFFFFF"
+            android:background="#33FFFFFF"
             app:layout_constraintWidth_percent="1"
             app:layout_constraintVertical_bias="0.333"
             app:layout_constraintTop_toTopOf="parent"
@@ -74,7 +64,7 @@
         <View
             android:layout_width="0dp"
             android:layout_height="1dp"
-            android:background="#44FFFFFF"
+            android:background="#33FFFFFF"
             app:layout_constraintWidth_percent="1"
             app:layout_constraintVertical_bias="0.666"
             app:layout_constraintTop_toTopOf="parent"
@@ -83,62 +73,142 @@
             app:layout_constraintEnd_toEndOf="parent" />
     </androidx.constraintlayout.widget.ConstraintLayout>
 
-    <!-- Top Pro Mode Bar: Countdown Timer, Grid Toggle, Flash -->
+    <!-- Tap-to-Focus Reticle -->
+    <View
+        android:id="@+id/focusRing"
+        android:layout_width="64dp"
+        android:layout_height="64dp"
+        android:background="@drawable/bg_focus_ring"
+        android:visibility="gone"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintStart_toStartOf="parent" />
+
+    <!-- Top Minimalist Pro Bar -->
     <LinearLayout
         android:id="@+id/proModeBar"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
-        android:padding="16dp"
         android:gravity="center_vertical"
-        android:background="#44000000"
+        android:paddingHorizontal="16dp"
+        android:paddingVertical="12dp"
+        android:layout_marginTop="28dp"
         app:layout_constraintTop_toTopOf="parent">
 
         <TextView
             android:id="@+id/btnTimer"
             android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
+            android:layout_height="38dp"
+            android:gravity="center"
+            android:paddingHorizontal="12dp"
             android:text="TIMER OFF"
             android:textColor="#FFFFFF"
-            android:textSize="12sp"
+            android:textSize="11sp"
             android:textStyle="bold"
-            android:paddingHorizontal="10dp"
-            android:paddingVertical="5dp"
             android:background="@drawable/bg_pill_badge" />
 
         <ImageButton
             android:id="@+id/btnGrid"
-            android:layout_width="44dp"
-            android:layout_height="44dp"
-            android:layout_marginStart="12dp"
-            android:background="?attr/selectableItemBackgroundBorderless"
+            android:layout_width="38dp"
+            android:layout_height="38dp"
+            android:layout_marginStart="10dp"
+            android:background="@drawable/bg_zoom_pill"
             android:src="@drawable/ic_grid_on"
             app:tint="#FFFFFF"
-            android:contentDescription="Grid Lines" />
+            android:contentDescription="Grid Overlay" />
+
+        <ImageButton
+            android:id="@+id/btnFlash"
+            android:layout_width="38dp"
+            android:layout_height="38dp"
+            android:layout_marginStart="10dp"
+            android:background="@drawable/bg_zoom_pill"
+            android:src="@drawable/ic_flash_off"
+            app:tint="#FFFFFF"
+            android:contentDescription="Flash Mode" />
 
         <View
             android:layout_width="0dp"
             android:layout_height="1dp"
             android:layout_weight="1" />
 
-        <ImageButton
-            android:id="@+id/btnFlash"
-            android:layout_width="44dp"
-            android:layout_height="44dp"
-            android:background="?attr/selectableItemBackgroundBorderless"
-            android:src="@drawable/ic_flash_off"
-            app:tint="#FFFFFF"
-            android:contentDescription="Flash Mode" />
+        <LinearLayout
+            android:id="@+id/btnProStudio"
+            android:layout_width="wrap_content"
+            android:layout_height="38dp"
+            android:orientation="horizontal"
+            android:gravity="center"
+            android:paddingHorizontal="14dp"
+            android:background="@drawable/bg_pill_badge">
+
+            <ImageView
+                android:layout_width="16dp"
+                android:layout_height="16dp"
+                android:src="@drawable/ic_tune"
+                app:tint="#F59E0B"
+                android:layout_marginEnd="6dp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="PRO FX"
+                android:textColor="#F59E0B"
+                android:textSize="11sp"
+                android:textStyle="bold" />
+        </LinearLayout>
     </LinearLayout>
 
-    <!-- Countdown Center Watermark -->
+    <!-- Prominent Centered Video Recording HUD (Pulsing Red Dot + Monospace Chronometer) -->
+    <LinearLayout
+        android:id="@+id/recordingTimer"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingHorizontal="16dp"
+        android:paddingVertical="8dp"
+        android:background="@drawable/bg_recording_badge"
+        android:visibility="gone"
+        android:elevation="20dp"
+        android:layout_marginTop="80dp"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <View
+            android:id="@+id/recordingDot"
+            android:layout_width="10dp"
+            android:layout_height="10dp"
+            android:background="@drawable/bg_red_dot"
+            android:layout_marginEnd="8dp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="REC"
+            android:textColor="#EF4444"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:layout_marginEnd="8dp" />
+
+        <Chronometer
+            android:id="@+id/chronometer"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textColor="#FFFFFF"
+            android:textSize="15sp"
+            android:textStyle="bold"
+            android:fontFamily="monospace" />
+    </LinearLayout>
+
+    <!-- Center Giant Countdown Watermark -->
     <TextView
         android:id="@+id/tvCountdown"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:text="3"
         android:textColor="#FFFFFF"
-        android:textSize="84sp"
+        android:textSize="96sp"
         android:textStyle="bold"
         android:visibility="gone"
         app:layout_constraintTop_toTopOf="parent"
@@ -146,7 +216,7 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />
 
-    <!-- Burst Mode Counter Badge -->
+    <!-- Burst Mode Indicator Badge -->
     <TextView
         android:id="@+id/tvBurstBadge"
         android:layout_width="wrap_content"
@@ -155,290 +225,79 @@
         android:textColor="#FBBF24"
         android:textSize="14sp"
         android:textStyle="bold"
-        android:paddingHorizontal="12dp"
-        android:paddingVertical="6dp"
-        android:background="@drawable/bg_recording_badge"
-        android:visibility="gone"
-        app:layout_constraintBottom_toTopOf="@id/exposureLayout"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent" />
-
-    <!-- Color Presets Horizontal Carousel -->
-    <HorizontalScrollView
-        android:id="@+id/filterPresetsScroll"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:scrollbars="none"
-        android:paddingHorizontal="16dp"
-        android:paddingVertical="4dp"
-        android:background="#44000000"
-        app:layout_constraintBottom_toTopOf="@id/adjustmentsLayout">
-
-        <LinearLayout
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical">
-
-            <Button
-                android:id="@+id/btnFilterPresetNormal"
-                android:layout_width="wrap_content"
-                android:layout_height="36dp"
-                android:text="Standard"
-                android:textSize="11sp"
-                android:textColor="#FFFFFF"
-                android:backgroundTint="#334155" />
-
-            <Button
-                android:id="@+id/btnFilterPresetCinematic"
-                android:layout_width="wrap_content"
-                android:layout_height="36dp"
-                android:layout_marginStart="8dp"
-                android:text="Cinematic"
-                android:textSize="11sp"
-                android:textColor="#FFFFFF"
-                android:backgroundTint="#D97706" />
-
-            <Button
-                android:id="@+id/btnFilterPresetVintage"
-                android:layout_width="wrap_content"
-                android:layout_height="36dp"
-                android:layout_marginStart="8dp"
-                android:text="Vintage"
-                android:textSize="11sp"
-                android:textColor="#FFFFFF"
-                android:backgroundTint="#B45309" />
-
-            <Button
-                android:id="@+id/btnFilterPresetBw"
-                android:layout_width="wrap_content"
-                android:layout_height="36dp"
-                android:layout_marginStart="8dp"
-                android:text="Noir B&amp;W"
-                android:textSize="11sp"
-                android:textColor="#FFFFFF"
-                android:backgroundTint="#475569" />
-
-            <Button
-                android:id="@+id/btnFilterPresetHdr"
-                android:layout_width="wrap_content"
-                android:layout_height="36dp"
-                android:layout_marginStart="8dp"
-                android:text="HDR"
-                android:textSize="11sp"
-                android:textColor="#FFFFFF"
-                android:backgroundTint="#059669" />
-
-            <Button
-                android:id="@+id/btnFilterPresetCyberpunk"
-                android:layout_width="wrap_content"
-                android:layout_height="36dp"
-                android:layout_marginStart="8dp"
-                android:text="Cyberpunk"
-                android:textSize="11sp"
-                android:textColor="#FFFFFF"
-                android:backgroundTint="#9333EA" />
-        </LinearLayout>
-    </HorizontalScrollView>
-
-    <!-- AR Lenses Selection Bar -->
-    <LinearLayout
-        android:id="@+id/arLensBar"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:gravity="center"
-        android:paddingHorizontal="12dp"
-        android:paddingVertical="4dp"
-        android:background="#33000000"
-        app:layout_constraintBottom_toTopOf="@id/filterPresetsScroll">
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="AR:"
-            android:textColor="#C084FC"
-            android:textSize="10sp"
-            android:textStyle="bold"
-            android:layout_marginEnd="6dp" />
-
-        <Button
-            android:id="@+id/btnArOff"
-            android:layout_width="wrap_content"
-            android:layout_height="30dp"
-            android:text="Off"
-            android:textSize="10sp"
-            android:textColor="#FFFFFF"
-            android:backgroundTint="#1E293B" />
-
-        <Button
-            android:id="@+id/btnArMesh"
-            android:layout_width="wrap_content"
-            android:layout_height="30dp"
-            android:layout_marginStart="4dp"
-            android:text="Mesh"
-            android:textSize="10sp"
-            android:textColor="#FFFFFF"
-            android:backgroundTint="#10B981" />
-
-        <Button
-            android:id="@+id/btnArVisor"
-            android:layout_width="wrap_content"
-            android:layout_height="30dp"
-            android:layout_marginStart="4dp"
-            android:text="Visor"
-            android:textSize="10sp"
-            android:textColor="#FFFFFF"
-            android:backgroundTint="#06B6D4" />
-
-        <Button
-            android:id="@+id/btnArCrown"
-            android:layout_width="wrap_content"
-            android:layout_height="30dp"
-            android:layout_marginStart="4dp"
-            android:text="Crown"
-            android:textSize="10sp"
-            android:textColor="#FFFFFF"
-            android:backgroundTint="#F59E0B" />
-
-        <Button
-            android:id="@+id/btnArHud"
-            android:layout_width="wrap_content"
-            android:layout_height="30dp"
-            android:layout_marginStart="4dp"
-            android:text="HUD"
-            android:textSize="10sp"
-            android:textColor="#FFFFFF"
-            android:backgroundTint="#EC4899" />
-    </LinearLayout>
-
-    <!-- Live Color Adjustments (Brightness, Contrast, Saturation) -->
-    <LinearLayout
-        android:id="@+id/adjustmentsLayout"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:paddingHorizontal="20dp"
-        android:paddingVertical="4dp"
-        android:background="#22000000"
-        app:layout_constraintBottom_toTopOf="@id/exposureLayout">
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical">
-            <TextView
-                android:layout_width="48dp"
-                android:layout_height="wrap_content"
-                android:text="BRI"
-                android:textColor="#94A3B8"
-                android:textSize="10sp" />
-            <SeekBar
-                android:id="@+id/sbBrightness"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:max="200"
-                android:progress="100" />
-            <TextView
-                android:layout_width="48dp"
-                android:layout_height="wrap_content"
-                android:text="CON"
-                android:textColor="#94A3B8"
-                android:textSize="10sp" />
-            <SeekBar
-                android:id="@+id/sbContrast"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:max="200"
-                android:progress="100" />
-            <TextView
-                android:layout_width="48dp"
-                android:layout_height="wrap_content"
-                android:text="SAT"
-                android:textColor="#94A3B8"
-                android:textSize="10sp" />
-            <SeekBar
-                android:id="@+id/sbSaturation"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:max="200"
-                android:progress="100" />
-        </LinearLayout>
-    </LinearLayout>
-
-    <!-- Manual Exposure Compensation Control Layout -->
-    <LinearLayout
-        android:id="@+id/exposureLayout"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:gravity="center_vertical"
-        android:paddingHorizontal="24dp"
-        android:paddingVertical="8dp"
-        android:background="#33000000"
-        app:layout_constraintBottom_toTopOf="@id/modeSelector">
-
-        <TextView
-            android:id="@+id/tvExposureValue"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="EV 0.0"
-            android:textColor="#FFFFFF"
-            android:textSize="12sp"
-            android:textStyle="bold" />
-
-        <SeekBar
-            android:id="@+id/exposureSlider"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:layout_marginStart="12dp"
-            android:progressTint="#10B981"
-            android:thumbTint="#10B981" />
-    </LinearLayout>
-
-    <!-- Recording Indicator & Chronometer -->
-    <LinearLayout
-        android:id="@+id/recordingTimer"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:gravity="center_vertical"
         android:paddingHorizontal="14dp"
         android:paddingVertical="6dp"
         android:background="@drawable/bg_recording_badge"
         android:visibility="gone"
-        app:layout_constraintTop_toBottomOf="@id/proModeBar"
+        android:layout_marginBottom="16dp"
+        app:layout_constraintBottom_toTopOf="@id/zoomControls"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+    <!-- Modern Floating Zoom Quick Selector (0.6x, 1x, 2x, 5x) -->
+    <LinearLayout
+        android:id="@+id/zoomControls"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center"
+        android:paddingHorizontal="6dp"
+        android:paddingVertical="4dp"
+        android:background="@drawable/bg_pill_badge"
+        android:layout_marginBottom="14dp"
+        app:layout_constraintBottom_toTopOf="@id/modeSelector"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent">
 
-        <View
-            android:layout_width="8dp"
-            android:layout_height="8dp"
-            android:background="@drawable/bg_red_dot"
-            android:layout_marginEnd="6dp" />
+        <TextView
+            android:id="@+id/btnZoom06"
+            android:layout_width="38dp"
+            android:layout_height="32dp"
+            android:gravity="center"
+            android:text=".6"
+            android:textColor="#CCCCCC"
+            android:textSize="11sp"
+            android:textStyle="bold" />
 
-        <Chronometer
-            android:id="@+id/chronometer"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:textColor="#FFFFFF"
-            android:textSize="13sp"
+        <TextView
+            android:id="@+id/btnZoom1"
+            android:layout_width="38dp"
+            android:layout_height="32dp"
+            android:gravity="center"
+            android:text="1x"
+            android:textColor="#F59E0B"
+            android:textSize="12sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/btnZoom2"
+            android:layout_width="38dp"
+            android:layout_height="32dp"
+            android:gravity="center"
+            android:text="2x"
+            android:textColor="#CCCCCC"
+            android:textSize="11sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/btnZoom5"
+            android:layout_width="38dp"
+            android:layout_height="32dp"
+            android:gravity="center"
+            android:text="5x"
+            android:textColor="#CCCCCC"
+            android:textSize="11sp"
             android:textStyle="bold" />
     </LinearLayout>
 
-    <!-- Camera Mode Switcher (PHOTO | VIDEO) -->
+    <!-- Camera Mode Switcher Carousel (PHOTO | VIDEO) -->
     <LinearLayout
         android:id="@+id/modeSelector"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
         android:gravity="center"
-        android:paddingVertical="8dp"
+        android:layout_marginBottom="16dp"
         app:layout_constraintBottom_toTopOf="@id/bottomControls"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent">
@@ -449,9 +308,10 @@
             android:layout_height="wrap_content"
             android:text="PHOTO"
             android:textColor="#FFFFFF"
-            android:textSize="14sp"
+            android:textSize="13sp"
             android:textStyle="bold"
-            android:paddingHorizontal="16dp"
+            android:letterSpacing="0.08"
+            android:paddingHorizontal="18dp"
             android:paddingVertical="4dp" />
 
         <TextView
@@ -459,61 +319,282 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="VIDEO"
-            android:textColor="#888888"
-            android:textSize="14sp"
+            android:textColor="#777777"
+            android:textSize="13sp"
             android:textStyle="bold"
-            android:paddingHorizontal="16dp"
+            android:letterSpacing="0.08"
+            android:paddingHorizontal="18dp"
             android:paddingVertical="4dp" />
     </LinearLayout>
 
-    <!-- Bottom Controls: Pause/Resume, Shutter/Record, Lens Switch -->
+    <!-- Bottom Action Deck: Pause/Resume, Shutter, Lens Flip -->
     <androidx.constraintlayout.widget.ConstraintLayout
         android:id="@+id/bottomControls"
         android:layout_width="match_parent"
-        android:layout_height="110dp"
-        android:paddingHorizontal="24dp"
-        android:background="#66000000"
+        android:layout_height="100dp"
+        android:paddingHorizontal="28dp"
+        android:paddingBottom="16dp"
+        android:background="#40000000"
         app:layout_constraintBottom_toBottomOf="parent">
 
-        <!-- Video Pause / Resume Button -->
+        <!-- Video Pause / Resume Button (Visible when recording) -->
         <ImageButton
             android:id="@+id/btnPauseResume"
-            android:layout_width="52dp"
-            android:layout_height="52dp"
+            android:layout_width="54dp"
+            android:layout_height="54dp"
             android:background="@drawable/bg_circle_button"
             android:src="@drawable/ic_pause"
             android:visibility="gone"
             app:tint="#FFFFFF"
-            android:contentDescription="Pause or Resume Recording"
+            android:contentDescription="Pause/Resume Video"
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintTop_toTopOf="parent"
             app:layout_constraintBottom_toBottomOf="parent" />
 
-        <!-- Shutter Capture or Video Record / Stop Button -->
+        <!-- Quick Pro Preset Button (Visible when NOT recording) -->
+        <ImageButton
+            android:id="@+id/btnQuickPreset"
+            android:layout_width="54dp"
+            android:layout_height="54dp"
+            android:background="@drawable/bg_circle_button"
+            android:src="@drawable/ic_tune"
+            app:tint="#CCCCCC"
+            android:contentDescription="Quick Pro Controls"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent"
+            app:layout_constraintBottom_toBottomOf="parent" />
+
+        <!-- Primary Dual-Ring Shutter / Video Record Button -->
         <ImageButton
             android:id="@+id/btnCapture"
-            android:layout_width="76dp"
-            android:layout_height="76dp"
+            android:layout_width="78dp"
+            android:layout_height="78dp"
             android:background="@drawable/bg_shutter_button"
-            android:contentDescription="Take Photo or Video"
+            android:contentDescription="Shutter Button"
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintTop_toTopOf="parent"
             app:layout_constraintBottom_toBottomOf="parent" />
 
-        <!-- Lens Switch Button -->
+        <!-- Front / Back Camera Flip Button -->
         <ImageButton
             android:id="@+id/btnSwitchCamera"
-            android:layout_width="52dp"
-            android:layout_height="52dp"
+            android:layout_width="54dp"
+            android:layout_height="54dp"
             android:background="@drawable/bg_circle_button"
             android:src="@drawable/ic_camera_switch"
             app:tint="#FFFFFF"
-            android:contentDescription="Flip Camera"
+            android:contentDescription="Flip Camera Lens"
             app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintTop_toTopOf="parent"
             app:layout_constraintBottom_toBottomOf="parent" />
+    </androidx.constraintlayout.widget.ConstraintLayout>
 
+    <!-- Collapsible Modern Pro & Filter Studio Drawer (Hidden by default) -->
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:id="@+id/proStudioDrawer"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:padding="20dp"
+        android:background="@drawable/bg_pro_drawer"
+        android:visibility="gone"
+        android:elevation="30dp"
+        app:layout_constraintBottom_toBottomOf="parent">
+
+        <TextView
+            android:id="@+id/tvDrawerTitle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="PRO CAMERA STUDIO"
+            android:textColor="#F59E0B"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:letterSpacing="0.1"
+            app:layout_constraintTop_toTopOf="parent"
+            app:layout_constraintStart_toStartOf="parent" />
+
+        <ImageButton
+            android:id="@+id/btnCloseProDrawer"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:src="@drawable/ic_close"
+            app:tint="#94A3B8"
+            android:contentDescription="Close Studio"
+            app:layout_constraintTop_toTopOf="parent"
+            app:layout_constraintEnd_toEndOf="parent" />
+
+        <!-- Filter Presets Horizontal Scroll -->
+        <TextView
+            android:id="@+id/tvPresetLabel"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="COLOR PROFILES"
+            android:textColor="#94A3B8"
+            android:textSize="10sp"
+            android:textStyle="bold"
+            android:layout_marginTop="14dp"
+            app:layout_constraintTop_toBottomOf="@id/tvDrawerTitle"
+            app:layout_constraintStart_toStartOf="parent" />
+
+        <HorizontalScrollView
+            android:id="@+id/filterPresetsScroll"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:scrollbars="none"
+            android:layout_marginTop="6dp"
+            app:layout_constraintTop_toBottomOf="@id/tvPresetLabel">
+
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <Button
+                    android:id="@+id/btnFilterPresetNormal"
+                    android:layout_width="wrap_content"
+                    android:layout_height="34dp"
+                    android:text="Standard"
+                    android:textSize="10sp"
+                    android:textColor="#FFFFFF"
+                    android:backgroundTint="#334155" />
+
+                <Button
+                    android:id="@+id/btnFilterPresetCinematic"
+                    android:layout_width="wrap_content"
+                    android:layout_height="34dp"
+                    android:layout_marginStart="8dp"
+                    android:text="Cinematic"
+                    android:textSize="10sp"
+                    android:textColor="#FFFFFF"
+                    android:backgroundTint="#D97706" />
+
+                <Button
+                    android:id="@+id/btnFilterPresetVintage"
+                    android:layout_width="wrap_content"
+                    android:layout_height="34dp"
+                    android:layout_marginStart="8dp"
+                    android:text="Vintage"
+                    android:textSize="10sp"
+                    android:textColor="#FFFFFF"
+                    android:backgroundTint="#B45309" />
+
+                <Button
+                    android:id="@+id/btnFilterPresetBw"
+                    android:layout_width="wrap_content"
+                    android:layout_height="34dp"
+                    android:layout_marginStart="8dp"
+                    android:text="Noir B&amp;W"
+                    android:textSize="10sp"
+                    android:textColor="#FFFFFF"
+                    android:backgroundTint="#475569" />
+
+                <Button
+                    android:id="@+id/btnFilterPresetHdr"
+                    android:layout_width="wrap_content"
+                    android:layout_height="34dp"
+                    android:layout_marginStart="8dp"
+                    android:text="HDR Vivid"
+                    android:textSize="10sp"
+                    android:textColor="#FFFFFF"
+                    android:backgroundTint="#059669" />
+
+                <Button
+                    android:id="@+id/btnFilterPresetCyberpunk"
+                    android:layout_width="wrap_content"
+                    android:layout_height="34dp"
+                    android:layout_marginStart="8dp"
+                    android:text="Cyberpunk"
+                    android:textSize="10sp"
+                    android:textColor="#FFFFFF"
+                    android:backgroundTint="#9333EA" />
+            </LinearLayout>
+        </HorizontalScrollView>
+
+        <!-- Exposure Compensation Slider -->
+        <LinearLayout
+            android:id="@+id/exposureLayout"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginTop="14dp"
+            app:layout_constraintTop_toBottomOf="@id/filterPresetsScroll">
+
+            <TextView
+                android:id="@+id/tvExposureValue"
+                android:layout_width="60dp"
+                android:layout_height="wrap_content"
+                android:text="EV 0.0"
+                android:textColor="#F59E0B"
+                android:textSize="12sp"
+                android:fontFamily="monospace"
+                android:textStyle="bold" />
+
+            <SeekBar
+                android:id="@+id/exposureSlider"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:progressTint="#F59E0B"
+                android:thumbTint="#F59E0B" />
+        </LinearLayout>
+
+        <!-- Live Adjustment Fine Tuning (Brightness, Contrast, Saturation) -->
+        <LinearLayout
+            android:id="@+id/adjustmentsLayout"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:layout_marginTop="8dp"
+            app:layout_constraintTop_toBottomOf="@id/exposureLayout">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+                <TextView
+                    android:layout_width="36dp"
+                    android:layout_height="wrap_content"
+                    android:text="BRI"
+                    android:textColor="#94A3B8"
+                    android:textSize="10sp" />
+                <SeekBar
+                    android:id="@+id/sbBrightness"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:max="200"
+                    android:progress="100" />
+                <TextView
+                    android:layout_width="36dp"
+                    android:layout_height="wrap_content"
+                    android:text="CON"
+                    android:textColor="#94A3B8"
+                    android:textSize="10sp" />
+                <SeekBar
+                    android:id="@+id/sbContrast"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:max="200"
+                    android:progress="100" />
+                <TextView
+                    android:layout_width="36dp"
+                    android:layout_height="wrap_content"
+                    android:text="SAT"
+                    android:textColor="#94A3B8"
+                    android:textSize="10sp" />
+                <SeekBar
+                    android:id="@+id/sbSaturation"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:max="200"
+                    android:progress="100" />
+            </LinearLayout>
+        </LinearLayout>
     </androidx.constraintlayout.widget.ConstraintLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>
