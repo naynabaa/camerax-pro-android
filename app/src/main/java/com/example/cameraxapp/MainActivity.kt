@@ -36,9 +36,14 @@ import androidx.camera.core.UseCaseGroup
 import androidx.camera.video.Recorder
 import androidx.camera.video.Recording
 import androidx.camera.video.VideoCapture
-import androidx.camera.video.VideoRecordEvent
 import androidx.core.content.ContextCompat
 import androidx.core.content.PermissionChecker
+import android.content.Context
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
+import com.example.cameraxapp.overlay.ProOverlayView
 import com.example.cameraxapp.databinding.ActivityMainBinding
 import com.example.cameraxapp.filter.FilterManager
 import com.example.cameraxapp.filter.OpenGLSurfaceProcessor
@@ -105,6 +110,28 @@ class MainActivity : AppCompatActivity() {
     private var burstRunnable: Runnable? = null
     private var isGridVisible = true
 
+    // Electronic Virtual Horizon (60 FPS Sensor-Driven Roll & Pitch Level Gauge)
+    private lateinit var sensorManager: SensorManager
+    private var rotationSensor: Sensor? = null
+    private val rotationMatrix = FloatArray(9)
+    private val orientationAngles = FloatArray(3)
+
+    private val sensorEventListener = object : SensorEventListener {
+        override fun onSensorChanged(event: SensorEvent?) {
+            if (event?.sensor?.type == Sensor.TYPE_ROTATION_VECTOR) {
+                SensorManager.getRotationMatrixFromVector(rotationMatrix, event.values)
+                SensorManager.getOrientation(rotationMatrix, orientationAngles)
+                // roll: orientationAngles[2] in radians (-PI to PI)
+                val rollDeg = Math.toDegrees(orientationAngles[2].toDouble()).toFloat()
+                val pitchDeg = Math.toDegrees(orientationAngles[1].toDouble()).toFloat()
+                viewBinding.proOverlayView.tiltRollDegrees = rollDeg
+                viewBinding.proOverlayView.tiltPitchDegrees = pitchDeg
+            }
+        }
+
+        override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+    }
+
     private var flashMode: Int = ImageCapture.FLASH_MODE_OFF
 
     private lateinit var cameraExecutor: ExecutorService
@@ -128,6 +155,10 @@ class MainActivity : AppCompatActivity() {
 
         cameraExecutor = Executors.newSingleThreadExecutor()
 
+        // Initialize Orientation Sensor for Virtual Horizon Level Gauge
+        sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
+        rotationSensor = sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
+
         // Initialize Filter Engine
         filterManager = FilterManager(this)
 
@@ -141,6 +172,18 @@ class MainActivity : AppCompatActivity() {
         } else {
             requestPermissions()
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        rotationSensor?.let {
+            sensorManager.registerListener(sensorEventListener, it, SensorManager.SENSOR_DELAY_UI)
+        }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        sensorManager.unregisterListener(sensorEventListener)
     }
 
     private fun setupClickListeners() {
@@ -157,8 +200,25 @@ class MainActivity : AppCompatActivity() {
         // Pro Mode: Countdown Timer Toggle (Off -> 3s -> 5s -> 10s)
         viewBinding.btnTimer.setOnClickListener { cycleCountdownTimer() }
 
-        // Pro Mode: Grid Toggle
+        // Pro Mode: Grid Toggle (Rule of Thirds -> Golden Spiral -> Phi -> Diagonal -> CinemaScope -> Off)
         viewBinding.btnGrid.setOnClickListener { toggleGridLines() }
+
+        // Pro Studio Drawer Open / Close
+        viewBinding.btnProStudio.setOnClickListener {
+            viewBinding.proStudioDrawer.visibility = View.VISIBLE
+        }
+        viewBinding.btnQuickPreset.setOnClickListener {
+            viewBinding.proStudioDrawer.visibility = View.VISIBLE
+        }
+        viewBinding.btnCloseProDrawer.setOnClickListener {
+            viewBinding.proStudioDrawer.visibility = View.GONE
+        }
+
+        // Quick Zoom Pills (.6x, 1x, 2x, 5x)
+        viewBinding.btnZoom06.setOnClickListener { setZoomLevel(0.6f, viewBinding.btnZoom06) }
+        viewBinding.btnZoom1.setOnClickListener { setZoomLevel(1.0f, viewBinding.btnZoom1) }
+        viewBinding.btnZoom2.setOnClickListener { setZoomLevel(2.0f, viewBinding.btnZoom2) }
+        viewBinding.btnZoom5.setOnClickListener { setZoomLevel(5.0f, viewBinding.btnZoom5) }
 
         viewBinding.btnFlash.setOnClickListener { toggleFlashMode() }
         setupPinchToZoom()
@@ -371,10 +431,57 @@ class MainActivity : AppCompatActivity() {
         viewBinding.tvExposureValue.text = String.format(Locale.US, "EV %s%.1f", prefix, evValue)
     }
 
+    private var lastActiveGrid = ProOverlayView.GridType.RULE_OF_THIRDS
+
     private fun toggleGridLines() {
-        isGridVisible = !isGridVisible
-        viewBinding.gridOverlay.visibility = if (isGridVisible) View.VISIBLE else View.GONE
-        viewBinding.btnGrid.alpha = if (isGridVisible) 1.0f else 0.5f
+        if (viewBinding.proOverlayView.currentGrid != ProOverlayView.GridType.NONE) {
+            // Immediately toggle OFF
+            lastActiveGrid = viewBinding.proOverlayView.currentGrid
+            setGridMode(ProOverlayView.GridType.NONE)
+            Toast.makeText(this, "Grid: OFF (No Grid)", Toast.LENGTH_SHORT).show()
+        } else {
+            // Toggle ON last active grid
+            setGridMode(lastActiveGrid)
+            Toast.makeText(this, "Grid: ON", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun setGridMode(mode: ProOverlayView.GridType) {
+        viewBinding.proOverlayView.currentGrid = mode
+        val isOff = mode == ProOverlayView.GridType.NONE
+        viewBinding.btnGrid.alpha = if (isOff) 0.5f else 1.0f
+
+        val activeBg = ContextCompat.getColorStateList(this, android.R.color.holo_blue_dark)
+        val inactiveBg = ContextCompat.getColorStateList(this, android.R.color.darker_gray)
+        val offBg = ContextCompat.getColorStateList(this, if (isOff) android.R.color.holo_red_dark else android.R.color.darker_gray)
+
+        viewBinding.btnGridOff.backgroundTintList = offBg
+        viewBinding.btnGridThirds.backgroundTintList = if (mode == ProOverlayView.GridType.RULE_OF_THIRDS) activeBg else inactiveBg
+        viewBinding.btnGridSpiral.backgroundTintList = if (mode == ProOverlayView.GridType.GOLDEN_SPIRAL) activeBg else inactiveBg
+        viewBinding.btnGridPhi.backgroundTintList = if (mode == ProOverlayView.GridType.GOLDEN_RATIO_PHI) activeBg else inactiveBg
+        viewBinding.btnGridDiagonal.backgroundTintList = if (mode == ProOverlayView.GridType.DIAGONAL_SYMMETRY) activeBg else inactiveBg
+        viewBinding.btnGridCinematic.backgroundTintList = if (mode == ProOverlayView.GridType.CINEMATIC_239) activeBg else inactiveBg
+
+        if (!isOff) {
+            lastActiveGrid = mode
+        }
+    }
+
+    private fun setZoomLevel(ratio: Float, selectedView: View) {
+        val zoomState = camera?.cameraInfo?.zoomState?.value
+        val minZoom = zoomState?.minZoomRatio ?: 1.0f
+        val maxZoom = zoomState?.maxZoomRatio ?: 8.0f
+        val clamped = ratio.coerceIn(minZoom, maxZoom)
+        cameraControl?.setZoomRatio(clamped)
+
+        val zoomViews = listOf(viewBinding.btnZoom06, viewBinding.btnZoom1, viewBinding.btnZoom2, viewBinding.btnZoom5)
+        for (v in zoomViews) {
+            if (v == selectedView) {
+                v.setBackgroundResource(R.drawable.bg_zoom_pill_active)
+            } else {
+                v.setBackgroundResource(android.R.color.transparent)
+            }
+        }
     }
 
     /**
@@ -669,27 +776,54 @@ class MainActivity : AppCompatActivity() {
             override fun onStopTrackingTouch(sb: SeekBar?) {}
         })
 
-        // AR Lens Selection
-        viewBinding.btnArMesh.setOnClickListener {
-            viewBinding.arOverlayView.currentLens = ARFaceOverlayView.ArLensMode.MESH_CONTOUR
+        // Framing Grid Direct Selection (Including Explicit NO GRID Button)
+        viewBinding.btnGridOff.setOnClickListener {
+            setGridMode(ProOverlayView.GridType.NONE)
+            Toast.makeText(this, "Grid: OFF (No Grid)", Toast.LENGTH_SHORT).show()
         }
-        viewBinding.btnArVisor.setOnClickListener {
-            viewBinding.arOverlayView.currentLens = ARFaceOverlayView.ArLensMode.CYBERPUNK_VISOR
+        viewBinding.btnGridThirds.setOnClickListener {
+            setGridMode(ProOverlayView.GridType.RULE_OF_THIRDS)
+            Toast.makeText(this, "Rule of Thirds", Toast.LENGTH_SHORT).show()
         }
-        viewBinding.btnArCrown.setOnClickListener {
-            viewBinding.arOverlayView.currentLens = ARFaceOverlayView.ArLensMode.GOLDEN_CROWN
+        viewBinding.btnGridSpiral.setOnClickListener {
+            setGridMode(ProOverlayView.GridType.GOLDEN_SPIRAL)
+            Toast.makeText(this, "Golden Spiral (Fibonacci)", Toast.LENGTH_SHORT).show()
         }
-        viewBinding.btnArHud.setOnClickListener {
-            viewBinding.arOverlayView.currentLens = ARFaceOverlayView.ArLensMode.SCIFI_HUD
+        viewBinding.btnGridPhi.setOnClickListener {
+            setGridMode(ProOverlayView.GridType.GOLDEN_RATIO_PHI)
+            Toast.makeText(this, "Golden Ratio (Phi)", Toast.LENGTH_SHORT).show()
         }
-        viewBinding.btnArOff.setOnClickListener {
-            viewBinding.arOverlayView.currentLens = ARFaceOverlayView.ArLensMode.NONE
-            viewBinding.arOverlayView.clear()
+        viewBinding.btnGridDiagonal.setOnClickListener {
+            setGridMode(ProOverlayView.GridType.DIAGONAL_SYMMETRY)
+            Toast.makeText(this, "Dynamic Symmetry", Toast.LENGTH_SHORT).show()
+        }
+        viewBinding.btnGridCinematic.setOnClickListener {
+            setGridMode(ProOverlayView.GridType.CINEMATIC_239)
+            Toast.makeText(this, "2.39:1 CinemaScope", Toast.LENGTH_SHORT).show()
+        }
+
+        // Pro Composition & Sensor Overlays
+        viewBinding.btnFlipSpiral.setOnClickListener {
+            viewBinding.proOverlayView.spiralOrientation++
+            Toast.makeText(this, "Golden Spiral Rotated", Toast.LENGTH_SHORT).show()
+        }
+        viewBinding.btnToggleLevel.setOnClickListener {
+            val newState = !viewBinding.proOverlayView.showLevelGauge
+            viewBinding.proOverlayView.showLevelGauge = newState
+            viewBinding.btnToggleLevel.text = if (newState) "Horizon: ON" else "Horizon: OFF"
+            Toast.makeText(this, if (newState) "Electronic Horizon ON" else "Electronic Horizon OFF", Toast.LENGTH_SHORT).show()
+        }
+        viewBinding.btnTogglePeaking.setOnClickListener {
+            val newState = !viewBinding.proOverlayView.showFocusPeaking
+            viewBinding.proOverlayView.showFocusPeaking = newState
+            viewBinding.btnTogglePeaking.text = if (newState) "Peaking: ON" else "Peaking: OFF"
+            Toast.makeText(this, if (newState) "Focus Peaking ON" else "Focus Peaking OFF", Toast.LENGTH_SHORT).show()
         }
     }
 
     override fun onDestroy() {
         super.onDestroy()
+        sensorManager.unregisterListener(sensorEventListener)
         faceMeshHelper?.clear()
         cameraExecutor.shutdown()
         burstHandler.removeCallbacksAndMessages(null)
