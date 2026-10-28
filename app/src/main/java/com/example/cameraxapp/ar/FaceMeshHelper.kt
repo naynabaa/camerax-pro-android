@@ -58,7 +58,7 @@ class FaceMeshHelper(
                     .setRunningMode(RunningMode.LIVE_STREAM)
                     .setNumFaces(1)
                     .setMinFaceDetectionConfidence(0.5f)
-                    .setMinFaceTrackingConfidence(0.5f)
+                    .setMinTrackingConfidence(0.5f)
                     .setMinFacePresenceConfidence(0.5f)
                     .setOutputFaceBlendshapes(true)
                     .setOutputFacialTransformationMatrixes(true)
@@ -69,7 +69,7 @@ class FaceMeshHelper(
                             input.height
                         )
                     }
-                    .setErrorListener { error ->
+                    .setErrorListener { error: RuntimeException ->
                         Log.e(TAG, "MediaPipe FaceLandmarker error: ${error.message}")
                         listener.onError(error.message ?: "Unknown MediaPipe error")
                     }
