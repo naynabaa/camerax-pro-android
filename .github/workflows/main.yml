@@ -24,11 +24,18 @@ jobs:
           java-version: '17'
           cache: 'gradle'
 
-      # Step 2: Configure Android SDK from pre-installed runner environment
-      - name: Configure Android SDK
+      # Step 2: Configure Android SDK & Install Required Packages
+      - name: Install Android SDK Packages
         run: |
           echo "sdk.dir=$ANDROID_HOME" > local.properties
+          mkdir -p "$ANDROID_HOME/licenses" || true
+          printf "24333f8a63cbd8324f28c4ff9d4f8eab5776777d
+d56f5187479451eabf01fb78af6dfcb131a6481e
+" > "$ANDROID_HOME/licenses/android-sdk-license" || true
+          printf "84831b9409646a918e30573bab4c9c91346d8abd
+" > "$ANDROID_HOME/licenses/android-sdk-preview-license" || true
           yes | sdkmanager --licenses || true
+          sdkmanager --install "platform-tools" "platforms;android-34" "build-tools;34.0.0"
 
       # Step 3: Ensure Gradle wrapper script is executable
       - name: Make Gradle Wrapper Executable
