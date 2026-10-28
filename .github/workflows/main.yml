@@ -2,9 +2,9 @@ name: Build Android APK
 
 on:
   push:
-    branches: [ "main", "master" ]
+    branches: ["main", "master"]
   pull_request:
-    branches: [ "main", "master" ]
+    branches: ["main", "master"]
   workflow_dispatch:
 
 jobs:
@@ -13,50 +13,46 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Repository
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Step 1: Install JDK 17
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
-          distribution: 'temurin'
-          java-version: '17'
-          cache: 'gradle'
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
 
-      # Step 2: Configure Android SDK & Install Required Packages
-      - name: Install Android SDK Packages
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Configure local.properties
+        run: echo "sdk.dir=$ANDROID_HOME" > local.properties
+
+      - name: Accept Android SDK licenses
         run: |
-          echo "sdk.dir=$ANDROID_HOME" > local.properties
-          mkdir -p "$ANDROID_HOME/licenses" || true
-          printf "24333f8a63cbd8324f28c4ff9d4f8eab5776777d
-d56f5187479451eabf01fb78af6dfcb131a6481e
-" > "$ANDROID_HOME/licenses/android-sdk-license" || true
-          printf "84831b9409646a918e30573bab4c9c91346d8abd
-" > "$ANDROID_HOME/licenses/android-sdk-preview-license" || true
-          yes | sdkmanager --licenses || true
+          yes | sdkmanager --licenses >/dev/null || true
+
+      - name: Install Android SDK packages
+        run: |
           sdkmanager --install "platform-tools" "platforms;android-34" "build-tools;34.0.0"
 
-      # Step 3: Ensure Gradle wrapper script is executable
-      - name: Make Gradle Wrapper Executable
-        run: chmod +x gradlew
+      - name: Make Gradle wrapper executable
+        run: chmod +x ./gradlew
 
-      # Step 4: Build Debug APK using Gradle wrapper
       - name: Build Debug APK
         run: ./gradlew assembleDebug --no-daemon --stacktrace
 
-      # Step 5: Verify APK was generated
-      - name: Verify APK Exists
+      - name: Verify APK exists
         run: |
-          ls -la app/build/outputs/apk/debug/
+          ls -la app/build/outputs/apk/debug
           test -f app/build/outputs/apk/debug/app-debug.apk
 
-      # Step 6: Upload APK as downloadable artifact
-      - name: Upload Debug APK Artifact
+      - name: Upload APK artifact
+        if: success()
         uses: actions/upload-artifact@v4
-        if: always()
         with:
           name: CameraX-Debug-APK
           path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
           retention-days: 14
-          if-no-files-found: warn
