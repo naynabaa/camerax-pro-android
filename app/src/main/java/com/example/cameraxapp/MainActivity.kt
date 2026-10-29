@@ -11,6 +11,7 @@ import android.os.Looper
 import android.os.SystemClock
 import android.provider.MediaStore
 import android.util.Log
+import android.view.GestureDetector
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.view.View
@@ -36,6 +37,7 @@ import androidx.camera.core.UseCaseGroup
 import androidx.camera.video.Recorder
 import androidx.camera.video.Recording
 import androidx.camera.video.VideoCapture
+import androidx.camera.video.VideoRecordEvent
 import androidx.core.content.ContextCompat
 import androidx.core.content.PermissionChecker
 import android.content.Context
@@ -200,8 +202,14 @@ class MainActivity : AppCompatActivity() {
         // Pro Mode: Countdown Timer Toggle (Off -> 3s -> 5s -> 10s)
         viewBinding.btnTimer.setOnClickListener { cycleCountdownTimer() }
 
-        // Pro Mode: Grid Toggle (Rule of Thirds -> Golden Spiral -> Phi -> Diagonal -> CinemaScope -> Off)
-        viewBinding.btnGrid.setOnClickListener { toggleGridLines() }
+        // Pro Mode: Grid Quick Touch & Cycle (Tap top button or viewfinder badge to cycle immediately)
+        viewBinding.btnGrid.setOnClickListener { cycleToNextGrid() }
+        viewBinding.btnGrid.setOnLongClickListener {
+            setGridMode(ProOverlayView.GridType.NONE)
+            Toast.makeText(this, "Grid: OFF (No Grid)", Toast.LENGTH_SHORT).show()
+            true
+        }
+        viewBinding.btnQuickGridCycle.setOnClickListener { cycleToNextGrid() }
 
         // Pro Studio Drawer Open / Close
         viewBinding.btnProStudio.setOnClickListener {
@@ -221,8 +229,7 @@ class MainActivity : AppCompatActivity() {
         viewBinding.btnZoom5.setOnClickListener { setZoomLevel(5.0f, viewBinding.btnZoom5) }
 
         viewBinding.btnFlash.setOnClickListener { toggleFlashMode() }
-        setupPinchToZoom()
-        setupTapToFocus()
+        setupViewfinderGestures()
     }
 
     /**
@@ -433,6 +440,27 @@ class MainActivity : AppCompatActivity() {
 
     private var lastActiveGrid = ProOverlayView.GridType.RULE_OF_THIRDS
 
+    private fun cycleToNextGrid() {
+        val nextMode = when (viewBinding.proOverlayView.currentGrid) {
+            ProOverlayView.GridType.NONE -> ProOverlayView.GridType.RULE_OF_THIRDS
+            ProOverlayView.GridType.RULE_OF_THIRDS -> ProOverlayView.GridType.GOLDEN_SPIRAL
+            ProOverlayView.GridType.GOLDEN_SPIRAL -> ProOverlayView.GridType.GOLDEN_RATIO_PHI
+            ProOverlayView.GridType.GOLDEN_RATIO_PHI -> ProOverlayView.GridType.DIAGONAL_SYMMETRY
+            ProOverlayView.GridType.DIAGONAL_SYMMETRY -> ProOverlayView.GridType.CINEMATIC_239
+            ProOverlayView.GridType.CINEMATIC_239 -> ProOverlayView.GridType.NONE
+        }
+        setGridMode(nextMode)
+        val name = when (nextMode) {
+            ProOverlayView.GridType.NONE -> "Grid: OFF (No Grid)"
+            ProOverlayView.GridType.RULE_OF_THIRDS -> "Grid: Rule of Thirds"
+            ProOverlayView.GridType.GOLDEN_SPIRAL -> "Grid: Golden Spiral"
+            ProOverlayView.GridType.GOLDEN_RATIO_PHI -> "Grid: Golden Ratio (Phi)"
+            ProOverlayView.GridType.DIAGONAL_SYMMETRY -> "Grid: Dynamic Symmetry"
+            ProOverlayView.GridType.CINEMATIC_239 -> "Grid: 2.39:1 CinemaScope"
+        }
+        Toast.makeText(this, name, Toast.LENGTH_SHORT).show()
+    }
+
     private fun toggleGridLines() {
         if (viewBinding.proOverlayView.currentGrid != ProOverlayView.GridType.NONE) {
             // Immediately toggle OFF
@@ -450,6 +478,15 @@ class MainActivity : AppCompatActivity() {
         viewBinding.proOverlayView.currentGrid = mode
         val isOff = mode == ProOverlayView.GridType.NONE
         viewBinding.btnGrid.alpha = if (isOff) 0.5f else 1.0f
+
+        viewBinding.btnQuickGridCycle.text = when (mode) {
+            ProOverlayView.GridType.NONE -> "GRID: OFF"
+            ProOverlayView.GridType.RULE_OF_THIRDS -> "GRID: THIRDS"
+            ProOverlayView.GridType.GOLDEN_SPIRAL -> "GRID: SPIRAL"
+            ProOverlayView.GridType.GOLDEN_RATIO_PHI -> "GRID: PHI"
+            ProOverlayView.GridType.DIAGONAL_SYMMETRY -> "GRID: DIAG"
+            ProOverlayView.GridType.CINEMATIC_239 -> "GRID: 2.39:1"
+        }
 
         val activeBg = ContextCompat.getColorStateList(this, android.R.color.holo_blue_dark)
         val inactiveBg = ContextCompat.getColorStateList(this, android.R.color.darker_gray)
@@ -680,7 +717,7 @@ class MainActivity : AppCompatActivity() {
         imageCapture?.flashMode = flashMode
     }
 
-    private fun setupPinchToZoom() {
+    private fun setupViewfinderGestures() {
         val scaleGestureDetector = ScaleGestureDetector(this, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
             override fun onScale(detector: ScaleGestureDetector): Boolean {
                 val currentZoomRatio = camera?.cameraInfo?.zoomState?.value?.zoomRatio ?: 1f
@@ -688,22 +725,51 @@ class MainActivity : AppCompatActivity() {
                 return true
             }
         })
-        viewBinding.viewFinder.setOnTouchListener { _, event ->
-            scaleGestureDetector.onTouchEvent(event)
-            return@setOnTouchListener true
-        }
-    }
 
-    private fun setupTapToFocus() {
-        viewBinding.viewFinder.setOnTouchListener { view, event ->
-            if (event.action == MotionEvent.ACTION_UP) {
-                val point = viewBinding.viewFinder.meteringPointFactory.createPoint(event.x, event.y)
+        val gestureDetector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
+            override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+                
+                val point = viewBinding.viewFinder.meteringPointFactory.createPoint(e.x, e.y)
                 val action = FocusMeteringAction.Builder(point).build()
                 cameraControl?.startFocusAndMetering(action)
-                view.performClick()
-                return@setOnTouchListener true
+
+                // Animate Focus Ring
+                viewBinding.focusRing.x = e.x - (viewBinding.focusRing.width / 2)
+                viewBinding.focusRing.y = e.y - (viewBinding.focusRing.height / 2)
+                viewBinding.focusRing.visibility = View.VISIBLE
+                viewBinding.focusRing.alpha = 1.0f
+                viewBinding.focusRing.scaleX = 1.3f
+                viewBinding.focusRing.scaleY = 1.3f
+                viewBinding.focusRing.animate()
+                    .scaleX(1.0f)
+                    .scaleY(1.0f)
+                    .alpha(0.8f)
+                    .setDuration(250)
+                    .withEndAction {
+                        viewBinding.focusRing.animate().alpha(0f).setStartDelay(900).setDuration(250).withEndAction {
+                            viewBinding.focusRing.visibility = View.GONE
+                        }.start()
+                    }.start()
+                
+                return true
             }
-            return@setOnTouchListener true
+
+            override fun onDoubleTap(e: MotionEvent): Boolean {
+                // Touch to change grid! Double-tap on viewfinder cycles through composition grids
+                cycleToNextGrid()
+                return true
+            }
+        })
+
+        viewBinding.proOverlayView.setOnTouchListener { view, event ->
+            var handled = scaleGestureDetector.onTouchEvent(event)
+            if (!scaleGestureDetector.isInProgress) {
+                handled = gestureDetector.onTouchEvent(event) || handled
+            }
+            if (event.action == MotionEvent.ACTION_UP) {
+                view.performClick()
+            }
+            true
         }
     }
 

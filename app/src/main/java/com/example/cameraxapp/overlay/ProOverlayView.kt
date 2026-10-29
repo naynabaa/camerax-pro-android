@@ -24,6 +24,11 @@ class ProOverlayView @JvmOverloads constructor(
     defStyleAttr: Int = 0
 ) : View(context, attrs, defStyleAttr) {
 
+    override fun performClick(): Boolean {
+        super.performClick()
+        return true
+    }
+
     enum class GridType {
         NONE,
         RULE_OF_THIRDS,
