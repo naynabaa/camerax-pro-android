@@ -1,0 +1,425 @@
+package com.example.cameraxapp;
+
+import android.Manifest;
+import android.content.ContentValues;
+import android.content.pm.PackageManager;
+import android.os.Build;
+import android.os.Bundle;
+import android.os.CountDownTimer;
+import android.os.Handler;
+import android.os.Looper;
+import android.os.SystemClock;
+import android.provider.MediaStore;
+import android.util.Log;
+import android.view.MotionEvent;
+import android.view.View;
+import android.widget.Chronometer;
+import android.widget.ImageButton;
+import android.widget.SeekBar;
+import android.widget.TextView;
+import android.widget.Toast;
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
+import androidx.annotation.NonNull;
+import androidx.appcompat.app.AppCompatActivity;
+import androidx.camera.core.Camera;
+import androidx.camera.core.CameraSelector;
+import androidx.camera.core.ExposureState;
+import androidx.camera.core.ImageCapture;
+import androidx.camera.core.ImageCaptureException;
+import androidx.camera.core.Preview;
+import androidx.camera.lifecycle.ProcessCameraProvider;
+import androidx.camera.video.MediaStoreOutputOptions;
+import androidx.camera.video.Quality;
+import androidx.camera.video.QualitySelector;
+import androidx.camera.video.Recorder;
+import androidx.camera.video.Recording;
+import androidx.camera.video.VideoCapture;
+import androidx.camera.video.VideoRecordEvent;
+import androidx.camera.view.PreviewView;
+import androidx.core.content.ContextCompat;
+import androidx.core.content.PermissionChecker;
+import com.google.common.util.concurrent.ListenableFuture;
+
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
+/**
+ * CameraX Java Implementation with Video Recorder (Start, Pause, Resume, Stop)
+ * & Photo Pro Mode (Burst, Exposure Slider, Grid Lines, Countdown Timer).
+ */
+public class MainActivity extends AppCompatActivity {
+
+    public enum CameraMode { PHOTO, VIDEO }
+
+    private static final String TAG = "CameraXProJava";
+    private static final String FILENAME_FORMAT = "yyyy-MM-dd-HH-mm-ss-SSS";
+
+    private PreviewView viewFinder;
+    private ImageButton btnCapture, btnSwitchCamera, btnPauseResume, btnGrid;
+    private TextView tabPhoto, tabVideo, tvExposureValue, tvCountdown, tvBurstBadge, btnTimer;
+    private View recordingTimer, proModeBar, gridOverlay, exposureLayout;
+    private Chronometer chronometer;
+    private SeekBar exposureSlider;
+
+    private ImageCapture imageCapture;
+    private VideoCapture<Recorder> videoCapture;
+    private Recording recording;
+    private CameraMode cameraMode = CameraMode.PHOTO;
+
+    private boolean isRecordingPaused = false;
+    private long timeWhenStopped = 0;
+
+    private int countdownSeconds = 0;
+    private boolean isCountingDown = false;
+    private boolean isBurstCapturing = false;
+    private int burstCount = 0;
+    private final Handler burstHandler = new Handler(Looper.getMainLooper());
+    private Runnable burstRunnable;
+
+    private Camera camera;
+    private ProcessCameraProvider cameraProvider;
+    private CameraSelector cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA;
+    private ExecutorService cameraExecutor;
+
+    private final ActivityResultLauncher<String[]> activityResultLauncher =
+            registerForActivityResult(new ActivityResultContracts.RequestMultiplePermissions(), permissions -> {
+                Boolean cameraGranted = permissions.get(Manifest.permission.CAMERA);
+                if (cameraGranted != null && cameraGranted) {
+                    startCamera();
+                } else {
+                    Toast.makeText(this, "Camera permission required.", Toast.LENGTH_SHORT).show();
+                    finish();
+                }
+            });
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_main);
+
+        bindViews();
+        cameraExecutor = Executors.newSingleThreadExecutor();
+
+        setupListeners();
+        setupBurstMode();
+        setupExposureSlider();
+
+        if (allPermissionsGranted()) {
+            startCamera();
+        } else {
+            activityResultLauncher.launch(getRequiredPermissions());
+        }
+    }
+
+    private void bindViews() {
+        viewFinder = findViewById(R.id.viewFinder);
+        btnCapture = findViewById(R.id.btnCapture);
+        btnSwitchCamera = findViewById(R.id.btnSwitchCamera);
+        btnPauseResume = findViewById(R.id.btnPauseResume);
+        btnGrid = findViewById(R.id.btnGrid);
+        btnTimer = findViewById(R.id.btnTimer);
+        tabPhoto = findViewById(R.id.tabPhoto);
+        tabVideo = findViewById(R.id.tabVideo);
+        tvExposureValue = findViewById(R.id.tvExposureValue);
+        tvCountdown = findViewById(R.id.tvCountdown);
+        tvBurstBadge = findViewById(R.id.tvBurstBadge);
+        recordingTimer = findViewById(R.id.recordingTimer);
+        proModeBar = findViewById(R.id.proModeBar);
+        gridOverlay = findViewById(R.id.proOverlayView);
+        exposureLayout = findViewById(R.id.exposureLayout);
+        chronometer = findViewById(R.id.chronometer);
+        exposureSlider = findViewById(R.id.exposureSlider);
+    }
+
+    private void setupListeners() {
+        btnSwitchCamera.setOnClickListener(v -> switchCamera());
+        btnPauseResume.setOnClickListener(v -> toggleVideoPauseResume());
+        tabPhoto.setOnClickListener(v -> setMode(CameraMode.PHOTO));
+        tabVideo.setOnClickListener(v -> setMode(CameraMode.VIDEO));
+
+        btnTimer.setOnClickListener(v -> {
+            if (countdownSeconds == 0) countdownSeconds = 3;
+            else if (countdownSeconds == 3) countdownSeconds = 5;
+            else if (countdownSeconds == 5) countdownSeconds = 10;
+            else countdownSeconds = 0;
+            btnTimer.setText(countdownSeconds == 0 ? "TIMER OFF" : countdownSeconds + "s");
+        });
+
+        btnGrid.setOnClickListener(v -> {
+            boolean visible = gridOverlay.getVisibility() == View.VISIBLE;
+            gridOverlay.setVisibility(visible ? View.GONE : View.VISIBLE);
+        });
+    }
+
+    private void setupBurstMode() {
+        btnCapture.setOnTouchListener((v, event) -> {
+            if (cameraMode != CameraMode.PHOTO) {
+                if (event.getAction() == MotionEvent.ACTION_UP) captureVideo();
+                return true;
+            }
+
+            if (event.getAction() == MotionEvent.ACTION_DOWN) {
+                isBurstCapturing = false;
+                burstCount = 0;
+                burstRunnable = () -> {
+                    if (!isCountingDown) {
+                        isBurstCapturing = true;
+                        tvBurstBadge.setVisibility(View.VISIBLE);
+                        startBurstLoop();
+                    }
+                };
+                burstHandler.postDelayed(burstRunnable, 400);
+                return true;
+            } else if (event.getAction() == MotionEvent.ACTION_UP) {
+                burstHandler.removeCallbacks(burstRunnable);
+                if (isBurstCapturing) {
+                    isBurstCapturing = false;
+                    tvBurstBadge.setVisibility(View.GONE);
+                    Toast.makeText(this, "Captured " + burstCount + " burst photos", Toast.LENGTH_SHORT).show();
+                } else {
+                    onShutterClick();
+                }
+                return true;
+            }
+            return false;
+        });
+    }
+
+    private void startBurstLoop() {
+        if (!isBurstCapturing || cameraMode != CameraMode.PHOTO) return;
+        burstCount++;
+        tvBurstBadge.setText("BURST: " + burstCount);
+        takePhoto();
+        burstHandler.postDelayed(this::startBurstLoop, 250);
+    }
+
+    private void onShutterClick() {
+        if (isCountingDown) return;
+        if (countdownSeconds > 0) {
+            isCountingDown = true;
+            tvCountdown.setVisibility(View.VISIBLE);
+            new CountDownTimer(countdownSeconds * 1000L, 1000) {
+                @Override
+                public void onTick(long millisUntilFinished) {
+                    tvCountdown.setText(String.valueOf((millisUntilFinished / 1000) + 1));
+                }
+
+                @Override
+                public void onFinish() {
+                    tvCountdown.setVisibility(View.GONE);
+                    isCountingDown = false;
+                    takePhoto();
+                }
+            }.start();
+        } else {
+            takePhoto();
+        }
+    }
+
+    private void setupExposureSlider() {
+        exposureSlider.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                if (!fromUser || camera == null) return;
+                ExposureState state = camera.getCameraInfo().getExposureState();
+                int min = state.getExposureCompensationRange().getLower();
+                int target = min + progress;
+                camera.getCameraControl().setExposureCompensationIndex(target);
+                float ev = target * state.getExposureCompensationStep().floatValue();
+                tvExposureValue.setText(String.format(Locale.US, "EV %s%.1f", ev > 0 ? "+" : "", ev));
+            }
+            @Override public void onStartTrackingTouch(SeekBar seekBar) {}
+            @Override public void onStopTrackingTouch(SeekBar seekBar) {}
+        });
+    }
+
+    private void startCamera() {
+        ListenableFuture<ProcessCameraProvider> future = ProcessCameraProvider.getInstance(this);
+        future.addListener(() -> {
+            try {
+                cameraProvider = future.get();
+                bindCameraUseCases();
+            } catch (ExecutionException | InterruptedException e) {
+                Log.e(TAG, "Provider error", e);
+            }
+        }, ContextCompat.getMainExecutor(this));
+    }
+
+    private void bindCameraUseCases() {
+        if (cameraProvider == null) return;
+
+        Preview preview = new Preview.Builder().build();
+        preview.setSurfaceProvider(viewFinder.getSurfaceProvider());
+
+        imageCapture = new ImageCapture.Builder().setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY).build();
+
+        Recorder recorder = new Recorder.Builder()
+                .setQualitySelector(QualitySelector.from(Quality.HD)).build();
+        videoCapture = VideoCapture.withOutput(recorder);
+
+        try {
+            cameraProvider.unbindAll();
+            if (cameraMode == CameraMode.PHOTO) {
+                camera = cameraProvider.bindToLifecycle(this, cameraSelector, preview, imageCapture);
+            } else {
+                camera = cameraProvider.bindToLifecycle(this, cameraSelector, preview, videoCapture);
+            }
+
+            ExposureState state = camera.getCameraInfo().getExposureState();
+            if (state.isExposureCompensationSupported()) {
+                int min = state.getExposureCompensationRange().getLower();
+                int max = state.getExposureCompensationRange().getUpper();
+                exposureSlider.setMax(max - min);
+                exposureSlider.setProgress(state.getExposureCompensationIndex() - min);
+            }
+        } catch (Exception exc) {
+            Log.e(TAG, "Binding error", exc);
+        }
+    }
+
+    private void captureVideo() {
+        if (videoCapture == null) return;
+        if (recording != null) {
+            recording.stop();
+            recording = null;
+            return;
+        }
+
+        String name = new SimpleDateFormat(FILENAME_FORMAT, Locale.US).format(System.currentTimeMillis());
+        ContentValues values = new ContentValues();
+        values.put(MediaStore.MediaColumns.DISPLAY_NAME, name);
+        values.put(MediaStore.MediaColumns.MIME_TYPE, "video/mp4");
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            values.put(MediaStore.Video.Media.RELATIVE_PATH, "Movies/CameraX-Video");
+        }
+
+        MediaStoreOutputOptions options = new MediaStoreOutputOptions.Builder(
+                getContentResolver(), MediaStore.Video.Media.EXTERNAL_CONTENT_URI)
+                .setContentValues(values).build();
+
+        var pending = videoCapture.getOutput().prepareRecording(this, options);
+        if (PermissionChecker.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PermissionChecker.PERMISSION_GRANTED) {
+            pending.withAudioEnabled();
+        }
+
+        recording = pending.start(ContextCompat.getMainExecutor(this), recordEvent -> {
+            if (recordEvent instanceof VideoRecordEvent.Start) {
+                isRecordingPaused = false;
+                btnCapture.setImageResource(R.drawable.bg_record_button_active);
+                recordingTimer.setVisibility(View.VISIBLE);
+                btnPauseResume.setVisibility(View.VISIBLE);
+                btnPauseResume.setImageResource(R.drawable.ic_pause);
+                timeWhenStopped = 0L;
+                chronometer.setBase(SystemClock.elapsedRealtime());
+                chronometer.start();
+            } else if (recordEvent instanceof VideoRecordEvent.Pause) {
+                isRecordingPaused = true;
+                timeWhenStopped = SystemClock.elapsedRealtime() - chronometer.getBase();
+                chronometer.stop();
+                btnPauseResume.setImageResource(R.drawable.ic_play_arrow);
+            } else if (recordEvent instanceof VideoRecordEvent.Resume) {
+                isRecordingPaused = false;
+                chronometer.setBase(SystemClock.elapsedRealtime() - timeWhenStopped);
+                chronometer.start();
+                btnPauseResume.setImageResource(R.drawable.ic_pause);
+            } else if (recordEvent instanceof VideoRecordEvent.Finalize) {
+                chronometer.stop();
+                timeWhenStopped = 0L;
+                recordingTimer.setVisibility(View.GONE);
+                btnPauseResume.setVisibility(View.GONE);
+                btnCapture.setImageResource(R.drawable.bg_record_button_idle);
+            }
+        });
+    }
+
+    private void toggleVideoPauseResume() {
+        if (recording == null) return;
+        if (isRecordingPaused) {
+            recording.resume();
+        } else {
+            recording.pause();
+        }
+    }
+
+    private void takePhoto() {
+        if (imageCapture == null) return;
+        String name = new SimpleDateFormat(FILENAME_FORMAT, Locale.US).format(System.currentTimeMillis());
+        ContentValues values = new ContentValues();
+        values.put(MediaStore.MediaColumns.DISPLAY_NAME, name);
+        values.put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg");
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            values.put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/CameraX-Image");
+        }
+
+        ImageCapture.OutputFileOptions options = new ImageCapture.OutputFileOptions.Builder(
+                getContentResolver(), MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values).build();
+
+        imageCapture.takePicture(options, ContextCompat.getMainExecutor(this), new ImageCapture.OnImageSavedCallback() {
+            @Override
+            public void onImageSaved(@NonNull ImageCapture.OutputFileResults results) {
+                Log.d(TAG, "Saved: " + results.getSavedUri());
+            }
+
+            @Override
+            public void onError(@NonNull ImageCaptureException exc) {
+                Log.e(TAG, "Error: " + exc.getMessage());
+            }
+        });
+    }
+
+    private void setMode(CameraMode mode) {
+        if (recording != null) return;
+        cameraMode = mode;
+        if (mode == CameraMode.PHOTO) {
+            tabPhoto.setTextColor(getResources().getColor(android.R.color.white));
+            tabVideo.setTextColor(getResources().getColor(android.R.color.darker_gray));
+            btnCapture.setImageResource(R.drawable.bg_shutter_button);
+            recordingTimer.setVisibility(View.GONE);
+            btnPauseResume.setVisibility(View.GONE);
+            proModeBar.setVisibility(View.VISIBLE);
+        } else {
+            tabVideo.setTextColor(getResources().getColor(android.R.color.white));
+            tabPhoto.setTextColor(getResources().getColor(android.R.color.darker_gray));
+            btnCapture.setImageResource(R.drawable.bg_record_button_idle);
+            proModeBar.setVisibility(View.GONE);
+        }
+        bindCameraUseCases();
+    }
+
+    private void switchCamera() {
+        if (recording != null) return;
+        cameraSelector = (cameraSelector == CameraSelector.DEFAULT_BACK_CAMERA)
+                ? CameraSelector.DEFAULT_FRONT_CAMERA : CameraSelector.DEFAULT_BACK_CAMERA;
+        bindCameraUseCases();
+    }
+
+    private boolean allPermissionsGranted() {
+        for (String perm : getRequiredPermissions()) {
+            if (ContextCompat.checkSelfPermission(this, perm) != PackageManager.PERMISSION_GRANTED) return false;
+        }
+        return true;
+    }
+
+    private String[] getRequiredPermissions() {
+        List<String> list = new ArrayList<>();
+        list.add(Manifest.permission.CAMERA);
+        list.add(Manifest.permission.RECORD_AUDIO);
+        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
+            list.add(Manifest.permission.WRITE_EXTERNAL_STORAGE);
+        }
+        return list.toArray(new String[0]);
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        cameraExecutor.shutdown();
+        burstHandler.removeCallbacksAndMessages(null);
+    }
+}

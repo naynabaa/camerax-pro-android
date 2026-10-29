@@ -18,7 +18,7 @@ jobs:
 
       # Step 1: Install JDK 17
       - name: Set up JDK 17
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
@@ -28,18 +28,26 @@ jobs:
       - name: Setup local.properties
         run: echo "sdk.dir=$ANDROID_HOME" > local.properties
 
-      # Step 3: Ensure Gradle wrapper script is executable
-      - name: Make Gradle wrapper executable
-        run: chmod +x gradlew
+      # Step 3: Ensure Gradle wrapper script is executable or initialize
+      - name: Prepare Gradle wrapper
+        run: |
+          if [ -f gradlew ]; then
+            chmod +x gradlew
+          fi
 
-      # Step 4: Build Debug APK using Gradle wrapper
+      # Step 4: Build Debug APK using Gradle wrapper with fallback to system Gradle
       - name: Build Debug APK
-        run: ./gradlew assembleDebug --no-daemon --stacktrace
+        run: |
+          if [ -f gradlew ]; then
+            ./gradlew assembleDebug --no-daemon --stacktrace
+          else
+            gradle assembleDebug --no-daemon --stacktrace
+          fi
 
       # Step 5: Verify APK was generated
       - name: Verify APK Exists
         run: |
-          ls -la app/build/outputs/apk/debug/
+          ls -la app/build/outputs/apk/debug/ || true
           test -f app/build/outputs/apk/debug/app-debug.apk
 
       # Step 6: Upload APK as downloadable artifact
