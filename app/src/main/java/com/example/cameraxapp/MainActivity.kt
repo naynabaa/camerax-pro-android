@@ -3,6 +3,7 @@ package com.example.cameraxapp
 import android.Manifest
 import android.content.ContentValues
 import android.content.pm.PackageManager
+import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
 import android.os.CountDownTimer
@@ -202,14 +203,20 @@ class MainActivity : AppCompatActivity() {
         // Pro Mode: Countdown Timer Toggle (Off -> 3s -> 5s -> 10s)
         viewBinding.btnTimer.setOnClickListener { cycleCountdownTimer() }
 
-        // Pro Mode: Grid Quick Touch & Cycle (Tap top button or viewfinder badge to cycle immediately)
+        // Pro Mode: Grid Quick Touch & Cycle (Tap top button to cycle immediately, long-press to turn off)
         viewBinding.btnGrid.setOnClickListener { cycleToNextGrid() }
         viewBinding.btnGrid.setOnLongClickListener {
             setGridMode(ProOverlayView.GridType.NONE)
             Toast.makeText(this, "Grid: OFF (No Grid)", Toast.LENGTH_SHORT).show()
             true
         }
-        viewBinding.btnQuickGridCycle.setOnClickListener { cycleToNextGrid() }
+        viewBinding.btnRotateSpiral.setOnClickListener {
+            val current = viewBinding.proOverlayView.spiralOrientation
+            val next = (current + 1) % 4
+            viewBinding.proOverlayView.spiralOrientation = next
+            viewBinding.btnRotateSpiral.text = "⟳ ${next * 90}°"
+            Toast.makeText(this, "Spiral Orientation: ${next * 90}°", Toast.LENGTH_SHORT).show()
+        }
 
         // Pro Studio Drawer Open / Close
         viewBinding.btnProStudio.setOnClickListener {
@@ -479,14 +486,9 @@ class MainActivity : AppCompatActivity() {
         val isOff = mode == ProOverlayView.GridType.NONE
         viewBinding.btnGrid.alpha = if (isOff) 0.5f else 1.0f
 
-        viewBinding.btnQuickGridCycle.text = when (mode) {
-            ProOverlayView.GridType.NONE -> "GRID: OFF"
-            ProOverlayView.GridType.RULE_OF_THIRDS -> "GRID: THIRDS"
-            ProOverlayView.GridType.GOLDEN_SPIRAL -> "GRID: SPIRAL"
-            ProOverlayView.GridType.GOLDEN_RATIO_PHI -> "GRID: PHI"
-            ProOverlayView.GridType.DIAGONAL_SYMMETRY -> "GRID: DIAG"
-            ProOverlayView.GridType.CINEMATIC_239 -> "GRID: 2.39:1"
-        }
+        val isSpiral = mode == ProOverlayView.GridType.GOLDEN_SPIRAL
+        viewBinding.btnRotateSpiral.visibility = if (isSpiral) View.VISIBLE else View.GONE
+        viewBinding.btnRotateSpiral.text = "⟳ ${viewBinding.proOverlayView.spiralOrientation * 90}°"
 
         val activeBg = ContextCompat.getColorStateList(this, android.R.color.holo_blue_dark)
         val inactiveBg = ContextCompat.getColorStateList(this, android.R.color.darker_gray)
@@ -567,6 +569,9 @@ class MainActivity : AppCompatActivity() {
                         isRecordingPaused = false
                         viewBinding.btnCapture.setImageResource(R.drawable.bg_record_button_active)
                         viewBinding.recordingTimer.visibility = View.VISIBLE
+                        viewBinding.tvRecordingStatus.text = "REC"
+                        viewBinding.tvRecordingStatus.setTextColor(Color.parseColor("#EF4444"))
+                        viewBinding.recordingDot.visibility = View.VISIBLE
                         viewBinding.btnPauseResume.visibility = View.VISIBLE
                         viewBinding.btnPauseResume.setImageResource(R.drawable.ic_pause)
 
@@ -585,6 +590,9 @@ class MainActivity : AppCompatActivity() {
                         // Save exact elapsed time in milliseconds
                         timeWhenStopped = SystemClock.elapsedRealtime() - viewBinding.chronometer.base
                         viewBinding.chronometer.stop()
+                        viewBinding.tvRecordingStatus.text = "PAUSED"
+                        viewBinding.tvRecordingStatus.setTextColor(Color.parseColor("#F59E0B"))
+                        viewBinding.recordingDot.visibility = View.GONE
                         viewBinding.btnPauseResume.setImageResource(R.drawable.ic_play_arrow)
                         Toast.makeText(this, "Recording Paused", Toast.LENGTH_SHORT).show()
                     }
@@ -594,6 +602,9 @@ class MainActivity : AppCompatActivity() {
                         // Offset base by saved elapsed time so counting resumes seamlessly from where it stopped
                         viewBinding.chronometer.base = SystemClock.elapsedRealtime() - timeWhenStopped
                         viewBinding.chronometer.start()
+                        viewBinding.tvRecordingStatus.text = "REC"
+                        viewBinding.tvRecordingStatus.setTextColor(Color.parseColor("#EF4444"))
+                        viewBinding.recordingDot.visibility = View.VISIBLE
                         viewBinding.btnPauseResume.setImageResource(R.drawable.ic_pause)
                         Toast.makeText(this, "Recording Resumed", Toast.LENGTH_SHORT).show()
                     }
@@ -601,7 +612,10 @@ class MainActivity : AppCompatActivity() {
                     is VideoRecordEvent.Finalize -> {
                         viewBinding.chronometer.stop()
                         timeWhenStopped = 0L
-                        viewBinding.recordingTimer.visibility = View.GONE
+                        viewBinding.tvRecordingStatus.text = "STANDBY"
+                        viewBinding.tvRecordingStatus.setTextColor(ContextCompat.getColor(this, android.R.color.darker_gray))
+                        viewBinding.recordingDot.visibility = View.GONE
+                        viewBinding.chronometer.text = "00:00:00"
                         viewBinding.btnPauseResume.visibility = View.GONE
                         viewBinding.btnCapture.setImageResource(R.drawable.bg_record_button_idle)
 
@@ -694,6 +708,11 @@ class MainActivity : AppCompatActivity() {
             viewBinding.tabPhoto.setTextColor(ContextCompat.getColor(this, android.R.color.darker_gray))
             viewBinding.btnCapture.setImageResource(R.drawable.bg_record_button_idle)
             viewBinding.proModeBar.visibility = View.GONE
+            viewBinding.recordingTimer.visibility = View.VISIBLE
+            viewBinding.tvRecordingStatus.text = "STANDBY"
+            viewBinding.tvRecordingStatus.setTextColor(ContextCompat.getColor(this, android.R.color.darker_gray))
+            viewBinding.recordingDot.visibility = View.GONE
+            viewBinding.chronometer.text = "00:00:00"
         }
         bindCameraUseCases()
     }

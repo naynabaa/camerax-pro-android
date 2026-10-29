@@ -234,56 +234,85 @@ class ProOverlayView @JvmOverloads constructor(
         var right = w
         var bottom = h
 
-        val phi = 1.61803398875f
-        var dir = spiralOrientation // 0: Right, 1: Down, 2: Left, 3: Up
-
         val arcOval = RectF()
+        // Orientation controls 4 corner origin positions:
+        // 0: Top-Left, 1: Top-Right, 2: Bottom-Right, 3: Bottom-Left
+        var stepDir = (spiralOrientation % 4)
 
-        for (i in 0 until 8) {
+        for (i in 0 until 9) {
             val curW = right - left
             val curH = bottom - top
             if (curW < 8f || curH < 8f) break
 
-            when (dir % 4) {
-                0 -> {
-                    // Cut square from left or right based on aspect
-                    val squareSize = curH
-                    val squareRight = left + squareSize
-                    spiralBoxesPath.addRect(left, top, squareRight, bottom, Path.Direction.CW)
+            val isHoriz = curW >= curH
 
-                    arcOval.set(left, top, left + squareSize * 2f, top + squareSize * 2f)
-                    spiralPath.arcTo(arcOval, 180f, 90f, i == 0)
-                    left = squareRight
+            when (stepDir % 4) {
+                0 -> {
+                    val size = if (isHoriz) curH else curW
+                    if (isHoriz) {
+                        val squareRight = left + size
+                        spiralBoxesPath.addRect(left, top, squareRight, bottom, Path.Direction.CW)
+                        arcOval.set(left, top, left + size * 2f, top + size * 2f)
+                        spiralPath.arcTo(arcOval, 180f, 90f, i == 0)
+                        left = squareRight
+                    } else {
+                        val squareBottom = top + size
+                        spiralBoxesPath.addRect(left, top, right, squareBottom, Path.Direction.CW)
+                        arcOval.set(left, top, left + size * 2f, top + size * 2f)
+                        spiralPath.arcTo(arcOval, 180f, 90f, i == 0)
+                        top = squareBottom
+                    }
                 }
                 1 -> {
-                    val squareSize = curW
-                    val squareBottom = top + squareSize
-                    spiralBoxesPath.addRect(left, top, right, squareBottom, Path.Direction.CW)
-
-                    arcOval.set(left - squareSize, top, right, top + squareSize * 2f)
-                    spiralPath.arcTo(arcOval, 270f, 90f, i == 0)
-                    top = squareBottom
+                    val size = if (isHoriz) curH else curW
+                    if (isHoriz) {
+                        val squareLeft = right - size
+                        spiralBoxesPath.addRect(squareLeft, top, right, bottom, Path.Direction.CW)
+                        arcOval.set(right - size * 2f, top, right, top + size * 2f)
+                        spiralPath.arcTo(arcOval, 270f, 90f, i == 0)
+                        right = squareLeft
+                    } else {
+                        val squareBottom = top + size
+                        spiralBoxesPath.addRect(left, top, right, squareBottom, Path.Direction.CW)
+                        arcOval.set(right - size * 2f, top, right, top + size * 2f)
+                        spiralPath.arcTo(arcOval, 270f, 90f, i == 0)
+                        top = squareBottom
+                    }
                 }
                 2 -> {
-                    val squareSize = curH
-                    val squareLeft = right - squareSize
-                    spiralBoxesPath.addRect(squareLeft, top, right, bottom, Path.Direction.CW)
-
-                    arcOval.set(squareLeft - squareSize, bottom - squareSize * 2f, right, bottom)
-                    spiralPath.arcTo(arcOval, 0f, 90f, i == 0)
-                    right = squareLeft
+                    val size = if (isHoriz) curH else curW
+                    if (isHoriz) {
+                        val squareLeft = right - size
+                        spiralBoxesPath.addRect(squareLeft, top, right, bottom, Path.Direction.CW)
+                        arcOval.set(right - size * 2f, bottom - size * 2f, right, bottom)
+                        spiralPath.arcTo(arcOval, 0f, 90f, i == 0)
+                        right = squareLeft
+                    } else {
+                        val squareTop = bottom - size
+                        spiralBoxesPath.addRect(left, squareTop, right, bottom, Path.Direction.CW)
+                        arcOval.set(right - size * 2f, bottom - size * 2f, right, bottom)
+                        spiralPath.arcTo(arcOval, 0f, 90f, i == 0)
+                        bottom = squareTop
+                    }
                 }
                 3 -> {
-                    val squareSize = curW
-                    val squareTop = bottom - squareSize
-                    spiralBoxesPath.addRect(left, squareTop, right, bottom, Path.Direction.CW)
-
-                    arcOval.set(left, squareTop - squareSize, left + squareSize * 2f, bottom)
-                    spiralPath.arcTo(arcOval, 90f, 90f, i == 0)
-                    bottom = squareTop
+                    val size = if (isHoriz) curH else curW
+                    if (isHoriz) {
+                        val squareRight = left + size
+                        spiralBoxesPath.addRect(left, top, squareRight, bottom, Path.Direction.CW)
+                        arcOval.set(left, bottom - size * 2f, left + size * 2f, bottom)
+                        spiralPath.arcTo(arcOval, 90f, 90f, i == 0)
+                        left = squareRight
+                    } else {
+                        val squareTop = bottom - size
+                        spiralBoxesPath.addRect(left, squareTop, right, bottom, Path.Direction.CW)
+                        arcOval.set(left, bottom - size * 2f, left + size * 2f, bottom)
+                        spiralPath.arcTo(arcOval, 90f, 90f, i == 0)
+                        bottom = squareTop
+                    }
                 }
             }
-            dir++
+            stepDir++
         }
     }
 
