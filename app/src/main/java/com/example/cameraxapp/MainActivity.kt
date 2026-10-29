@@ -110,8 +110,17 @@ class MainActivity : AppCompatActivity() {
     private var isBurstCapturing = false
     private var burstCount = 0
     private val burstHandler = Handler(Looper.getMainLooper())
-    private var burstRunnable: Runnable? = null
     private var isGridVisible = true
+
+    // Auto Trigger Interval Loop Recorder (Auto Record -> Auto Pause -> Auto Resume)
+    private var isAutoLoopEnabled = false
+    private var autoRecordDuration = 5 // seconds of active recording take
+    private var autoPauseDuration = 3 // seconds of auto pause standby
+    private var autoLoopIteration = 0
+    private var autoPhaseRemaining = 0
+    private var isAutoLoopPausedPhase = false
+    private val autoLoopHandler = Handler(Looper.getMainLooper())
+    private var autoLoopRunnable: Runnable? = null
 
     // Electronic Virtual Horizon (60 FPS Sensor-Driven Roll & Pitch Level Gauge)
     private lateinit var sensorManager: SensorManager
@@ -202,6 +211,9 @@ class MainActivity : AppCompatActivity() {
 
         // Pro Mode: Countdown Timer Toggle (Off -> 3s -> 5s -> 10s)
         viewBinding.btnTimer.setOnClickListener { cycleCountdownTimer() }
+
+        // Video Auto Trigger Loop Cycle (Auto Record & Pause Loop)
+        viewBinding.btnAutoLoop.setOnClickListener { cycleAutoLoopTimer() }
 
         // Pro Mode: Grid Quick Touch & Cycle (Tap top button to cycle immediately, long-press to turn off)
         viewBinding.btnGrid.setOnClickListener { cycleToNextGrid() }
@@ -404,6 +416,105 @@ class MainActivity : AppCompatActivity() {
         Toast.makeText(this, "Timer: ${if (countdownSeconds == 0) "Off" else "${countdownSeconds}s"}", Toast.LENGTH_SHORT).show()
     }
 
+    // Auto Trigger Interval Loop Cycle (Auto Record -> Auto Pause -> Auto Resume Loop)
+    private fun cycleAutoLoopTimer() {
+        when {
+            !isAutoLoopEnabled -> {
+                isAutoLoopEnabled = true
+                autoRecordDuration = 5
+                autoPauseDuration = 3
+                viewBinding.btnAutoLoop.text = "LOOP: 5s/3s"
+                viewBinding.btnAutoLoop.setTextColor(Color.parseColor("#FBBF24"))
+                Toast.makeText(this, "Auto Loop: 5s Record / 3s Pause", Toast.LENGTH_SHORT).show()
+            }
+            autoRecordDuration == 5 -> {
+                autoRecordDuration = 10
+                autoPauseDuration = 5
+                viewBinding.btnAutoLoop.text = "LOOP: 10s/5s"
+                viewBinding.btnAutoLoop.setTextColor(Color.parseColor("#FBBF24"))
+                Toast.makeText(this, "Auto Loop: 10s Record / 5s Pause", Toast.LENGTH_SHORT).show()
+            }
+            autoRecordDuration == 10 -> {
+                autoRecordDuration = 15
+                autoPauseDuration = 5
+                viewBinding.btnAutoLoop.text = "LOOP: 15s/5s"
+                viewBinding.btnAutoLoop.setTextColor(Color.parseColor("#FBBF24"))
+                Toast.makeText(this, "Auto Loop: 15s Record / 5s Pause", Toast.LENGTH_SHORT).show()
+            }
+            autoRecordDuration == 15 -> {
+                autoRecordDuration = 30
+                autoPauseDuration = 10
+                viewBinding.btnAutoLoop.text = "LOOP: 30s/10s"
+                viewBinding.btnAutoLoop.setTextColor(Color.parseColor("#FBBF24"))
+                Toast.makeText(this, "Auto Loop: 30s Record / 10s Pause", Toast.LENGTH_SHORT).show()
+            }
+            else -> {
+                isAutoLoopEnabled = false
+                viewBinding.btnAutoLoop.text = "LOOP OFF"
+                viewBinding.btnAutoLoop.setTextColor(ContextCompat.getColor(this, android.R.color.white))
+                Toast.makeText(this, "Auto Loop: Disabled", Toast.LENGTH_SHORT).show()
+            }
+        }
+        updateAutoLoopHud()
+    }
+
+    private fun startAutoLoopTicker() {
+        stopAutoLoopTicker()
+        if (!isAutoLoopEnabled) return
+        autoLoopIteration = 1
+        autoPhaseRemaining = autoRecordDuration
+        isAutoLoopPausedPhase = false
+        updateAutoLoopHud()
+
+        autoLoopRunnable = object : Runnable {
+            override fun run() {
+                if (recording == null) return
+                autoPhaseRemaining--
+                if (autoPhaseRemaining <= 0) {
+                    val curRec = recording ?: return
+                    if (!isAutoLoopPausedPhase) {
+                        // Switch from recording to auto pause
+                        isAutoLoopPausedPhase = true
+                        autoPhaseRemaining = autoPauseDuration
+                        curRec.pause()
+                    } else {
+                        // Switch from paused to auto resume (next take)
+                        isAutoLoopPausedPhase = false
+                        autoLoopIteration++
+                        autoPhaseRemaining = autoRecordDuration
+                        curRec.resume()
+                    }
+                }
+                updateAutoLoopHud()
+                autoLoopHandler.postDelayed(this, 1000)
+            }
+        }
+        autoLoopHandler.postDelayed(autoLoopRunnable!!, 1000)
+    }
+
+    private fun stopAutoLoopTicker() {
+        autoLoopRunnable?.let { autoLoopHandler.removeCallbacks(it) }
+        autoLoopRunnable = null
+    }
+
+    private fun updateAutoLoopHud() {
+        if (!isAutoLoopEnabled) {
+            viewBinding.tvAutoLoopHud.visibility = View.GONE
+            return
+        }
+        viewBinding.tvAutoLoopHud.visibility = View.VISIBLE
+        if (recording == null) {
+            viewBinding.tvAutoLoopHud.text = "AUTO: ${autoRecordDuration}s/${autoPauseDuration}s"
+            viewBinding.tvAutoLoopHud.setTextColor(Color.parseColor("#10B981"))
+        } else if (!isAutoLoopPausedPhase) {
+            viewBinding.tvAutoLoopHud.text = "● AUTO-REC ${autoPhaseRemaining}s (T#${autoLoopIteration})"
+            viewBinding.tvAutoLoopHud.setTextColor(Color.parseColor("#EF4444"))
+        } else {
+            viewBinding.tvAutoLoopHud.text = "⏸ AUTO-PAUSE ${autoPhaseRemaining}s (NEXT #${autoLoopIteration + 1})"
+            viewBinding.tvAutoLoopHud.setTextColor(Color.parseColor("#F59E0B"))
+        }
+    }
+
     /**
      * 3. Photo Pro Mode: Manual Exposure Compensation Slider
      */
@@ -580,6 +691,8 @@ class MainActivity : AppCompatActivity() {
                         viewBinding.chronometer.base = SystemClock.elapsedRealtime()
                         viewBinding.chronometer.start()
 
+                        startAutoLoopTicker()
+
                         viewBinding.tabPhoto.isEnabled = false
                         viewBinding.tabVideo.isEnabled = false
                         viewBinding.btnSwitchCamera.isEnabled = false
@@ -610,6 +723,7 @@ class MainActivity : AppCompatActivity() {
                     }
 
                     is VideoRecordEvent.Finalize -> {
+                        stopAutoLoopTicker()
                         viewBinding.chronometer.stop()
                         timeWhenStopped = 0L
                         viewBinding.tvRecordingStatus.text = "STANDBY"
@@ -703,16 +817,21 @@ class MainActivity : AppCompatActivity() {
             viewBinding.recordingTimer.visibility = View.GONE
             viewBinding.btnPauseResume.visibility = View.GONE
             viewBinding.proModeBar.visibility = View.VISIBLE
+            viewBinding.btnTimer.visibility = View.VISIBLE
+            viewBinding.btnAutoLoop.visibility = View.GONE
         } else {
             viewBinding.tabVideo.setTextColor(ContextCompat.getColor(this, android.R.color.white))
             viewBinding.tabPhoto.setTextColor(ContextCompat.getColor(this, android.R.color.darker_gray))
             viewBinding.btnCapture.setImageResource(R.drawable.bg_record_button_idle)
-            viewBinding.proModeBar.visibility = View.GONE
+            viewBinding.proModeBar.visibility = View.VISIBLE
+            viewBinding.btnTimer.visibility = View.GONE
+            viewBinding.btnAutoLoop.visibility = View.VISIBLE
             viewBinding.recordingTimer.visibility = View.VISIBLE
             viewBinding.tvRecordingStatus.text = "STANDBY"
             viewBinding.tvRecordingStatus.setTextColor(ContextCompat.getColor(this, android.R.color.darker_gray))
             viewBinding.recordingDot.visibility = View.GONE
             viewBinding.chronometer.text = "00:00:00"
+            updateAutoLoopHud()
         }
         bindCameraUseCases()
     }
