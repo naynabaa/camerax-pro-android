@@ -732,6 +732,134 @@
                 android:textColor="#FFFFFF"
                 android:backgroundTint="#334155" />
         </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/scopesRow"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginTop="6dp"
+            app:layout_constraintTop_toBottomOf="@id/guidesRow">
+
+            <Button
+                android:id="@+id/btnToggleZebra"
+                android:layout_width="0dp"
+                android:layout_height="36dp"
+                android:layout_weight="1"
+                android:text="Zebra: OFF"
+                android:textSize="9sp"
+                android:textColor="#FFFFFF"
+                android:backgroundTint="#334155" />
+
+            <Button
+                android:id="@+id/btnToggleHistogram"
+                android:layout_width="0dp"
+                android:layout_height="36dp"
+                android:layout_weight="1"
+                android:layout_marginStart="4dp"
+                android:text="Histo: OFF"
+                android:textSize="9sp"
+                android:textColor="#FFFFFF"
+                android:backgroundTint="#334155" />
+
+            <Button
+                android:id="@+id/btnToggleVisualBalance"
+                android:layout_width="0dp"
+                android:layout_height="36dp"
+                android:layout_weight="1"
+                android:layout_marginStart="4dp"
+                android:text="Balance: OFF"
+                android:textSize="9sp"
+                android:textColor="#FFFFFF"
+                android:backgroundTint="#334155" />
+        </LinearLayout>
+
+        <!-- 3. Aspect Ratio Matte Overlays (Cinematic Crop) -->
+        <TextView
+            android:id="@+id/tvMatteLabel"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="CINEMATIC MATTE CROP OVERLAYS"
+            android:textColor="#94A3B8"
+            android:textSize="10sp"
+            android:textStyle="bold"
+            android:layout_marginTop="10dp"
+            app:layout_constraintTop_toBottomOf="@id/scopesRow"
+            app:layout_constraintStart_toStartOf="parent" />
+
+        <HorizontalScrollView
+            android:id="@+id/matteScroll"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:scrollbars="none"
+            android:layout_marginTop="4dp"
+            app:layout_constraintTop_toBottomOf="@id/tvMatteLabel">
+
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <Button
+                    android:id="@+id/btnMatteOff"
+                    android:layout_width="wrap_content"
+                    android:layout_height="34dp"
+                    android:text="NO MATTE (OFF)"
+                    android:textSize="10sp"
+                    android:textColor="#FFFFFF"
+                    android:backgroundTint="#EF4444" />
+
+                <Button
+                    android:id="@+id/btnMatteCine"
+                    android:layout_width="wrap_content"
+                    android:layout_height="34dp"
+                    android:layout_marginStart="8dp"
+                    android:text="2.39:1 Cinema"
+                    android:textSize="10sp"
+                    android:textColor="#FFFFFF"
+                    android:backgroundTint="#334155" />
+
+                <Button
+                    android:id="@+id/btnMatteSquare"
+                    android:layout_width="wrap_content"
+                    android:layout_height="34dp"
+                    android:layout_marginStart="8dp"
+                    android:text="1:1 Square"
+                    android:textSize="10sp"
+                    android:textColor="#FFFFFF"
+                    android:backgroundTint="#334155" />
+
+                <Button
+                    android:id="@+id/btnMatte916"
+                    android:layout_width="wrap_content"
+                    android:layout_height="34dp"
+                    android:layout_marginStart="8dp"
+                    android:text="9:16 Reel"
+                    android:textSize="10sp"
+                    android:textColor="#FFFFFF"
+                    android:backgroundTint="#334155" />
+
+                <Button
+                    android:id="@+id/btnMatte45"
+                    android:layout_width="wrap_content"
+                    android:layout_height="34dp"
+                    android:layout_marginStart="8dp"
+                    android:text="4:5 Portrait"
+                    android:textSize="10sp"
+                    android:textColor="#FFFFFF"
+                    android:backgroundTint="#334155" />
+
+                <Button
+                    android:id="@+id/btnMatte169"
+                    android:layout_width="wrap_content"
+                    android:layout_height="34dp"
+                    android:layout_marginStart="8dp"
+                    android:text="16:9 HD"
+                    android:textSize="10sp"
+                    android:textColor="#FFFFFF"
+                    android:backgroundTint="#334155" />
+            </LinearLayout>
+        </HorizontalScrollView>
     </androidx.constraintlayout.widget.ConstraintLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>

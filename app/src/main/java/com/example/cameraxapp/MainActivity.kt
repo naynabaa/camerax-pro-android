@@ -110,6 +110,7 @@ class MainActivity : AppCompatActivity() {
     private var isBurstCapturing = false
     private var burstCount = 0
     private val burstHandler = Handler(Looper.getMainLooper())
+    private var burstRunnable: Runnable? = null
     private var isGridVisible = true
 
     // Auto Trigger Interval Loop Recorder (Auto Record -> Auto Pause -> Auto Resume)
@@ -241,6 +242,40 @@ class MainActivity : AppCompatActivity() {
             viewBinding.proStudioDrawer.visibility = View.GONE
         }
 
+        // Scopes & Exposure Warning Toggles (Zebra Stripes & Live Histogram)
+        viewBinding.btnToggleZebra.setOnClickListener {
+            val isEnabled = !viewBinding.proOverlayView.showZebraStripes
+            viewBinding.proOverlayView.showZebraStripes = isEnabled
+            viewBinding.btnToggleZebra.text = if (isEnabled) "Zebra: ON" else "Zebra: OFF"
+            viewBinding.btnToggleZebra.setBackgroundColor(if (isEnabled) Color.parseColor("#EAB308") else Color.parseColor("#334155"))
+            Toast.makeText(this, if (isEnabled) "Zebra Stripes (Overexposure Warning): ON" else "Zebra: OFF", Toast.LENGTH_SHORT).show()
+        }
+
+        viewBinding.btnToggleHistogram.setOnClickListener {
+            val isEnabled = !viewBinding.proOverlayView.showHistogram
+            viewBinding.proOverlayView.showHistogram = isEnabled
+            viewBinding.btnToggleHistogram.text = if (isEnabled) "Histo: ON" else "Histo: OFF"
+            viewBinding.btnToggleHistogram.setBackgroundColor(if (isEnabled) Color.parseColor("#0284C7") else Color.parseColor("#334155"))
+            Toast.makeText(this, if (isEnabled) "Live Histogram: ON" else "Histogram: OFF", Toast.LENGTH_SHORT).show()
+        }
+
+        // 4. Smart Visual Balance Center ("Center of Mass" Dot)
+        viewBinding.btnToggleVisualBalance.setOnClickListener {
+            val isEnabled = !viewBinding.proOverlayView.showVisualBalance
+            viewBinding.proOverlayView.showVisualBalance = isEnabled
+            viewBinding.btnToggleVisualBalance.text = if (isEnabled) "Balance: ON" else "Balance: OFF"
+            viewBinding.btnToggleVisualBalance.setBackgroundColor(if (isEnabled) Color.parseColor("#10B981") else Color.parseColor("#334155"))
+            Toast.makeText(this, if (isEnabled) "Smart Visual Balance Dot: ON" else "Visual Balance: OFF", Toast.LENGTH_SHORT).show()
+        }
+
+        // 3. Aspect Ratio Matte Crop Overlays
+        viewBinding.btnMatteOff.setOnClickListener { setAspectMatteMode(ProOverlayView.AspectMatte.NONE) }
+        viewBinding.btnMatteCine.setOnClickListener { setAspectMatteMode(ProOverlayView.AspectMatte.CINE_239) }
+        viewBinding.btnMatteSquare.setOnClickListener { setAspectMatteMode(ProOverlayView.AspectMatte.SQUARE_1_1) }
+        viewBinding.btnMatte916.setOnClickListener { setAspectMatteMode(ProOverlayView.AspectMatte.VERTICAL_9_16) }
+        viewBinding.btnMatte45.setOnClickListener { setAspectMatteMode(ProOverlayView.AspectMatte.PORTRAIT_4_5) }
+        viewBinding.btnMatte169.setOnClickListener { setAspectMatteMode(ProOverlayView.AspectMatte.WIDESCREEN_16_9) }
+
         // Quick Zoom Pills (.6x, 1x, 2x, 5x)
         viewBinding.btnZoom06.setOnClickListener { setZoomLevel(0.6f, viewBinding.btnZoom06) }
         viewBinding.btnZoom1.setOnClickListener { setZoomLevel(1.0f, viewBinding.btnZoom1) }
@@ -291,13 +326,82 @@ class MainActivity : AppCompatActivity() {
             .build()
         videoCapture = VideoCapture.withOutput(recorder)
 
+        // Real-Time Frame Analysis for Live Histogram & Zebra Overexposure Warning
+        val histoBins = IntArray(256)
+        val overexposedList = ArrayList<Float>()
+        imageAnalysis = ImageAnalysis.Builder()
+            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+            .build()
+            .also {
+                it.setAnalyzer(cameraExecutor) { imageProxy ->
+                    if (viewBinding.proOverlayView.showHistogram || viewBinding.proOverlayView.showZebraStripes || viewBinding.proOverlayView.showVisualBalance) {
+                        try {
+                            val plane = imageProxy.planes[0]
+                            val buffer = plane.buffer
+                            val width = imageProxy.width
+                            val height = imageProxy.height
+                            val rowStride = plane.rowStride
+                            val pixelStride = plane.pixelStride
+                            
+                            histoBins.fill(0)
+                            overexposedList.clear()
+                            
+                            val step = 8
+                            var clipCount = 0
+                            var sumWeightX = 0f
+                            var sumWeightY = 0f
+                            var totalWeight = 0f
+
+                            for (y in 0 until height step step) {
+                                val rowOffset = y * rowStride
+                                for (x in 0 until width step step) {
+                                    val index = rowOffset + x * pixelStride
+                                    if (index < buffer.limit()) {
+                                        val luma = buffer.get(index).toInt() and 0xFF
+                                        histoBins[luma]++
+
+                                        // Optical visual mass: darker & higher contrast areas carry visual weight
+                                        val mass = (255 - luma).coerceAtLeast(15)
+                                        sumWeightX += x * mass
+                                        sumWeightY += y * mass
+                                        totalWeight += mass
+
+                                        if (luma >= 240) {
+                                            clipCount++
+                                            if (clipCount % 12 == 0) {
+                                                val nX = x.toFloat() / width.toFloat()
+                                                val nY = y.toFloat() / height.toFloat()
+                                                overexposedList.add(nX - 0.04f)
+                                                overexposedList.add(nY - 0.04f)
+                                                overexposedList.add(nX + 0.04f)
+                                                overexposedList.add(nY + 0.04f)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            
+                            val balanceX = if (totalWeight > 0f) (sumWeightX / totalWeight) / width.toFloat() else 0.5f
+                            val balanceY = if (totalWeight > 0f) (sumWeightY / totalWeight) / height.toFloat() else 0.5f
+                            val overexposedArray = overexposedList.toFloatArray()
+                            runOnUiThread {
+                                viewBinding.proOverlayView.updateLuminanceAnalysis(histoBins, overexposedArray, balanceX, balanceY)
+                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Luma frame analysis error", e)
+                        }
+                    }
+                    imageProxy.close()
+                }
+            }
+
         try {
             cameraProvider.unbindAll()
 
             if (cameraMode == CameraMode.PHOTO) {
-                camera = cameraProvider.bindToLifecycle(this, lensFacing, preview, imageCapture!!)
+                camera = cameraProvider.bindToLifecycle(this, lensFacing, preview, imageCapture!!, imageAnalysis!!)
             } else {
-                camera = cameraProvider.bindToLifecycle(this, lensFacing, preview, videoCapture!!)
+                camera = cameraProvider.bindToLifecycle(this, lensFacing, preview, videoCapture!!, imageAnalysis!!)
             }
 
             cameraControl = camera?.cameraControl
@@ -306,8 +410,18 @@ class MainActivity : AppCompatActivity() {
             initExposureRange()
 
         } catch (exc: Exception) {
-            Log.e(TAG, "Use case binding failed", exc)
-            Toast.makeText(this, "Camera start error: ${exc.message}", Toast.LENGTH_SHORT).show()
+            Log.e(TAG, "Use case binding failed, attempting without analysis", exc)
+            try {
+                if (cameraMode == CameraMode.PHOTO) {
+                    camera = cameraProvider.bindToLifecycle(this, lensFacing, preview, imageCapture!!)
+                } else {
+                    camera = cameraProvider.bindToLifecycle(this, lensFacing, preview, videoCapture!!)
+                }
+                cameraControl = camera?.cameraControl
+                initExposureRange()
+            } catch (e: Exception) {
+                Toast.makeText(this, "Camera start error: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
         }
     }
 
@@ -615,6 +729,31 @@ class MainActivity : AppCompatActivity() {
         if (!isOff) {
             lastActiveGrid = mode
         }
+    }
+
+    private fun setAspectMatteMode(matte: ProOverlayView.AspectMatte) {
+        viewBinding.proOverlayView.currentMatte = matte
+        val isOff = matte == ProOverlayView.AspectMatte.NONE
+        val activeBg = ContextCompat.getColorStateList(this, android.R.color.holo_orange_dark)
+        val inactiveBg = ContextCompat.getColorStateList(this, android.R.color.darker_gray)
+        val offBg = ContextCompat.getColorStateList(this, if (isOff) android.R.color.holo_red_dark else android.R.color.darker_gray)
+
+        viewBinding.btnMatteOff.backgroundTintList = offBg
+        viewBinding.btnMatteCine.backgroundTintList = if (matte == ProOverlayView.AspectMatte.CINE_239) activeBg else inactiveBg
+        viewBinding.btnMatteSquare.backgroundTintList = if (matte == ProOverlayView.AspectMatte.SQUARE_1_1) activeBg else inactiveBg
+        viewBinding.btnMatte916.backgroundTintList = if (matte == ProOverlayView.AspectMatte.VERTICAL_9_16) activeBg else inactiveBg
+        viewBinding.btnMatte45.backgroundTintList = if (matte == ProOverlayView.AspectMatte.PORTRAIT_4_5) activeBg else inactiveBg
+        viewBinding.btnMatte169.backgroundTintList = if (matte == ProOverlayView.AspectMatte.WIDESCREEN_16_9) activeBg else inactiveBg
+
+        val label = when (matte) {
+            ProOverlayView.AspectMatte.NONE -> "Matte: OFF (Full Sensor)"
+            ProOverlayView.AspectMatte.CINE_239 -> "Matte: 2.39:1 CinemaScope"
+            ProOverlayView.AspectMatte.SQUARE_1_1 -> "Matte: 1:1 Square Feed"
+            ProOverlayView.AspectMatte.VERTICAL_9_16 -> "Matte: 9:16 Vertical Reel"
+            ProOverlayView.AspectMatte.PORTRAIT_4_5 -> "Matte: 4:5 Instagram Portrait"
+            ProOverlayView.AspectMatte.WIDESCREEN_16_9 -> "Matte: 16:9 Widescreen"
+        }
+        Toast.makeText(this, label, Toast.LENGTH_SHORT).show()
     }
 
     private fun setZoomLevel(ratio: Float, selectedView: View) {
