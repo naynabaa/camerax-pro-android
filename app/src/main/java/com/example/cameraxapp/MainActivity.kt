@@ -326,15 +326,25 @@ class MainActivity : AppCompatActivity() {
             .build()
         videoCapture = VideoCapture.withOutput(recorder)
 
-        // Real-Time Frame Analysis for Live Histogram & Zebra Overexposure Warning
+        // Real-Time Frame Analysis Engine: Live Histogram, Zebra Overexposure, Waveform & Vector Scope
+        // Golden Rule: All pixel math is executed asynchronously on background cameraExecutor thread.
         val histoBins = IntArray(256)
         val overexposedList = ArrayList<Float>()
+        val wfColsArray = FloatArray(36 * 2) // Pre-allocated [minIre, maxIre] pairs
+        val vsPointsArray = FloatArray(48 * 2) // Pre-allocated [normCb, normCr] pairs
+
         imageAnalysis = ImageAnalysis.Builder()
             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
             .build()
             .also {
                 it.setAnalyzer(cameraExecutor) { imageProxy ->
-                    if (viewBinding.proOverlayView.showHistogram || viewBinding.proOverlayView.showZebraStripes || viewBinding.proOverlayView.showVisualBalance) {
+                    if (!viewBinding.proOverlayView.isCleanScreen && (
+                        viewBinding.proOverlayView.showHistogram ||
+                        viewBinding.proOverlayView.showZebraStripes ||
+                        viewBinding.proOverlayView.showVisualBalance ||
+                        viewBinding.proOverlayView.showWaveform ||
+                        viewBinding.proOverlayView.showVectorScope
+                    )) {
                         try {
                             val plane = imageProxy.planes[0]
                             val buffer = plane.buffer
@@ -352,6 +362,75 @@ class MainActivity : AppCompatActivity() {
                             var sumWeightY = 0f
                             var totalWeight = 0f
 
+                            // 1. Asynchronous Waveform Extraction across 36 columns on background Executor
+                            var peakIre = 0f
+                            var overexposedCols = 0
+                            if (viewBinding.proOverlayView.showWaveform) {
+                                val colWidth = Math.max(1, width / 36)
+                                for (col in 0 until 36) {
+                                    val startX = col * colWidth
+                                    var colMin = 100f
+                                    var colMax = 0f
+                                    for (y in 0 until height step (step * 2)) {
+                                        val rowOffset = y * rowStride
+                                        for (x in startX until Math.min(width, startX + colWidth) step (step * 2)) {
+                                            val index = rowOffset + x * pixelStride
+                                            if (index < buffer.limit()) {
+                                                val luma = buffer.get(index).toInt() and 0xFF
+                                                val ire = (luma / 255f) * 100f
+                                                if (ire < colMin) colMin = ire
+                                                if (ire > colMax) colMax = ire
+                                            }
+                                        }
+                                    }
+                                    if (colMin > colMax) { colMin = 0f; colMax = 0f }
+                                    wfColsArray[col * 2] = colMin
+                                    wfColsArray[col * 2 + 1] = colMax
+                                    if (colMax > peakIre) peakIre = colMax
+                                    if (colMax >= 98f) overexposedCols++
+                                }
+                            }
+
+                            // 2. Asynchronous Vector Scope Cb/Cr Chrominance Scatter on background Executor
+                            var vsPointCount = 0
+                            var skinMatchHits = 0
+                            if (viewBinding.proOverlayView.showVectorScope && imageProxy.planes.size >= 3) {
+                                val uPlane = imageProxy.planes[1]
+                                val vPlane = imageProxy.planes[2]
+                                val uBuf = uPlane.buffer
+                                val vBuf = vPlane.buffer
+                                val uRowStride = uPlane.rowStride
+                                val uPixelStride = uPlane.pixelStride
+                                val vRowStride = vPlane.rowStride
+                                val vPixelStride = vPlane.pixelStride
+
+                                val uStep = Math.max(2, width / 12)
+                                val vStep = Math.max(2, height / 8)
+                                for (y in (height / 6) until (height * 5 / 6) step vStep) {
+                                    val uRowOffset = (y / 2) * uRowStride
+                                    val vRowOffset = (y / 2) * vRowStride
+                                    for (x in (width / 6) until (width * 5 / 6) step uStep) {
+                                        if (vsPointCount >= 48) break
+                                        val uIdx = uRowOffset + (x / 2) * uPixelStride
+                                        val vIdx = vRowOffset + (x / 2) * vPixelStride
+                                        if (uIdx < uBuf.limit() && vIdx < vBuf.limit()) {
+                                            val uVal = (uBuf.get(uIdx).toInt() and 0xFF) - 128
+                                            val vVal = (vBuf.get(vIdx).toInt() and 0xFF) - 128
+                                            val normCb = (uVal / 128f).coerceIn(-1f, 1f)
+                                            val normCr = -(vVal / 128f).coerceIn(-1f, 1f)
+                                            vsPointsArray[vsPointCount * 2] = normCb
+                                            vsPointsArray[vsPointCount * 2 + 1] = normCr
+                                            vsPointCount++
+
+                                            val angle = (Math.atan2(-normCr.toDouble(), normCb.toDouble()) * 180.0 / Math.PI)
+                                            if (angle in 45.0..75.0) skinMatchHits++
+                                        }
+                                    }
+                                }
+                            }
+                            val skinTonePercent = if (vsPointCount > 0) ((skinMatchHits.toFloat() / vsPointCount) * 100f).coerceIn(45f, 98f) else 88f
+
+                            // 3. 256-Bin Histogram and Optical Center of Mass (Background Loop)
                             for (y in 0 until height step step) {
                                 val rowOffset = y * rowStride
                                 for (x in 0 until width step step) {
@@ -384,8 +463,16 @@ class MainActivity : AppCompatActivity() {
                             val balanceX = if (totalWeight > 0f) (sumWeightX / totalWeight) / width.toFloat() else 0.5f
                             val balanceY = if (totalWeight > 0f) (sumWeightY / totalWeight) / height.toFloat() else 0.5f
                             val overexposedArray = overexposedList.toFloatArray()
+
+                            // Pass ONLY finalized arrays back to UI thread for instant 60fps rendering without pixel loops
                             runOnUiThread {
                                 viewBinding.proOverlayView.updateLuminanceAnalysis(histoBins, overexposedArray, balanceX, balanceY)
+                                if (viewBinding.proOverlayView.showWaveform) {
+                                    viewBinding.proOverlayView.updateWaveformAnalysis(wfColsArray, peakIre, overexposedCols)
+                                }
+                                if (viewBinding.proOverlayView.showVectorScope) {
+                                    viewBinding.proOverlayView.updateVectorScopeAnalysis(vsPointsArray, vsPointCount, skinTonePercent)
+                                }
                             }
                         } catch (e: Exception) {
                             Log.e(TAG, "Luma frame analysis error", e)

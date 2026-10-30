@@ -103,6 +103,79 @@ class ProOverlayView @JvmOverloads constructor(
             invalidate()
         }
 
+    // Waveform Monitor (IRE 0-100 column luminance exposure graph)
+    var showWaveform: Boolean = false
+        set(value) {
+            field = value
+            invalidate()
+        }
+
+    // Vector Scope (Circular color graph with Skin Tone I-Line)
+    var showVectorScope: Boolean = false
+        set(value) {
+            field = value
+            invalidate()
+        }
+
+    // Audio Peak VU Meter (Decibel level monitoring -60dB to 0dB with clip indicator)
+    var showAudioVuMeter: Boolean = false
+        set(value) {
+            field = value
+            invalidate()
+        }
+    var audioLevelDbLeft: Float = -24f
+        set(value) {
+            field = value
+            if (showAudioVuMeter) invalidate()
+        }
+    var audioLevelDbRight: Float = -26f
+        set(value) {
+            field = value
+            if (showAudioVuMeter) invalidate()
+        }
+    var isAudioClipping: Boolean = false
+        set(value) {
+            field = value
+            if (showAudioVuMeter) invalidate()
+        }
+
+    // Clean Screen Mode (1-Tap Dismiss All Graphs for Unobstructed Framing)
+    var isCleanScreen: Boolean = false
+        set(value) {
+            field = value
+            invalidate()
+        }
+
+    // 7. Background Executor Asynchronously Calculated Waveform & Vector Scope Data
+    private val waveformColumns = FloatArray(36 * 2) { 0f } // Pre-allocated [minIre, maxIre] pairs
+    private var waveformPeakIre: Float = 0f
+    private var waveformOverexposedCount: Int = 0
+
+    // Vector Scope pre-calculated points (normalized [-1..1] on Cb/Cr chromaticity plane)
+    private val vectorScopePoints = FloatArray(48 * 2) { 0f } // Pre-allocated [normCb, normCr] pairs
+    private var vectorScopePointCount: Int = 0
+    private var vectorScopeSkinMatch: Float = 88f
+
+    fun updateWaveformAnalysis(cols: FloatArray, peakIre: Float, overexposedCount: Int) {
+        val count = Math.min(cols.size, waveformColumns.size)
+        System.arraycopy(cols, 0, waveformColumns, 0, count)
+        waveformPeakIre = peakIre
+        waveformOverexposedCount = overexposedCount
+        if (showWaveform && !isCleanScreen) {
+            postInvalidateOnAnimation()
+        }
+    }
+
+    fun updateVectorScopeAnalysis(pts: FloatArray, count: Int, skinMatch: Float) {
+        val copyCount = Math.min(pts.size, vectorScopePoints.size)
+        System.arraycopy(pts, 0, vectorScopePoints, 0, copyCount)
+        vectorScopePointCount = count
+        vectorScopeSkinMatch = skinMatch
+        if (showVectorScope && !isCleanScreen) {
+            postInvalidateOnAnimation()
+        }
+    }
+
     var zebraThreshold: Int = 240 // 240-255 luminance (95%-100% clipped highlights)
     private val histogramBins = IntArray(256)
     private var overexposedZones = FloatArray(0)
@@ -122,7 +195,7 @@ class ProOverlayView @JvmOverloads constructor(
         visualBalanceY = (visualBalanceY * 0.75f) + (balanceY * 0.25f)
         isVisualBalanced = abs(visualBalanceX - 0.5f) <= 0.035f && abs(visualBalanceY - 0.5f) <= 0.035f
 
-        if (showHistogram || showZebraStripes || showVisualBalance) {
+        if (!isCleanScreen && (showHistogram || showZebraStripes || showVisualBalance)) {
             postInvalidateOnAnimation()
         }
     }
@@ -510,6 +583,7 @@ class ProOverlayView @JvmOverloads constructor(
     // --- ZERO ALLOCATION 60 FPS RENDER LOOP ---
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
+        if (isCleanScreen) return // 1-Tap Clean Screen: instantly dismiss all graphs & overlays for unobstructed framing
 
         val widthF = width.toFloat()
         val heightF = height.toFloat()
@@ -569,6 +643,21 @@ class ProOverlayView @JvmOverloads constructor(
         // 6. Draw Smart Visual Balance Center (The "Center of Mass" Dot)
         if (showVisualBalance) {
             drawVisualBalanceCenter(canvas, widthF, heightF)
+        }
+
+        // 7. Draw Waveform Monitor (Exposure tracking across vertical screen columns)
+        if (showWaveform) {
+            drawWaveformMonitor(canvas, widthF, heightF)
+        }
+
+        // 8. Draw Vector Scope (Hue & Saturation with Skin Tone I-Line at 57°)
+        if (showVectorScope) {
+            drawVectorScope(canvas, widthF, heightF)
+        }
+
+        // 9. Draw Audio Peak VU Meter (Stereo Decibel Bars)
+        if (showAudioVuMeter) {
+            drawAudioVuMeter(canvas, widthF, heightF)
         }
     }
 
@@ -841,6 +930,229 @@ class ProOverlayView @JvmOverloads constructor(
             "⚖ RIGHT HEAVY ${offsetX}%"
         }
         canvas.drawText(text, badgeLeft + dpToPx(14f), badgeTop + dpToPx(15f), balanceBadgeTextPaint)
+    }
+
+    /**
+     * 7. Waveform Monitor (Real-time brightness graph across vertical screen columns)
+     */
+    private fun drawWaveformMonitor(canvas: Canvas, w: Float, h: Float) {
+        val panelW = dpToPx(180f)
+        val panelH = dpToPx(85f)
+        val left = dpToPx(12f)
+        val top = h - dpToPx(140f)
+
+        // Panel background
+        val bgPaint = Paint().apply {
+            color = Color.parseColor("#E6000000")
+            style = Paint.Style.FILL
+            isAntiAlias = true
+        }
+        val borderPaint = Paint().apply {
+            color = Color.parseColor("#3310B981")
+            style = Paint.Style.STROKE
+            strokeWidth = dpToPx(1f)
+            isAntiAlias = true
+        }
+        val rect = RectF(left, top, left + panelW, top + panelH)
+        canvas.drawRoundRect(rect, dpToPx(12f), dpToPx(12f), bgPaint)
+        canvas.drawRoundRect(rect, dpToPx(12f), dpToPx(12f), borderPaint)
+
+        // Header
+        val headerPaint = Paint().apply {
+            color = Color.parseColor("#10B981")
+            textSize = dpToPx(9f)
+            isFakeBoldText = true
+            isAntiAlias = true
+        }
+        canvas.drawText("WAVEFORM · IRE 0-100", left + dpToPx(8f), top + dpToPx(14f), headerPaint)
+
+        // Reference IRE Grid Lines (0, 20, 40, 60 Skin Tone, 80, 100 Clip)
+        val gridLinePaint = Paint().apply {
+            color = Color.parseColor("#3310B981")
+            strokeWidth = dpToPx(0.7f)
+            style = Paint.Style.STROKE
+        }
+        val graphTop = top + dpToPx(20f)
+        val graphH = dpToPx(52f)
+        val graphW = panelW - dpToPx(16f)
+        val graphLeft = left + dpToPx(8f)
+
+        for (ire in listOf(0, 20, 40, 60, 80, 100)) {
+            val y = graphTop + graphH - (ire / 100f * graphH)
+            canvas.drawLine(graphLeft, y, graphLeft + graphW, y, gridLinePaint)
+        }
+
+        // Phosphor Green Columns from Background Executor (Zero Pixel Loops in onDraw)
+        val wfPaint = Paint().apply {
+            color = Color.parseColor("#10B981")
+            strokeWidth = dpToPx(1.5f)
+            alpha = 180
+            isAntiAlias = true
+        }
+        val colCount = 36
+        for (i in 0 until colCount) {
+            val cx = graphLeft + (i.toFloat() / (colCount - 1)) * graphW
+            // Draw pre-calculated column IRE min/max bounds directly from background analyzer
+            val minIre = waveformColumns[i * 2]
+            val maxIre = waveformColumns[i * 2 + 1]
+
+            val y1 = graphTop + graphH - (minIre / 100f * graphH)
+            val y2 = graphTop + graphH - (maxIre / 100f * graphH)
+            canvas.drawLine(cx, y1, cx, y2, wfPaint)
+        }
+    }
+
+    /**
+     * 8. Vector Scope (Circular color graph mapping hue and saturation with Skin Tone I-Line at 57°)
+     */
+    private fun drawVectorScope(canvas: Canvas, w: Float, h: Float) {
+        val size = dpToPx(130f)
+        val right = w - dpToPx(12f)
+        val top = dpToPx(65f)
+        val left = right - size
+        val bottom = top + size
+
+        val bgPaint = Paint().apply {
+            color = Color.parseColor("#E6000000")
+            style = Paint.Style.FILL
+            isAntiAlias = true
+        }
+        val borderPaint = Paint().apply {
+            color = Color.parseColor("#33A855F7")
+            style = Paint.Style.STROKE
+            strokeWidth = dpToPx(1f)
+            isAntiAlias = true
+        }
+        val rect = RectF(left, top, right, bottom)
+        canvas.drawRoundRect(rect, dpToPx(14f), dpToPx(14f), bgPaint)
+        canvas.drawRoundRect(rect, dpToPx(14f), dpToPx(14f), borderPaint)
+
+        val cx = (left + right) / 2f
+        val cy = (top + bottom) / 2f + dpToPx(4f)
+        val radius = dpToPx(45f)
+
+        // Concentric Rings: 100% and 75% Saturation
+        val ringPaint = Paint().apply {
+            color = Color.parseColor("#44A855F7")
+            style = Paint.Style.STROKE
+            strokeWidth = dpToPx(0.8f)
+            isAntiAlias = true
+        }
+        canvas.drawCircle(cx, cy, radius, ringPaint)
+        canvas.drawCircle(cx, cy, radius * 0.75f, ringPaint)
+
+        // Crosshairs
+        canvas.drawLine(cx - radius, cy, cx + radius, cy, ringPaint)
+        canvas.drawLine(cx, cy - radius, cx, cy + radius, ringPaint)
+
+        // Dedicated Golden Skin Tone I-Line (~57 degrees)
+        val iLinePaint = Paint().apply {
+            color = Color.parseColor("#F59E0B")
+            strokeWidth = dpToPx(1.5f)
+            isAntiAlias = true
+        }
+        canvas.save()
+        canvas.rotate(-57f, cx, cy)
+        canvas.drawLine(cx, cy, cx + radius * 0.95f, cy, iLinePaint)
+        canvas.restore()
+
+        // Render Chromaticity Scatter Points (Cached from Background Executor, Zero Pixel Loops in UI)
+        val ptPaint = Paint().apply {
+            color = Color.parseColor("#38BDF8")
+            strokeWidth = dpToPx(2.5f)
+            strokeCap = Paint.Cap.ROUND
+            isAntiAlias = true
+        }
+        for (i in 0 until vectorScopePointCount) {
+            val px = cx + vectorScopePoints[i * 2] * radius
+            val py = cy + vectorScopePoints[i * 2 + 1] * radius
+            canvas.drawPoint(px, py, ptPaint)
+        }
+
+        // Header label with live Skin Match Percentage
+        val textPaint = Paint().apply {
+            color = Color.parseColor("#D8B4FE")
+            textSize = dpToPx(8.5f)
+            isFakeBoldText = true
+            isAntiAlias = true
+        }
+        canvas.drawText("VECTORSCOPE · 57° I-LINE (${vectorScopeSkinMatch.toInt()}%)", left + dpToPx(8f), top + dpToPx(14f), textPaint)
+    }
+
+    /**
+     * 9. Audio Peak VU Meter (Decibel level monitoring -60dB to 0dB with clip indicator)
+     */
+    private fun drawAudioVuMeter(canvas: Canvas, w: Float, h: Float) {
+        val meterW = dpToPx(42f)
+        val meterH = dpToPx(120f)
+        val right = w - dpToPx(12f)
+        val bottom = h - dpToPx(110f)
+        val left = right - meterW
+        val top = bottom - meterH
+
+        val bgPaint = Paint().apply {
+            color = Color.parseColor("#E6000000")
+            style = Paint.Style.FILL
+            isAntiAlias = true
+        }
+        val borderPaint = Paint().apply {
+            color = Color.parseColor("#3310B981")
+            style = Paint.Style.STROKE
+            strokeWidth = dpToPx(1f)
+            isAntiAlias = true
+        }
+        val rect = RectF(left, top, right, bottom)
+        canvas.drawRoundRect(rect, dpToPx(10f), dpToPx(10f), bgPaint)
+        canvas.drawRoundRect(rect, dpToPx(10f), dpToPx(10f), borderPaint)
+
+        // Clip indicator
+        val clipPaint = Paint().apply {
+            color = if (isAudioClipping) Color.parseColor("#EF4444") else Color.parseColor("#1E293B")
+            style = Paint.Style.FILL
+            isAntiAlias = true
+        }
+        val clipRect = RectF(left + dpToPx(4f), top + dpToPx(4f), right - dpToPx(4f), top + dpToPx(15f))
+        canvas.drawRoundRect(clipRect, dpToPx(4f), dpToPx(4f), clipPaint)
+
+        val clipTextPaint = Paint().apply {
+            color = if (isAudioClipping) Color.WHITE else Color.parseColor("#64748B")
+            textSize = dpToPx(7f)
+            isFakeBoldText = true
+            textAlign = Paint.Align.CENTER
+            isAntiAlias = true
+        }
+        canvas.drawText("CLIP", clipRect.centerX(), clipRect.centerY() + dpToPx(2.5f), clipTextPaint)
+
+        // Dual Channels L/R
+        val barTop = top + dpToPx(20f)
+        val barH = meterH - dpToPx(30f)
+        val barW = dpToPx(8f)
+
+        val barBgPaint = Paint().apply {
+            color = Color.parseColor("#0F172A")
+            style = Paint.Style.FILL
+        }
+
+        // Left channel bar
+        val barLeft1 = left + dpToPx(10f)
+        val barRight1 = barLeft1 + barW
+        canvas.drawRect(barLeft1, barTop, barRight1, barTop + barH, barBgPaint)
+
+        // Right channel bar
+        val barLeft2 = left + dpToPx(24f)
+        val barRight2 = barLeft2 + barW
+        canvas.drawRect(barLeft2, barTop, barRight2, barTop + barH, barBgPaint)
+
+        // Fill levels
+        val fillL = ((audioLevelDbLeft + 48f) / 48f).coerceIn(0f, 1f)
+        val fillR = ((audioLevelDbRight + 48f) / 48f).coerceIn(0f, 1f)
+
+        val levelPaint = Paint().apply {
+            color = Color.parseColor("#10B981")
+            style = Paint.Style.FILL
+        }
+        canvas.drawRect(barLeft1, barTop + barH * (1f - fillL), barRight1, barTop + barH, levelPaint)
+        canvas.drawRect(barLeft2, barTop + barH * (1f - fillR), barRight2, barTop + barH, levelPaint)
     }
 
     private fun dpToPx(dp: Float): Float {

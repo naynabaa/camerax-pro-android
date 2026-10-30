@@ -210,7 +210,7 @@ fun CameraXScreen(modifier: Modifier = Modifier) {
                 },
                 modifier = Modifier.size(54.dp).background(Color(0x66000000), CircleShape)
             ) {
-                Icon(Icons.Default.Cameraswitch, contentDescription = "Switch Camera", tint = Color.White)
+                Icon(Icons.Default.FlipCameraAndroid, contentDescription = "Switch Camera", tint = Color.White)
             }
         }
     }
