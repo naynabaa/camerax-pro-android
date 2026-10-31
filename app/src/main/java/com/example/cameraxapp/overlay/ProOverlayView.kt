@@ -388,7 +388,49 @@ class ProOverlayView @JvmOverloads constructor(
     private val cineTopRect = RectF()
     private val cineBottomRect = RectF()
 
+    // Active Camera Sensor Aspect Ratio ("4:3", "16:9", "1:1")
+    var sensorAspectRatio: String = "4:3"
+        set(value) {
+            field = value
+            if (width > 0 && height > 0) {
+                val wf = width.toFloat()
+                val hf = height.toFloat()
+                rebuildRuleOfThirds(wf, hf)
+                rebuildGoldenRatioPhiGrid(wf, hf)
+                rebuildDiagonalSymmetry(wf, hf)
+                rebuildGoldenSpiral(wf, hf)
+                rebuildCinematicLetterbox(wf, hf)
+                rebuildAspectMatte(wf, hf)
+                invalidate()
+            }
+        }
+
     private val powerPoints = FloatArray(8) // 4 intersection points (x, y)
+    private val activeFrameRect = RectF()
+
+    /**
+     * Calculates the exact camera preview bounds based on aspect ratio
+     * ensuring grid lines fit the visible camera screen rather than stretching over UI bars.
+     */
+    private fun computeFramingRect(w: Float, h: Float): RectF {
+        val targetRatio = when (sensorAspectRatio) {
+            "1:1" -> 1.0f
+            "16:9" -> 9.0f / 16.0f
+            "4:3" -> 3.0f / 4.0f
+            else -> 3.0f / 4.0f
+        }
+        val viewRatio = w / h
+        if (viewRatio > targetRatio) {
+            val frameW = h * targetRatio
+            val left = (w - frameW) / 2f
+            activeFrameRect.set(left, 0f, left + frameW, h)
+        } else {
+            val frameH = w / targetRatio
+            val top = (h - frameH) / 2f
+            activeFrameRect.set(0f, top, w, top + frameH)
+        }
+        return activeFrameRect
+    }
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
@@ -418,23 +460,24 @@ class ProOverlayView @JvmOverloads constructor(
 
     private fun rebuildRuleOfThirds(w: Float, h: Float) {
         thirdsPath.reset()
+        val r = computeFramingRect(w, h)
 
-        val x1 = w / 3f
-        val x2 = (w * 2f) / 3f
-        val y1 = h / 3f
-        val y2 = (h * 2f) / 3f
+        val x1 = r.left + r.width() / 3f
+        val x2 = r.left + (r.width() * 2f) / 3f
+        val y1 = r.top + r.height() / 3f
+        val y2 = r.top + (r.height() * 2f) / 3f
 
-        // Vertical lines
-        thirdsPath.moveTo(x1, 0f)
-        thirdsPath.lineTo(x1, h)
-        thirdsPath.moveTo(x2, 0f)
-        thirdsPath.lineTo(x2, h)
+        // Vertical lines within active viewfinder
+        thirdsPath.moveTo(x1, r.top)
+        thirdsPath.lineTo(x1, r.bottom)
+        thirdsPath.moveTo(x2, r.top)
+        thirdsPath.lineTo(x2, r.bottom)
 
-        // Horizontal lines
-        thirdsPath.moveTo(0f, y1)
-        thirdsPath.lineTo(w, y1)
-        thirdsPath.moveTo(0f, y2)
-        thirdsPath.lineTo(w, y2)
+        // Horizontal lines within active viewfinder
+        thirdsPath.moveTo(r.left, y1)
+        thirdsPath.lineTo(r.right, y1)
+        thirdsPath.moveTo(r.left, y2)
+        thirdsPath.lineTo(r.right, y2)
 
         // Intersection Power Points
         powerPoints[0] = x1; powerPoints[1] = y1
@@ -445,31 +488,33 @@ class ProOverlayView @JvmOverloads constructor(
 
     private fun rebuildGoldenRatioPhiGrid(w: Float, h: Float) {
         phiGridPath.reset()
+        val r = computeFramingRect(w, h)
 
-        // Golden Ratio Constant: phi = 1.61803398875
-        // Partition ratio: 1 - 1/phi ≈ 0.381966
+        // Golden Ratio Constant: phi = 1.61803398875 (ratio = 0.381966)
         val ratio = 0.381966f
-        val x1 = w * ratio
-        val x2 = w * (1f - ratio)
-        val y1 = h * ratio
-        val y2 = h * (1f - ratio)
+        val x1 = r.left + r.width() * ratio
+        val x2 = r.left + r.width() * (1f - ratio)
+        val y1 = r.top + r.height() * ratio
+        val y2 = r.top + r.height() * (1f - ratio)
 
-        phiGridPath.moveTo(x1, 0f); phiGridPath.lineTo(x1, h)
-        phiGridPath.moveTo(x2, 0f); phiGridPath.lineTo(x2, h)
-        phiGridPath.moveTo(0f, y1); phiGridPath.lineTo(w, y1)
-        phiGridPath.moveTo(0f, y2); phiGridPath.lineTo(w, y2)
+        phiGridPath.moveTo(x1, r.top); phiGridPath.lineTo(x1, r.bottom)
+        phiGridPath.moveTo(x2, r.top); phiGridPath.lineTo(x2, r.bottom)
+        phiGridPath.moveTo(r.left, y1); phiGridPath.lineTo(r.right, y1)
+        phiGridPath.moveTo(r.left, y2); phiGridPath.lineTo(r.right, y2)
     }
 
     private fun rebuildDiagonalSymmetry(w: Float, h: Float) {
         diagonalPath.reset()
+        val r = computeFramingRect(w, h)
 
-        // Corner to corner diagonals
-        diagonalPath.moveTo(0f, 0f); diagonalPath.lineTo(w, h)
-        diagonalPath.moveTo(w, 0f); diagonalPath.lineTo(0f, h)
+        // Corner to corner diagonals within active frame
+        diagonalPath.moveTo(r.left, r.top); diagonalPath.lineTo(r.right, r.bottom)
+        diagonalPath.moveTo(r.right, r.top); diagonalPath.lineTo(r.left, r.bottom)
 
         // Harmonic Reciprocals
-        diagonalPath.moveTo(0f, h); diagonalPath.lineTo(w / 2f, 0f)
-        diagonalPath.moveTo(w, h); diagonalPath.lineTo(w / 2f, 0f)
+        val midX = r.left + r.width() / 2f
+        diagonalPath.moveTo(r.left, r.bottom); diagonalPath.lineTo(midX, r.top)
+        diagonalPath.moveTo(r.right, r.bottom); diagonalPath.lineTo(midX, r.top)
     }
 
     /**
@@ -480,10 +525,11 @@ class ProOverlayView @JvmOverloads constructor(
         spiralPath.reset()
         spiralBoxesPath.reset()
 
-        var left = 0f
-        var top = 0f
-        var right = w
-        var bottom = h
+        val r = computeFramingRect(w, h)
+        var left = r.left
+        var top = r.top
+        var right = r.right
+        var bottom = r.bottom
 
         val arcOval = RectF()
         // Orientation controls 4 corner origin positions:

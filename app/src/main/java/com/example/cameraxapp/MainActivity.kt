@@ -83,7 +83,7 @@ import java.util.concurrent.Executors
  */
 class MainActivity : AppCompatActivity() {
 
-    enum class CameraMode { PHOTO, VIDEO }
+    enum class CameraMode { SLOW_MO, VIDEO, PHOTO, PORTRAIT, NIGHT }
 
     private lateinit var viewBinding: ActivityMainBinding
 
@@ -181,6 +181,8 @@ class MainActivity : AppCompatActivity() {
         // Initialize Filter Engine
         filterManager = FilterManager(this)
 
+        viewBinding.proOverlayView.sensorAspectRatio = currentAspectRatio
+
         setupClickListeners()
         setupBurstMode()
         setupExposureSlider()
@@ -205,19 +207,24 @@ class MainActivity : AppCompatActivity() {
         sensorManager.unregisterListener(sensorEventListener)
     }
 
-    enum class ShelfCategory { GRIDS, EXPOSURE, OPTICS, AUDIO }
-    private var currentShelfTab = ShelfCategory.GRIDS
+    enum class ShelfCategory { LOOKS, GRIDS, EXPOSURE, OPTICS, AUDIO }
+    private var currentShelfTab = ShelfCategory.LOOKS
     private var isAudioMuted = false
     private var currentAspectRatio = "4:3"
     private var currentDeSqueeze = "OFF"
+    private var currentFilterName = "normal"
+    private var currentArLensName = "none"
 
     private fun setupClickListeners() {
         // Lens Flip Switch Listener
         viewBinding.btnSwitchCamera.setOnClickListener { switchCamera() }
 
-        // Mode Switcher: Photo vs Video
-        viewBinding.tabPhoto.setOnClickListener { setMode(CameraMode.PHOTO) }
+        // Mode Switcher: 5 Sliding Cinema Modes
+        viewBinding.tabSlowMo.setOnClickListener { setMode(CameraMode.SLOW_MO) }
         viewBinding.tabVideo.setOnClickListener { setMode(CameraMode.VIDEO) }
+        viewBinding.tabPhoto.setOnClickListener { setMode(CameraMode.PHOTO) }
+        viewBinding.tabPortrait.setOnClickListener { setMode(CameraMode.PORTRAIT) }
+        viewBinding.tabNight.setOnClickListener { setMode(CameraMode.NIGHT) }
 
         // Video Pause/Resume Button
         viewBinding.btnPauseResume.setOnClickListener { toggleVideoPauseResume() }
@@ -225,10 +232,10 @@ class MainActivity : AppCompatActivity() {
         // Top Toolbar: Flash Button
         viewBinding.btnFlash.setOnClickListener { toggleFlashMode() }
 
-        // Top Toolbar: Creative Filters / Quick Tone
+        // Top Toolbar: Creative Filters / Looks Tab Quick Open
         viewBinding.btnFilter.setOnClickListener {
             viewBinding.proStudioDrawer.visibility = View.VISIBLE
-            selectShelfTab(ShelfCategory.EXPOSURE)
+            selectShelfTab(ShelfCategory.LOOKS)
         }
 
         // Top Toolbar: Self-Timer Toggle (Photo Mode)
@@ -247,11 +254,8 @@ class MainActivity : AppCompatActivity() {
             viewBinding.proStudioDrawer.visibility = View.GONE
         }
 
-        // Top Toolbar: Pro Studio Drawer Open / Close
+        // Top Toolbar: Pro Studio Drawer Open / Close (Single unified entry point)
         viewBinding.btnProStudio.setOnClickListener {
-            toggleProDrawer()
-        }
-        viewBinding.btnQuickPreset.setOnClickListener {
             toggleProDrawer()
         }
         viewBinding.btnCloseProDrawer.setOnClickListener {
@@ -261,11 +265,36 @@ class MainActivity : AppCompatActivity() {
         // Top Toolbar: Audio Mute Toggle
         viewBinding.btnAudioMute.setOnClickListener { toggleAudioMute() }
 
-        // 4 Category Tabs Bar
+        // 5 Category Tabs Bar
+        viewBinding.tabCategoryLooks.setOnClickListener { selectShelfTab(ShelfCategory.LOOKS) }
         viewBinding.tabCategoryGrids.setOnClickListener { selectShelfTab(ShelfCategory.GRIDS) }
         viewBinding.tabCategoryExposure.setOnClickListener { selectShelfTab(ShelfCategory.EXPOSURE) }
         viewBinding.tabCategoryOptics.setOnClickListener { selectShelfTab(ShelfCategory.OPTICS) }
         viewBinding.tabCategoryAudio.setOnClickListener { selectShelfTab(ShelfCategory.AUDIO) }
+
+        // TAB 0: Looks, Filters, AR Lenses & Effects
+        viewBinding.btnFilterNormal.setOnClickListener { setFilterPreset("normal") }
+        viewBinding.btnFilterCinematic.setOnClickListener { setFilterPreset("cinematic") }
+        viewBinding.btnFilterVintage.setOnClickListener { setFilterPreset("vintage") }
+        viewBinding.btnFilterBW.setOnClickListener { setFilterPreset("bw") }
+        viewBinding.btnFilterCyber.setOnClickListener { setFilterPreset("cyberpunk") }
+        viewBinding.btnFilterHDR.setOnClickListener { setFilterPreset("hdr") }
+
+        viewBinding.btnArNone.setOnClickListener { setArLens("none") }
+        viewBinding.btnArMesh.setOnClickListener { setArLens("mesh_contour") }
+        viewBinding.btnArVisor.setOnClickListener { setArLens("cyberpunk_visor") }
+        viewBinding.btnArCrown.setOnClickListener { setArLens("golden_crown") }
+        viewBinding.btnArHud.setOnClickListener { setArLens("scifi_hud") }
+
+        viewBinding.switchFilmGrain.setOnCheckedChangeListener { _, isChecked ->
+            Toast.makeText(this, if (isChecked) "35mm Analog Grain: Active" else "Film Grain: Disabled", Toast.LENGTH_SHORT).show()
+        }
+        viewBinding.switchDateStamp.setOnCheckedChangeListener { _, isChecked ->
+            Toast.makeText(this, if (isChecked) "Retro 90s Timestamp: Active" else "Timestamp: Disabled", Toast.LENGTH_SHORT).show()
+        }
+        viewBinding.switchCineFlare.setOnCheckedChangeListener { _, isChecked ->
+            Toast.makeText(this, if (isChecked) "Anamorphic Blue Flare: Active" else "Lens Flare: Disabled", Toast.LENGTH_SHORT).show()
+        }
 
         // TAB 1: Framing Grids Symmetrical Buttons
         viewBinding.btnGridOff.setOnClickListener { setGridMode(ProOverlayView.GridType.NONE) }
@@ -562,7 +591,8 @@ class MainActivity : AppCompatActivity() {
         try {
             cameraProvider.unbindAll()
 
-            if (cameraMode == CameraMode.PHOTO) {
+            val isPhotoType = cameraMode == CameraMode.PHOTO || cameraMode == CameraMode.PORTRAIT || cameraMode == CameraMode.NIGHT
+            if (isPhotoType) {
                 camera = cameraProvider.bindToLifecycle(this, lensFacing, preview, imageCapture!!, imageAnalysis!!)
             } else {
                 camera = cameraProvider.bindToLifecycle(this, lensFacing, preview, videoCapture!!, imageAnalysis!!)
@@ -576,7 +606,8 @@ class MainActivity : AppCompatActivity() {
         } catch (exc: Exception) {
             Log.e(TAG, "Use case binding failed, attempting without analysis", exc)
             try {
-                if (cameraMode == CameraMode.PHOTO) {
+                val isPhotoType = cameraMode == CameraMode.PHOTO || cameraMode == CameraMode.PORTRAIT || cameraMode == CameraMode.NIGHT
+                if (isPhotoType) {
                     camera = cameraProvider.bindToLifecycle(this, lensFacing, preview, imageCapture!!)
                 } else {
                     camera = cameraProvider.bindToLifecycle(this, lensFacing, preview, videoCapture!!)
@@ -594,7 +625,8 @@ class MainActivity : AppCompatActivity() {
      */
     private fun setupBurstMode() {
         viewBinding.btnCapture.setOnTouchListener { _, event ->
-            if (cameraMode != CameraMode.PHOTO) {
+            val isVideoType = cameraMode == CameraMode.VIDEO || cameraMode == CameraMode.SLOW_MO
+            if (isVideoType) {
                 // In Video mode, standard click handles start/stop
                 if (event.action == MotionEvent.ACTION_UP) {
                     captureVideo()
@@ -840,6 +872,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun selectShelfTab(category: ShelfCategory) {
         currentShelfTab = category
+        viewBinding.layoutCategoryLooks.visibility = if (category == ShelfCategory.LOOKS) View.VISIBLE else View.GONE
         viewBinding.layoutCategoryGrids.visibility = if (category == ShelfCategory.GRIDS) View.VISIBLE else View.GONE
         viewBinding.layoutCategoryExposure.visibility = if (category == ShelfCategory.EXPOSURE) View.VISIBLE else View.GONE
         viewBinding.layoutCategoryOptics.visibility = if (category == ShelfCategory.OPTICS) View.VISIBLE else View.GONE
@@ -847,6 +880,7 @@ class MainActivity : AppCompatActivity() {
 
         // Update tab styles: Solid yellow background for active, translucent slate for inactive
         val tabs = listOf(
+            Pair(viewBinding.tabCategoryLooks, ShelfCategory.LOOKS),
             Pair(viewBinding.tabCategoryGrids, ShelfCategory.GRIDS),
             Pair(viewBinding.tabCategoryExposure, ShelfCategory.EXPOSURE),
             Pair(viewBinding.tabCategoryOptics, ShelfCategory.OPTICS),
@@ -862,6 +896,52 @@ class MainActivity : AppCompatActivity() {
                 tabView.setTextColor(Color.parseColor("#94A3B8"))
             }
         }
+    }
+
+    private fun setFilterPreset(preset: String) {
+        currentFilterName = preset
+        filterManager.applyPreset(preset)
+        val filterButtons = listOf(
+            viewBinding.btnFilterNormal to "normal",
+            viewBinding.btnFilterCinematic to "cinematic",
+            viewBinding.btnFilterVintage to "vintage",
+            viewBinding.btnFilterBW to "bw",
+            viewBinding.btnFilterCyber to "cyberpunk",
+            viewBinding.btnFilterHDR to "hdr"
+        )
+        for ((btn, name) in filterButtons) {
+            val isActive = name == preset
+            if (isActive) {
+                btn.setBackgroundResource(R.drawable.bg_cinema_button_active)
+                btn.setTextColor(Color.parseColor("#000000"))
+            } else {
+                btn.setBackgroundResource(R.drawable.bg_cinema_button_inactive)
+                btn.setTextColor(Color.parseColor("#94A3B8"))
+            }
+        }
+        Toast.makeText(this, "Filter: ${preset.uppercase()}", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun setArLens(lens: String) {
+        currentArLensName = lens
+        val lensButtons = listOf(
+            viewBinding.btnArNone to "none",
+            viewBinding.btnArMesh to "mesh_contour",
+            viewBinding.btnArVisor to "cyberpunk_visor",
+            viewBinding.btnArCrown to "golden_crown",
+            viewBinding.btnArHud to "scifi_hud"
+        )
+        for ((btn, name) in lensButtons) {
+            val isActive = name == lens
+            if (isActive) {
+                btn.setBackgroundResource(R.drawable.bg_cinema_button_active)
+                btn.setTextColor(Color.parseColor("#000000"))
+            } else {
+                btn.setBackgroundResource(R.drawable.bg_cinema_button_inactive)
+                btn.setTextColor(Color.parseColor("#94A3B8"))
+            }
+        }
+        Toast.makeText(this, "AR Lens: ${lens.uppercase()}", Toast.LENGTH_SHORT).show()
     }
 
     private fun toggleProDrawer() {
@@ -910,6 +990,7 @@ class MainActivity : AppCompatActivity() {
             else -> "4:3"
         }
         viewBinding.btnAspectRatio.text = currentAspectRatio
+        viewBinding.proOverlayView.sensorAspectRatio = currentAspectRatio
         Toast.makeText(this, "Sensor Ratio: $currentAspectRatio", Toast.LENGTH_SHORT).show()
     }
 
@@ -1279,20 +1360,35 @@ class MainActivity : AppCompatActivity() {
     private fun setMode(mode: CameraMode) {
         if (recording != null) return
         cameraMode = mode
-        if (mode == CameraMode.PHOTO) {
-            viewBinding.tabPhoto.setTextColor(Color.parseColor("#FFFFFF"))
-            viewBinding.tabVideo.setTextColor(Color.parseColor("#777777"))
+
+        // Smoothly highlight active mode and mute others
+        val modeTabs = listOf(
+            viewBinding.tabSlowMo to CameraMode.SLOW_MO,
+            viewBinding.tabVideo to CameraMode.VIDEO,
+            viewBinding.tabPhoto to CameraMode.PHOTO,
+            viewBinding.tabPortrait to CameraMode.PORTRAIT,
+            viewBinding.tabNight to CameraMode.NIGHT
+        )
+        for ((tab, m) in modeTabs) {
+            val isActive = m == mode
+            tab.setTextColor(if (isActive) Color.parseColor("#FACC15") else Color.parseColor("#64748B"))
+        }
+
+        val isVideoType = mode == CameraMode.VIDEO || mode == CameraMode.SLOW_MO
+        if (!isVideoType) {
             viewBinding.btnCapture.setImageResource(R.drawable.bg_shutter_button)
             viewBinding.recordingTimer.visibility = View.GONE
             viewBinding.btnPauseResume.visibility = View.GONE
-            viewBinding.btnQuickPreset.visibility = View.VISIBLE
             viewBinding.layoutBtnTimer.visibility = View.VISIBLE
             viewBinding.btnAutoLoop.visibility = View.GONE
+            val modeToast = when (mode) {
+                CameraMode.PORTRAIT -> "Portrait Mode: Soft Bokeh Depth active"
+                CameraMode.NIGHT -> "Night Mode: Low-Light Long Exposure active"
+                else -> "Photo Mode: Single & Burst ready"
+            }
+            Toast.makeText(this, modeToast, Toast.LENGTH_SHORT).show()
         } else {
-            viewBinding.tabVideo.setTextColor(Color.parseColor("#FFFFFF"))
-            viewBinding.tabPhoto.setTextColor(Color.parseColor("#777777"))
             viewBinding.btnCapture.setImageResource(R.drawable.bg_record_button_idle)
-            viewBinding.btnQuickPreset.visibility = View.GONE
             viewBinding.layoutBtnTimer.visibility = View.GONE
             viewBinding.btnAutoLoop.visibility = View.VISIBLE
             viewBinding.recordingTimer.visibility = View.VISIBLE
@@ -1301,6 +1397,8 @@ class MainActivity : AppCompatActivity() {
             viewBinding.recordingDot.visibility = View.GONE
             viewBinding.chronometer.text = "00:00:00"
             updateAutoLoopHud()
+            val modeToast = if (mode == CameraMode.SLOW_MO) "Slow-Motion Mode: 120 FPS high-frame-rate" else "Video Mode: Studio Recording"
+            Toast.makeText(this, modeToast, Toast.LENGTH_SHORT).show()
         }
         bindCameraUseCases()
     }
