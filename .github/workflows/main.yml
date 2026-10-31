@@ -34,17 +34,12 @@ jobs:
       # Step 4: Ensure Gradle wrapper executable and jar exist
       - name: Prepare Gradle wrapper
         run: |
-          if [ -f gradlew ]; then
-            sed -i 's/$//' gradlew || true
-            chmod +x gradlew
-          fi
+          chmod +x gradlew || true
           if [ ! -f gradle/wrapper/gradle-wrapper.jar ]; then
             echo "Generating gradle-wrapper.jar..."
             gradle wrapper --gradle-version 8.9 || true
           fi
-          if [ -f gradlew ]; then
-            chmod +x gradlew
-          fi
+          chmod +x gradlew || true
 
       # Step 5: Build Debug APK using Gradle wrapper
       - name: Build Debug APK
@@ -59,7 +54,7 @@ jobs:
       - name: Verify APK Exists
         run: |
           ls -la app/build/outputs/apk/debug/ || true
-          test -f app/build/outputs/apk/debug/app-debug.apk
+          test -f app/build/outputs/apk/debug/*.apk || test -f app/build/outputs/apk/debug/app-debug.apk
 
       # Step 7: Upload APK as downloadable artifact
       - name: Upload Debug APK Artifact
@@ -67,6 +62,6 @@ jobs:
         if: always()
         with:
           name: CameraX-Debug-APK
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: app/build/outputs/apk/debug/*.apk
           retention-days: 14
           if-no-files-found: warn
