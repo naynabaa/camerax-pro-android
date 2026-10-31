@@ -18,7 +18,7 @@ jobs:
 
       # Step 1: Install JDK 17
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: 'temurin'
           java-version: '17'
@@ -34,6 +34,10 @@ jobs:
       # Step 4: Ensure Gradle wrapper executable and jar exist
       - name: Prepare Gradle wrapper
         run: |
+          if [ -f gradlew ]; then
+            sed -i 's/$//' gradlew || true
+            chmod +x gradlew
+          fi
           if [ ! -f gradle/wrapper/gradle-wrapper.jar ]; then
             echo "Generating gradle-wrapper.jar..."
             gradle wrapper --gradle-version 8.9 || true
