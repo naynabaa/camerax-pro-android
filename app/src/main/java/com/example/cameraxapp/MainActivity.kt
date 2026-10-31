@@ -199,8 +199,14 @@ class MainActivity : AppCompatActivity() {
         sensorManager.unregisterListener(sensorEventListener)
     }
 
+    enum class ShelfCategory { GRIDS, EXPOSURE, OPTICS, AUDIO }
+    private var currentShelfTab = ShelfCategory.GRIDS
+    private var isAudioMuted = false
+    private var currentAspectRatio = "4:3"
+    private var currentDeSqueeze = "OFF"
+
     private fun setupClickListeners() {
-        // Lens Switch Listener
+        // Lens Flip Switch Listener
         viewBinding.btnSwitchCamera.setOnClickListener { switchCamera() }
 
         // Mode Switcher: Photo vs Video
@@ -210,79 +216,144 @@ class MainActivity : AppCompatActivity() {
         // Video Pause/Resume Button
         viewBinding.btnPauseResume.setOnClickListener { toggleVideoPauseResume() }
 
-        // Pro Mode: Countdown Timer Toggle (Off -> 3s -> 5s -> 10s)
+        // Top Toolbar: Flash Button
+        viewBinding.btnFlash.setOnClickListener { toggleFlashMode() }
+
+        // Top Toolbar: Creative Filters / Quick Tone
+        viewBinding.btnFilter.setOnClickListener {
+            viewBinding.proStudioDrawer.visibility = View.VISIBLE
+            selectShelfTab(ShelfCategory.EXPOSURE)
+        }
+
+        // Top Toolbar: Self-Timer Toggle (Photo Mode)
         viewBinding.btnTimer.setOnClickListener { cycleCountdownTimer() }
 
-        // Video Auto Trigger Loop Cycle (Auto Record & Pause Loop)
+        // Top Toolbar: Auto Trigger Interval Loop (Video Mode)
         viewBinding.btnAutoLoop.setOnClickListener { cycleAutoLoopTimer() }
 
-        // Pro Mode: Grid Quick Touch & Cycle (Tap top button to cycle immediately, long-press to turn off)
-        viewBinding.btnGrid.setOnClickListener { cycleToNextGrid() }
-        viewBinding.btnGrid.setOnLongClickListener {
-            setGridMode(ProOverlayView.GridType.NONE)
-            Toast.makeText(this, "Grid: OFF (No Grid)", Toast.LENGTH_SHORT).show()
-            true
-        }
-        viewBinding.btnRotateSpiral.setOnClickListener {
-            val current = viewBinding.proOverlayView.spiralOrientation
-            val next = (current + 1) % 4
-            viewBinding.proOverlayView.spiralOrientation = next
-            viewBinding.btnRotateSpiral.text = "⟳ ${next * 90}°"
-            Toast.makeText(this, "Spiral Orientation: ${next * 90}°", Toast.LENGTH_SHORT).show()
+        // Top Toolbar: Aspect Ratio Quick Cycle (4:3 -> 16:9 -> 1:1)
+        viewBinding.btnAspectRatio.setOnClickListener { cycleAspectRatio() }
+
+        // Top Toolbar: Clean Screen 1-Tap Toggle (Hide all HUD overlays)
+        viewBinding.btnCleanScreen.setOnClickListener { toggleCleanScreen() }
+        viewBinding.btnCleanView.setOnClickListener {
+            toggleCleanScreen()
+            viewBinding.proStudioDrawer.visibility = View.GONE
         }
 
-        // Pro Studio Drawer Open / Close
+        // Top Toolbar: Pro Studio Drawer Open / Close
         viewBinding.btnProStudio.setOnClickListener {
-            viewBinding.proStudioDrawer.visibility = View.VISIBLE
+            toggleProDrawer()
         }
         viewBinding.btnQuickPreset.setOnClickListener {
-            viewBinding.proStudioDrawer.visibility = View.VISIBLE
+            toggleProDrawer()
         }
         viewBinding.btnCloseProDrawer.setOnClickListener {
             viewBinding.proStudioDrawer.visibility = View.GONE
         }
 
-        // Scopes & Exposure Warning Toggles (Zebra Stripes & Live Histogram)
-        viewBinding.btnToggleZebra.setOnClickListener {
-            val isEnabled = !viewBinding.proOverlayView.showZebraStripes
-            viewBinding.proOverlayView.showZebraStripes = isEnabled
-            viewBinding.btnToggleZebra.text = if (isEnabled) "Zebra: ON" else "Zebra: OFF"
-            viewBinding.btnToggleZebra.setBackgroundColor(if (isEnabled) Color.parseColor("#EAB308") else Color.parseColor("#334155"))
-            Toast.makeText(this, if (isEnabled) "Zebra Stripes (Overexposure Warning): ON" else "Zebra: OFF", Toast.LENGTH_SHORT).show()
-        }
+        // Top Toolbar: Audio Mute Toggle
+        viewBinding.btnAudioMute.setOnClickListener { toggleAudioMute() }
 
-        viewBinding.btnToggleHistogram.setOnClickListener {
-            val isEnabled = !viewBinding.proOverlayView.showHistogram
-            viewBinding.proOverlayView.showHistogram = isEnabled
-            viewBinding.btnToggleHistogram.text = if (isEnabled) "Histo: ON" else "Histo: OFF"
-            viewBinding.btnToggleHistogram.setBackgroundColor(if (isEnabled) Color.parseColor("#0284C7") else Color.parseColor("#334155"))
-            Toast.makeText(this, if (isEnabled) "Live Histogram: ON" else "Histogram: OFF", Toast.LENGTH_SHORT).show()
-        }
+        // 4 Category Tabs Bar
+        viewBinding.tabCategoryGrids.setOnClickListener { selectShelfTab(ShelfCategory.GRIDS) }
+        viewBinding.tabCategoryExposure.setOnClickListener { selectShelfTab(ShelfCategory.EXPOSURE) }
+        viewBinding.tabCategoryOptics.setOnClickListener { selectShelfTab(ShelfCategory.OPTICS) }
+        viewBinding.tabCategoryAudio.setOnClickListener { selectShelfTab(ShelfCategory.AUDIO) }
 
-        // 4. Smart Visual Balance Center ("Center of Mass" Dot)
-        viewBinding.btnToggleVisualBalance.setOnClickListener {
-            val isEnabled = !viewBinding.proOverlayView.showVisualBalance
-            viewBinding.proOverlayView.showVisualBalance = isEnabled
-            viewBinding.btnToggleVisualBalance.text = if (isEnabled) "Balance: ON" else "Balance: OFF"
-            viewBinding.btnToggleVisualBalance.setBackgroundColor(if (isEnabled) Color.parseColor("#10B981") else Color.parseColor("#334155"))
-            Toast.makeText(this, if (isEnabled) "Smart Visual Balance Dot: ON" else "Visual Balance: OFF", Toast.LENGTH_SHORT).show()
-        }
+        // TAB 1: Framing Grids Symmetrical Buttons
+        viewBinding.btnGridOff.setOnClickListener { setGridMode(ProOverlayView.GridType.NONE) }
+        viewBinding.btnGridThirds.setOnClickListener { setGridMode(ProOverlayView.GridType.RULE_OF_THIRDS) }
+        viewBinding.btnGridPhi.setOnClickListener { setGridMode(ProOverlayView.GridType.GOLDEN_RATIO_PHI) }
+        viewBinding.btnGridSpiral.setOnClickListener { setGridMode(ProOverlayView.GridType.GOLDEN_SPIRAL) }
+        viewBinding.btnGridDiagonal.setOnClickListener { setGridMode(ProOverlayView.GridType.DIAGONAL_SYMMETRY) }
+        viewBinding.btnGridCinematic.setOnClickListener { setGridMode(ProOverlayView.GridType.CINEMATIC_239) }
 
-        // 3. Aspect Ratio Matte Crop Overlays
+        // Spiral Rotation Axis (0°, 90°, 180°, 270°)
+        viewBinding.btnSpiral0.setOnClickListener { setSpiralOrientation(0) }
+        viewBinding.btnSpiral90.setOnClickListener { setSpiralOrientation(1) }
+        viewBinding.btnSpiral180.setOnClickListener { setSpiralOrientation(2) }
+        viewBinding.btnSpiral270.setOnClickListener { setSpiralOrientation(3) }
+
+        // Aspect Ratio Mattes Symmetrical Buttons
         viewBinding.btnMatteOff.setOnClickListener { setAspectMatteMode(ProOverlayView.AspectMatte.NONE) }
+        viewBinding.btnMatte169.setOnClickListener { setAspectMatteMode(ProOverlayView.AspectMatte.WIDESCREEN_16_9) }
         viewBinding.btnMatteCine.setOnClickListener { setAspectMatteMode(ProOverlayView.AspectMatte.CINE_239) }
         viewBinding.btnMatteSquare.setOnClickListener { setAspectMatteMode(ProOverlayView.AspectMatte.SQUARE_1_1) }
         viewBinding.btnMatte916.setOnClickListener { setAspectMatteMode(ProOverlayView.AspectMatte.VERTICAL_9_16) }
         viewBinding.btnMatte45.setOnClickListener { setAspectMatteMode(ProOverlayView.AspectMatte.PORTRAIT_4_5) }
-        viewBinding.btnMatte169.setOnClickListener { setAspectMatteMode(ProOverlayView.AspectMatte.WIDESCREEN_16_9) }
 
-        // Quick Zoom Pills (.6x, 1x, 2x, 5x)
-        viewBinding.btnZoom06.setOnClickListener { setZoomLevel(0.6f, viewBinding.btnZoom06) }
-        viewBinding.btnZoom1.setOnClickListener { setZoomLevel(1.0f, viewBinding.btnZoom1) }
-        viewBinding.btnZoom2.setOnClickListener { setZoomLevel(2.0f, viewBinding.btnZoom2) }
-        viewBinding.btnZoom5.setOnClickListener { setZoomLevel(5.0f, viewBinding.btnZoom5) }
+        // Gyro & Balance Switches
+        viewBinding.switchHorizonLevel.setOnCheckedChangeListener { _, isChecked ->
+            viewBinding.proOverlayView.showLevelGauge = isChecked
+            viewBinding.tvHorizonLevelStatus.text = if (isChecked) "0.0° Level · Pitch and roll active" else "Horizon Level Gyro: Inactive"
+            updateActiveInstrumentsCount()
+        }
+        viewBinding.switchVisualBalance.setOnCheckedChangeListener { _, isChecked ->
+            viewBinding.proOverlayView.showVisualBalance = isChecked
+            viewBinding.tvVisualBalanceStatus.text = if (isChecked) "Balanced subject framing active" else "Visual Balance Reticle: Inactive"
+            updateActiveInstrumentsCount()
+        }
 
-        viewBinding.btnFlash.setOnClickListener { toggleFlashMode() }
+        // TAB 2: Exposure Switches & Instruments
+        viewBinding.switchZebra.setOnCheckedChangeListener { _, isChecked ->
+            viewBinding.proOverlayView.showZebraStripes = isChecked
+            viewBinding.tvZebraStatus.text = if (isChecked) "Clipping warning (${viewBinding.proOverlayView.zebraThreshold}% IRE)" else "Zebra warning disabled"
+            updateActiveInstrumentsCount()
+        }
+        viewBinding.btnZebraThreshold.setOnClickListener {
+            val next = if (viewBinding.proOverlayView.zebraThreshold == 240) 250 else 240
+            viewBinding.proOverlayView.zebraThreshold = next
+            viewBinding.btnZebraThreshold.text = if (next == 250) "98%" else "95%"
+            viewBinding.tvZebraStatus.text = "Clipping warning (${if (next == 250) "98%" else "95%"} IRE)"
+            Toast.makeText(this, "Zebra Threshold: ${if (next == 250) "98%" else "95%"} IRE", Toast.LENGTH_SHORT).show()
+        }
+        viewBinding.switchWaveform.setOnCheckedChangeListener { _, isChecked ->
+            viewBinding.proOverlayView.showWaveform = isChecked
+            updateActiveInstrumentsCount()
+        }
+        viewBinding.switchHistogram.setOnCheckedChangeListener { _, isChecked ->
+            viewBinding.proOverlayView.showHistogram = isChecked
+            updateActiveInstrumentsCount()
+        }
+        viewBinding.switchVectorScope.setOnCheckedChangeListener { _, isChecked ->
+            viewBinding.proOverlayView.showVectorScope = isChecked
+            updateActiveInstrumentsCount()
+        }
+
+        // TAB 3: Optics Lenses (0.6x, 1x, 2x, 5x)
+        viewBinding.btnLens06.setOnClickListener { setZoomLevel(0.6f, 0) }
+        viewBinding.btnLens1.setOnClickListener { setZoomLevel(1.0f, 1) }
+        viewBinding.btnLens2.setOnClickListener { setZoomLevel(2.0f, 2) }
+        viewBinding.btnLens5.setOnClickListener { setZoomLevel(5.0f, 3) }
+
+        // De-Squeeze (OFF, 1.33x, 1.55x, 1.8x, 2.0x)
+        viewBinding.btnSqueezeOff.setOnClickListener { setDeSqueeze("OFF", 0) }
+        viewBinding.btnSqueeze133.setOnClickListener { setDeSqueeze("1.33x", 1) }
+        viewBinding.btnSqueeze155.setOnClickListener { setDeSqueeze("1.55x", 2) }
+        viewBinding.btnSqueeze180.setOnClickListener { setDeSqueeze("1.8x", 3) }
+        viewBinding.btnSqueeze200.setOnClickListener { setDeSqueeze("2.0x", 4) }
+
+        // TAB 4: Audio Switches
+        viewBinding.switchAudioVuMeter.setOnCheckedChangeListener { _, isChecked ->
+            viewBinding.proOverlayView.showAudioVuMeter = isChecked
+            updateActiveInstrumentsCount()
+        }
+        viewBinding.switchMicInput.setOnCheckedChangeListener { _, isChecked ->
+            isAudioMuted = !isChecked
+            updateAudioMuteUI()
+        }
+        viewBinding.switchMultiCamPip.setOnCheckedChangeListener { _, isChecked ->
+            Toast.makeText(this, if (isChecked) "Multi-Camera PiP Deck: Active" else "Multi-Camera PiP: Inactive", Toast.LENGTH_SHORT).show()
+            updateActiveInstrumentsCount()
+        }
+
+        // Quick Viewfinder Zoom Pills
+        viewBinding.btnZoom06.setOnClickListener { setZoomLevel(0.6f, 0) }
+        viewBinding.btnZoom1.setOnClickListener { setZoomLevel(1.0f, 1) }
+        viewBinding.btnZoom2.setOnClickListener { setZoomLevel(2.0f, 2) }
+        viewBinding.btnZoom5.setOnClickListener { setZoomLevel(5.0f, 3) }
+
         setupViewfinderGestures()
     }
 
@@ -613,7 +684,14 @@ class MainActivity : AppCompatActivity() {
             5 -> 10
             else -> 0
         }
-        viewBinding.btnTimer.text = if (countdownSeconds == 0) "TIMER OFF" else "${countdownSeconds}s"
+        if (countdownSeconds == 0) {
+            viewBinding.tvTimerBadge.visibility = View.GONE
+            viewBinding.btnTimer.setColorFilter(Color.parseColor("#CCCCCC"))
+        } else {
+            viewBinding.tvTimerBadge.visibility = View.VISIBLE
+            viewBinding.tvTimerBadge.text = "${countdownSeconds}"
+            viewBinding.btnTimer.setColorFilter(Color.parseColor("#FACC15"))
+        }
         Toast.makeText(this, "Timer: ${if (countdownSeconds == 0) "Off" else "${countdownSeconds}s"}", Toast.LENGTH_SHORT).show()
     }
 
@@ -624,35 +702,30 @@ class MainActivity : AppCompatActivity() {
                 isAutoLoopEnabled = true
                 autoRecordDuration = 5
                 autoPauseDuration = 3
-                viewBinding.btnAutoLoop.text = "LOOP: 5s/3s"
-                viewBinding.btnAutoLoop.setTextColor(Color.parseColor("#FBBF24"))
+                viewBinding.btnAutoLoop.setColorFilter(Color.parseColor("#FACC15"))
                 Toast.makeText(this, "Auto Loop: 5s Record / 3s Pause", Toast.LENGTH_SHORT).show()
             }
             autoRecordDuration == 5 -> {
                 autoRecordDuration = 10
                 autoPauseDuration = 5
-                viewBinding.btnAutoLoop.text = "LOOP: 10s/5s"
-                viewBinding.btnAutoLoop.setTextColor(Color.parseColor("#FBBF24"))
+                viewBinding.btnAutoLoop.setColorFilter(Color.parseColor("#FACC15"))
                 Toast.makeText(this, "Auto Loop: 10s Record / 5s Pause", Toast.LENGTH_SHORT).show()
             }
             autoRecordDuration == 10 -> {
                 autoRecordDuration = 15
                 autoPauseDuration = 5
-                viewBinding.btnAutoLoop.text = "LOOP: 15s/5s"
-                viewBinding.btnAutoLoop.setTextColor(Color.parseColor("#FBBF24"))
+                viewBinding.btnAutoLoop.setColorFilter(Color.parseColor("#FACC15"))
                 Toast.makeText(this, "Auto Loop: 15s Record / 5s Pause", Toast.LENGTH_SHORT).show()
             }
             autoRecordDuration == 15 -> {
                 autoRecordDuration = 30
                 autoPauseDuration = 10
-                viewBinding.btnAutoLoop.text = "LOOP: 30s/10s"
-                viewBinding.btnAutoLoop.setTextColor(Color.parseColor("#FBBF24"))
+                viewBinding.btnAutoLoop.setColorFilter(Color.parseColor("#FACC15"))
                 Toast.makeText(this, "Auto Loop: 30s Record / 10s Pause", Toast.LENGTH_SHORT).show()
             }
             else -> {
                 isAutoLoopEnabled = false
-                viewBinding.btnAutoLoop.text = "LOOP OFF"
-                viewBinding.btnAutoLoop.setTextColor(ContextCompat.getColor(this, android.R.color.white))
+                viewBinding.btnAutoLoop.setColorFilter(Color.parseColor("#CCCCCC"))
                 Toast.makeText(this, "Auto Loop: Disabled", Toast.LENGTH_SHORT).show()
             }
         }
@@ -759,6 +832,146 @@ class MainActivity : AppCompatActivity() {
 
     private var lastActiveGrid = ProOverlayView.GridType.RULE_OF_THIRDS
 
+    private fun selectShelfTab(category: ShelfCategory) {
+        currentShelfTab = category
+        viewBinding.layoutCategoryGrids.visibility = if (category == ShelfCategory.GRIDS) View.VISIBLE else View.GONE
+        viewBinding.layoutCategoryExposure.visibility = if (category == ShelfCategory.EXPOSURE) View.VISIBLE else View.GONE
+        viewBinding.layoutCategoryOptics.visibility = if (category == ShelfCategory.OPTICS) View.VISIBLE else View.GONE
+        viewBinding.layoutCategoryAudio.visibility = if (category == ShelfCategory.AUDIO) View.VISIBLE else View.GONE
+
+        // Update tab styles: Solid yellow background for active, translucent slate for inactive
+        val tabs = listOf(
+            Pair(viewBinding.tabCategoryGrids, ShelfCategory.GRIDS),
+            Pair(viewBinding.tabCategoryExposure, ShelfCategory.EXPOSURE),
+            Pair(viewBinding.tabCategoryOptics, ShelfCategory.OPTICS),
+            Pair(viewBinding.tabCategoryAudio, ShelfCategory.AUDIO)
+        )
+        for ((tabView, cat) in tabs) {
+            val isActive = cat == category
+            if (isActive) {
+                tabView.setBackgroundResource(R.drawable.bg_tab_active)
+                tabView.setTextColor(Color.parseColor("#000000"))
+            } else {
+                tabView.setBackgroundResource(R.drawable.bg_tab_inactive)
+                tabView.setTextColor(Color.parseColor("#94A3B8"))
+            }
+        }
+    }
+
+    private fun toggleProDrawer() {
+        val isVisible = viewBinding.proStudioDrawer.visibility == View.VISIBLE
+        viewBinding.proStudioDrawer.visibility = if (isVisible) View.GONE else View.VISIBLE
+    }
+
+    private fun toggleCleanScreen() {
+        val isClean = !viewBinding.proOverlayView.isCleanScreen
+        viewBinding.proOverlayView.isCleanScreen = isClean
+        if (isClean) {
+            viewBinding.btnCleanScreen.setImageResource(R.drawable.ic_eye_off)
+            viewBinding.btnCleanScreen.setColorFilter(Color.parseColor("#FACC15"))
+            Toast.makeText(this, "Clean Screen: All overlays hidden", Toast.LENGTH_SHORT).show()
+        } else {
+            viewBinding.btnCleanScreen.setImageResource(R.drawable.ic_eye)
+            viewBinding.btnCleanScreen.setColorFilter(Color.parseColor("#CCCCCC"))
+            Toast.makeText(this, "HUD Overlays Restored", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun toggleAudioMute() {
+        isAudioMuted = !isAudioMuted
+        viewBinding.switchMicInput.isChecked = !isAudioMuted
+        updateAudioMuteUI()
+    }
+
+    private fun updateAudioMuteUI() {
+        if (isAudioMuted) {
+            viewBinding.btnAudioMute.setImageResource(R.drawable.ic_volume_off)
+            viewBinding.btnAudioMute.setColorFilter(Color.parseColor("#EF4444"))
+            viewBinding.tvMicInputStatus.text = "Microphone muted"
+            Toast.makeText(this, "Microphone: Muted", Toast.LENGTH_SHORT).show()
+        } else {
+            viewBinding.btnAudioMute.setImageResource(R.drawable.ic_volume_up)
+            viewBinding.btnAudioMute.setColorFilter(Color.parseColor("#CCCCCC"))
+            viewBinding.tvMicInputStatus.text = "Studio stereo input active"
+            Toast.makeText(this, "Microphone: Active", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun cycleAspectRatio() {
+        currentAspectRatio = when (currentAspectRatio) {
+            "4:3" -> "16:9"
+            "16:9" -> "1:1"
+            else -> "4:3"
+        }
+        viewBinding.btnAspectRatio.text = currentAspectRatio
+        Toast.makeText(this, "Sensor Ratio: $currentAspectRatio", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun setSpiralOrientation(rot: Int) {
+        viewBinding.proOverlayView.spiralOrientation = rot
+        val spiralButtons = listOf(
+            viewBinding.btnSpiral0 to 0,
+            viewBinding.btnSpiral90 to 1,
+            viewBinding.btnSpiral180 to 2,
+            viewBinding.btnSpiral270 to 3
+        )
+        for ((btn, r) in spiralButtons) {
+            val isActive = r == rot
+            if (isActive) {
+                btn.setBackgroundResource(R.drawable.bg_cinema_button_active)
+                btn.setTextColor(Color.parseColor("#000000"))
+            } else {
+                btn.setBackgroundResource(R.drawable.bg_cinema_button_inactive)
+                btn.setTextColor(Color.parseColor("#94A3B8"))
+            }
+        }
+    }
+
+    private fun setDeSqueeze(label: String, index: Int) {
+        currentDeSqueeze = label
+        val squeezeButtons = listOf(
+            viewBinding.btnSqueezeOff to 0,
+            viewBinding.btnSqueeze133 to 1,
+            viewBinding.btnSqueeze155 to 2,
+            viewBinding.btnSqueeze180 to 3,
+            viewBinding.btnSqueeze200 to 4
+        )
+        for ((btn, idx) in squeezeButtons) {
+            val isActive = idx == index
+            if (isActive) {
+                btn.setBackgroundResource(R.drawable.bg_cinema_button_active)
+                btn.setTextColor(Color.parseColor("#000000"))
+            } else {
+                btn.setBackgroundResource(R.drawable.bg_cinema_button_inactive)
+                btn.setTextColor(Color.parseColor("#94A3B8"))
+            }
+        }
+        Toast.makeText(this, "Anamorphic De-Squeeze: $label", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun updateActiveInstrumentsCount() {
+        var count = 0
+        if (viewBinding.proOverlayView.currentGrid != ProOverlayView.GridType.NONE) count++
+        if (viewBinding.proOverlayView.currentMatte != ProOverlayView.AspectMatte.NONE) count++
+        if (viewBinding.proOverlayView.showLevelGauge) count++
+        if (viewBinding.proOverlayView.showVisualBalance) count++
+        if (viewBinding.proOverlayView.showZebraStripes) count++
+        if (viewBinding.proOverlayView.showWaveform) count++
+        if (viewBinding.proOverlayView.showHistogram) count++
+        if (viewBinding.proOverlayView.showVectorScope) count++
+        if (viewBinding.proOverlayView.showAudioVuMeter) count++
+
+        if (count > 0) {
+            viewBinding.viewStudioBadge.visibility = View.VISIBLE
+            viewBinding.tvDrawerSubtitle.text = "$count ACTIVE INSTRUMENTS"
+            viewBinding.btnProStudio.setColorFilter(Color.parseColor("#FACC15"))
+        } else {
+            viewBinding.viewStudioBadge.visibility = View.GONE
+            viewBinding.tvDrawerSubtitle.text = "INSTRUMENTS IN STANDBY"
+            viewBinding.btnProStudio.setColorFilter(Color.parseColor("#CCCCCC"))
+        }
+    }
+
     private fun cycleToNextGrid() {
         val nextMode = when (viewBinding.proOverlayView.currentGrid) {
             ProOverlayView.GridType.NONE -> ProOverlayView.GridType.RULE_OF_THIRDS
@@ -780,82 +993,106 @@ class MainActivity : AppCompatActivity() {
         Toast.makeText(this, name, Toast.LENGTH_SHORT).show()
     }
 
-    private fun toggleGridLines() {
-        if (viewBinding.proOverlayView.currentGrid != ProOverlayView.GridType.NONE) {
-            // Immediately toggle OFF
-            lastActiveGrid = viewBinding.proOverlayView.currentGrid
-            setGridMode(ProOverlayView.GridType.NONE)
-            Toast.makeText(this, "Grid: OFF (No Grid)", Toast.LENGTH_SHORT).show()
-        } else {
-            // Toggle ON last active grid
-            setGridMode(lastActiveGrid)
-            Toast.makeText(this, "Grid: ON", Toast.LENGTH_SHORT).show()
-        }
-    }
-
     private fun setGridMode(mode: ProOverlayView.GridType) {
         viewBinding.proOverlayView.currentGrid = mode
-        val isOff = mode == ProOverlayView.GridType.NONE
-        viewBinding.btnGrid.alpha = if (isOff) 0.5f else 1.0f
-
         val isSpiral = mode == ProOverlayView.GridType.GOLDEN_SPIRAL
-        viewBinding.btnRotateSpiral.visibility = if (isSpiral) View.VISIBLE else View.GONE
-        viewBinding.btnRotateSpiral.text = "⟳ ${viewBinding.proOverlayView.spiralOrientation * 90}°"
+        viewBinding.layoutSpiralRotation.visibility = if (isSpiral) View.VISIBLE else View.GONE
 
-        val activeBg = ContextCompat.getColorStateList(this, android.R.color.holo_blue_dark)
-        val inactiveBg = ContextCompat.getColorStateList(this, android.R.color.darker_gray)
-        val offBg = ContextCompat.getColorStateList(this, if (isOff) android.R.color.holo_red_dark else android.R.color.darker_gray)
+        val gridButtons = listOf(
+            viewBinding.btnGridOff to ProOverlayView.GridType.NONE,
+            viewBinding.btnGridThirds to ProOverlayView.GridType.RULE_OF_THIRDS,
+            viewBinding.btnGridPhi to ProOverlayView.GridType.GOLDEN_RATIO_PHI,
+            viewBinding.btnGridSpiral to ProOverlayView.GridType.GOLDEN_SPIRAL,
+            viewBinding.btnGridDiagonal to ProOverlayView.GridType.DIAGONAL_SYMMETRY,
+            viewBinding.btnGridCinematic to ProOverlayView.GridType.CINEMATIC_239
+        )
+        for ((btn, m) in gridButtons) {
+            val isActive = m == mode
+            if (isActive) {
+                btn.setBackgroundResource(R.drawable.bg_cinema_button_active)
+                btn.setTextColor(Color.parseColor("#000000"))
+            } else {
+                btn.setBackgroundResource(R.drawable.bg_cinema_button_inactive)
+                btn.setTextColor(Color.parseColor("#94A3B8"))
+            }
+        }
 
-        viewBinding.btnGridOff.backgroundTintList = offBg
-        viewBinding.btnGridThirds.backgroundTintList = if (mode == ProOverlayView.GridType.RULE_OF_THIRDS) activeBg else inactiveBg
-        viewBinding.btnGridSpiral.backgroundTintList = if (mode == ProOverlayView.GridType.GOLDEN_SPIRAL) activeBg else inactiveBg
-        viewBinding.btnGridPhi.backgroundTintList = if (mode == ProOverlayView.GridType.GOLDEN_RATIO_PHI) activeBg else inactiveBg
-        viewBinding.btnGridDiagonal.backgroundTintList = if (mode == ProOverlayView.GridType.DIAGONAL_SYMMETRY) activeBg else inactiveBg
-        viewBinding.btnGridCinematic.backgroundTintList = if (mode == ProOverlayView.GridType.CINEMATIC_239) activeBg else inactiveBg
-
-        if (!isOff) {
+        if (mode != ProOverlayView.GridType.NONE) {
             lastActiveGrid = mode
         }
+        updateActiveInstrumentsCount()
     }
 
     private fun setAspectMatteMode(matte: ProOverlayView.AspectMatte) {
         viewBinding.proOverlayView.currentMatte = matte
-        val isOff = matte == ProOverlayView.AspectMatte.NONE
-        val activeBg = ContextCompat.getColorStateList(this, android.R.color.holo_orange_dark)
-        val inactiveBg = ContextCompat.getColorStateList(this, android.R.color.darker_gray)
-        val offBg = ContextCompat.getColorStateList(this, if (isOff) android.R.color.holo_red_dark else android.R.color.darker_gray)
 
-        viewBinding.btnMatteOff.backgroundTintList = offBg
-        viewBinding.btnMatteCine.backgroundTintList = if (matte == ProOverlayView.AspectMatte.CINE_239) activeBg else inactiveBg
-        viewBinding.btnMatteSquare.backgroundTintList = if (matte == ProOverlayView.AspectMatte.SQUARE_1_1) activeBg else inactiveBg
-        viewBinding.btnMatte916.backgroundTintList = if (matte == ProOverlayView.AspectMatte.VERTICAL_9_16) activeBg else inactiveBg
-        viewBinding.btnMatte45.backgroundTintList = if (matte == ProOverlayView.AspectMatte.PORTRAIT_4_5) activeBg else inactiveBg
-        viewBinding.btnMatte169.backgroundTintList = if (matte == ProOverlayView.AspectMatte.WIDESCREEN_16_9) activeBg else inactiveBg
+        val matteButtons = listOf(
+            viewBinding.btnMatteOff to ProOverlayView.AspectMatte.NONE,
+            viewBinding.btnMatte169 to ProOverlayView.AspectMatte.WIDESCREEN_16_9,
+            viewBinding.btnMatteCine to ProOverlayView.AspectMatte.CINE_239,
+            viewBinding.btnMatteSquare to ProOverlayView.AspectMatte.SQUARE_1_1,
+            viewBinding.btnMatte916 to ProOverlayView.AspectMatte.VERTICAL_9_16,
+            viewBinding.btnMatte45 to ProOverlayView.AspectMatte.PORTRAIT_4_5
+        )
+        for ((btn, m) in matteButtons) {
+            val isActive = m == matte
+            if (isActive) {
+                btn.setBackgroundResource(R.drawable.bg_cinema_button_active)
+                btn.setTextColor(Color.parseColor("#000000"))
+            } else {
+                btn.setBackgroundResource(R.drawable.bg_cinema_button_inactive)
+                btn.setTextColor(Color.parseColor("#94A3B8"))
+            }
+        }
 
         val label = when (matte) {
             ProOverlayView.AspectMatte.NONE -> "Matte: OFF (Full Sensor)"
             ProOverlayView.AspectMatte.CINE_239 -> "Matte: 2.39:1 CinemaScope"
             ProOverlayView.AspectMatte.SQUARE_1_1 -> "Matte: 1:1 Square Feed"
             ProOverlayView.AspectMatte.VERTICAL_9_16 -> "Matte: 9:16 Vertical Reel"
-            ProOverlayView.AspectMatte.PORTRAIT_4_5 -> "Matte: 4:5 Instagram Portrait"
-            ProOverlayView.AspectMatte.WIDESCREEN_16_9 -> "Matte: 16:9 Widescreen"
+            ProOverlayView.AspectMatte.PORTRAIT_4_5 -> "Matte: 4:5 Social Portrait"
+            ProOverlayView.AspectMatte.WIDESCREEN_16_9 -> "Matte: 16:9 Cinema"
         }
         Toast.makeText(this, label, Toast.LENGTH_SHORT).show()
+        updateActiveInstrumentsCount()
     }
 
-    private fun setZoomLevel(ratio: Float, selectedView: View) {
+    private fun setZoomLevel(ratio: Float, index: Int) {
         val zoomState = camera?.cameraInfo?.zoomState?.value
         val minZoom = zoomState?.minZoomRatio ?: 1.0f
         val maxZoom = zoomState?.maxZoomRatio ?: 8.0f
         val clamped = ratio.coerceIn(minZoom, maxZoom)
         cameraControl?.setZoomRatio(clamped)
 
-        val zoomViews = listOf(viewBinding.btnZoom06, viewBinding.btnZoom1, viewBinding.btnZoom2, viewBinding.btnZoom5)
-        for (v in zoomViews) {
-            if (v == selectedView) {
-                v.setBackgroundResource(R.drawable.bg_zoom_pill_active)
+        // Viewfinder zoom pills
+        val pillViews = listOf(viewBinding.btnZoom06, viewBinding.btnZoom1, viewBinding.btnZoom2, viewBinding.btnZoom5)
+        for (i in pillViews.indices) {
+            if (i == index) {
+                pillViews[i].setBackgroundResource(R.drawable.bg_zoom_pill_active)
+                pillViews[i].setTextColor(Color.parseColor("#FACC15"))
             } else {
-                v.setBackgroundResource(android.R.color.transparent)
+                pillViews[i].setBackgroundResource(android.R.color.transparent)
+                pillViews[i].setTextColor(Color.parseColor("#94A3B8"))
+            }
+        }
+
+        // Drawer lens buttons
+        val lensButtons = listOf(viewBinding.btnLens06, viewBinding.btnLens1, viewBinding.btnLens2, viewBinding.btnLens5)
+        for (i in lensButtons.indices) {
+            val btn = lensButtons[i]
+            val isActive = i == index
+            if (isActive) {
+                btn.setBackgroundResource(R.drawable.bg_cinema_button_active)
+                val title = btn.getChildAt(0) as? TextView
+                val sub = btn.getChildAt(1) as? TextView
+                title?.setTextColor(Color.parseColor("#000000"))
+                sub?.setTextColor(Color.parseColor("#334155"))
+            } else {
+                btn.setBackgroundResource(R.drawable.bg_cinema_button_inactive)
+                val title = btn.getChildAt(0) as? TextView
+                val sub = btn.getChildAt(1) as? TextView
+                title?.setTextColor(Color.parseColor("#E2E8F0"))
+                sub?.setTextColor(Color.parseColor("#94A3B8"))
             }
         }
     }
@@ -1037,24 +1274,24 @@ class MainActivity : AppCompatActivity() {
         if (recording != null) return
         cameraMode = mode
         if (mode == CameraMode.PHOTO) {
-            viewBinding.tabPhoto.setTextColor(ContextCompat.getColor(this, android.R.color.white))
-            viewBinding.tabVideo.setTextColor(ContextCompat.getColor(this, android.R.color.darker_gray))
+            viewBinding.tabPhoto.setTextColor(Color.parseColor("#FFFFFF"))
+            viewBinding.tabVideo.setTextColor(Color.parseColor("#777777"))
             viewBinding.btnCapture.setImageResource(R.drawable.bg_shutter_button)
             viewBinding.recordingTimer.visibility = View.GONE
             viewBinding.btnPauseResume.visibility = View.GONE
-            viewBinding.proModeBar.visibility = View.VISIBLE
-            viewBinding.btnTimer.visibility = View.VISIBLE
+            viewBinding.btnQuickPreset.visibility = View.VISIBLE
+            viewBinding.layoutBtnTimer.visibility = View.VISIBLE
             viewBinding.btnAutoLoop.visibility = View.GONE
         } else {
-            viewBinding.tabVideo.setTextColor(ContextCompat.getColor(this, android.R.color.white))
-            viewBinding.tabPhoto.setTextColor(ContextCompat.getColor(this, android.R.color.darker_gray))
+            viewBinding.tabVideo.setTextColor(Color.parseColor("#FFFFFF"))
+            viewBinding.tabPhoto.setTextColor(Color.parseColor("#777777"))
             viewBinding.btnCapture.setImageResource(R.drawable.bg_record_button_idle)
-            viewBinding.proModeBar.visibility = View.VISIBLE
-            viewBinding.btnTimer.visibility = View.GONE
+            viewBinding.btnQuickPreset.visibility = View.GONE
+            viewBinding.layoutBtnTimer.visibility = View.GONE
             viewBinding.btnAutoLoop.visibility = View.VISIBLE
             viewBinding.recordingTimer.visibility = View.VISIBLE
             viewBinding.tvRecordingStatus.text = "STANDBY"
-            viewBinding.tvRecordingStatus.setTextColor(ContextCompat.getColor(this, android.R.color.darker_gray))
+            viewBinding.tvRecordingStatus.setTextColor(Color.parseColor("#94A3B8"))
             viewBinding.recordingDot.visibility = View.GONE
             viewBinding.chronometer.text = "00:00:00"
             updateAutoLoopHud()
@@ -1146,41 +1383,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * 6. Real-Time Filter & AR Lens Controls
+     * 6. Real-Time Filter & Image Adjustment Controls
      */
     private fun setupFilterAndArControls() {
-        // Color Preset Selection
-        viewBinding.btnFilterPresetCinematic.setOnClickListener {
-            filterManager.setPreset(FilterManager.FilterPreset.CINEMATIC)
-            openGLProcessor?.setFilterPreset(FilterManager.FilterPreset.CINEMATIC)
-            Toast.makeText(this, "Filter: Cinematic (Teal/Orange)", Toast.LENGTH_SHORT).show()
-        }
-        viewBinding.btnFilterPresetVintage.setOnClickListener {
-            filterManager.setPreset(FilterManager.FilterPreset.VINTAGE)
-            openGLProcessor?.setFilterPreset(FilterManager.FilterPreset.VINTAGE)
-            Toast.makeText(this, "Filter: Vintage 70s", Toast.LENGTH_SHORT).show()
-        }
-        viewBinding.btnFilterPresetBw.setOnClickListener {
-            filterManager.setPreset(FilterManager.FilterPreset.BLACK_AND_WHITE)
-            openGLProcessor?.setFilterPreset(FilterManager.FilterPreset.BLACK_AND_WHITE)
-            Toast.makeText(this, "Filter: Noir B&W", Toast.LENGTH_SHORT).show()
-        }
-        viewBinding.btnFilterPresetHdr.setOnClickListener {
-            filterManager.setPreset(FilterManager.FilterPreset.HDR)
-            openGLProcessor?.setFilterPreset(FilterManager.FilterPreset.HDR)
-            Toast.makeText(this, "Filter: Vibrant HDR", Toast.LENGTH_SHORT).show()
-        }
-        viewBinding.btnFilterPresetCyberpunk.setOnClickListener {
-            filterManager.setPreset(FilterManager.FilterPreset.CYBERPUNK)
-            openGLProcessor?.setFilterPreset(FilterManager.FilterPreset.CYBERPUNK)
-            Toast.makeText(this, "Filter: Cyberpunk Neon", Toast.LENGTH_SHORT).show()
-        }
-        viewBinding.btnFilterPresetNormal.setOnClickListener {
-            filterManager.setPreset(FilterManager.FilterPreset.NORMAL)
-            openGLProcessor?.setFilterPreset(FilterManager.FilterPreset.NORMAL)
-            Toast.makeText(this, "Filter: Standard", Toast.LENGTH_SHORT).show()
-        }
-
         // Live Adjustments: Brightness, Contrast, Saturation
         viewBinding.sbBrightness.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
@@ -1205,50 +1410,6 @@ class MainActivity : AppCompatActivity() {
             override fun onStartTrackingTouch(sb: SeekBar?) {}
             override fun onStopTrackingTouch(sb: SeekBar?) {}
         })
-
-        // Framing Grid Direct Selection (Including Explicit NO GRID Button)
-        viewBinding.btnGridOff.setOnClickListener {
-            setGridMode(ProOverlayView.GridType.NONE)
-            Toast.makeText(this, "Grid: OFF (No Grid)", Toast.LENGTH_SHORT).show()
-        }
-        viewBinding.btnGridThirds.setOnClickListener {
-            setGridMode(ProOverlayView.GridType.RULE_OF_THIRDS)
-            Toast.makeText(this, "Rule of Thirds", Toast.LENGTH_SHORT).show()
-        }
-        viewBinding.btnGridSpiral.setOnClickListener {
-            setGridMode(ProOverlayView.GridType.GOLDEN_SPIRAL)
-            Toast.makeText(this, "Golden Spiral (Fibonacci)", Toast.LENGTH_SHORT).show()
-        }
-        viewBinding.btnGridPhi.setOnClickListener {
-            setGridMode(ProOverlayView.GridType.GOLDEN_RATIO_PHI)
-            Toast.makeText(this, "Golden Ratio (Phi)", Toast.LENGTH_SHORT).show()
-        }
-        viewBinding.btnGridDiagonal.setOnClickListener {
-            setGridMode(ProOverlayView.GridType.DIAGONAL_SYMMETRY)
-            Toast.makeText(this, "Dynamic Symmetry", Toast.LENGTH_SHORT).show()
-        }
-        viewBinding.btnGridCinematic.setOnClickListener {
-            setGridMode(ProOverlayView.GridType.CINEMATIC_239)
-            Toast.makeText(this, "2.39:1 CinemaScope", Toast.LENGTH_SHORT).show()
-        }
-
-        // Pro Composition & Sensor Overlays
-        viewBinding.btnFlipSpiral.setOnClickListener {
-            viewBinding.proOverlayView.spiralOrientation++
-            Toast.makeText(this, "Golden Spiral Rotated", Toast.LENGTH_SHORT).show()
-        }
-        viewBinding.btnToggleLevel.setOnClickListener {
-            val newState = !viewBinding.proOverlayView.showLevelGauge
-            viewBinding.proOverlayView.showLevelGauge = newState
-            viewBinding.btnToggleLevel.text = if (newState) "Horizon: ON" else "Horizon: OFF"
-            Toast.makeText(this, if (newState) "Electronic Horizon ON" else "Electronic Horizon OFF", Toast.LENGTH_SHORT).show()
-        }
-        viewBinding.btnTogglePeaking.setOnClickListener {
-            val newState = !viewBinding.proOverlayView.showFocusPeaking
-            viewBinding.proOverlayView.showFocusPeaking = newState
-            viewBinding.btnTogglePeaking.text = if (newState) "Peaking: ON" else "Peaking: OFF"
-            Toast.makeText(this, if (newState) "Focus Peaking ON" else "Focus Peaking OFF", Toast.LENGTH_SHORT).show()
-        }
     }
 
     override fun onDestroy() {

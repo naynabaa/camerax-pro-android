@@ -38,131 +38,172 @@
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintStart_toStartOf="parent" />
 
-    <!-- Top Minimalist Pro Bar -->
+    <!-- Top Minimalist Cinema Pro Bar (Pure Icon Buttons with Symmetrical Spacing) -->
     <LinearLayout
         android:id="@+id/proModeBar"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
         android:gravity="center_vertical"
-        android:paddingHorizontal="16dp"
-        android:paddingVertical="12dp"
+        android:paddingHorizontal="14dp"
+        android:paddingVertical="10dp"
         android:layout_marginTop="28dp"
         app:layout_constraintTop_toTopOf="parent">
 
-        <TextView
-            android:id="@+id/btnTimer"
-            android:layout_width="wrap_content"
-            android:layout_height="38dp"
-            android:gravity="center"
-            android:paddingHorizontal="12dp"
-            android:text="TIMER OFF"
-            android:textColor="#FFFFFF"
-            android:textSize="11sp"
-            android:textStyle="bold"
-            android:background="@drawable/bg_pill_badge" />
-
-        <TextView
-            android:id="@+id/btnAutoLoop"
-            android:layout_width="wrap_content"
-            android:layout_height="38dp"
-            android:gravity="center"
-            android:paddingHorizontal="12dp"
-            android:text="LOOP OFF"
-            android:textColor="#FFFFFF"
-            android:textSize="11sp"
-            android:textStyle="bold"
-            android:background="@drawable/bg_pill_badge"
-            android:visibility="gone"
-            android:contentDescription="Auto Trigger Loop Timer" />
-
-        <ImageButton
-            android:id="@+id/btnGrid"
-            android:layout_width="38dp"
-            android:layout_height="38dp"
-            android:layout_marginStart="10dp"
-            android:background="@drawable/bg_zoom_pill"
-            android:src="@drawable/ic_grid_on"
-            app:tint="#FFFFFF"
-            android:contentDescription="Grid Overlay" />
-
-        <TextView
-            android:id="@+id/btnRotateSpiral"
-            android:layout_width="wrap_content"
-            android:layout_height="38dp"
-            android:gravity="center"
-            android:paddingHorizontal="10dp"
-            android:layout_marginStart="6dp"
-            android:text="⟳ 0°"
-            android:textColor="#F59E0B"
-            android:textSize="11sp"
-            android:textStyle="bold"
-            android:background="@drawable/bg_pill_badge"
-            android:visibility="gone"
-            android:contentDescription="Rotate Golden Spiral" />
-
+        <!-- Flash Button (Circle Icon) -->
         <ImageButton
             android:id="@+id/btnFlash"
-            android:layout_width="38dp"
-            android:layout_height="38dp"
-            android:layout_marginStart="10dp"
-            android:background="@drawable/bg_zoom_pill"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:background="@drawable/bg_circle_icon_button"
             android:src="@drawable/ic_flash_off"
-            app:tint="#FFFFFF"
+            app:tint="#CCCCCC"
             android:contentDescription="Flash Mode" />
+
+        <!-- Creative Filters & AR Lenses (Circle Icon with Sparkles) -->
+        <ImageButton
+            android:id="@+id/btnFilter"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:layout_marginStart="8dp"
+            android:background="@drawable/bg_circle_icon_button"
+            android:src="@drawable/ic_sparkles"
+            app:tint="#CCCCCC"
+            android:contentDescription="Creative Filters" />
+
+        <!-- Self-Timer (Circle Icon, Photo Mode Only) -->
+        <FrameLayout
+            android:id="@+id/layoutBtnTimer"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:layout_marginStart="8dp">
+
+            <ImageButton
+                android:id="@+id/btnTimer"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:background="@drawable/bg_circle_icon_button"
+                android:src="@drawable/ic_timer"
+                app:tint="#CCCCCC"
+                android:contentDescription="Self-Timer" />
+
+            <TextView
+                android:id="@+id/tvTimerBadge"
+                android:layout_width="14dp"
+                android:layout_height="14dp"
+                android:layout_gravity="top|end"
+                android:gravity="center"
+                android:background="@drawable/bg_badge_dot"
+                android:textColor="#000000"
+                android:textSize="8sp"
+                android:textStyle="bold"
+                android:visibility="gone" />
+        </FrameLayout>
+
+        <!-- Auto Trigger Interval Loop (Circle Icon with Repeat, Video Mode Only) -->
+        <ImageButton
+            android:id="@+id/btnAutoLoop"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:layout_marginStart="8dp"
+            android:background="@drawable/bg_circle_icon_button"
+            android:src="@drawable/ic_repeat"
+            app:tint="#CCCCCC"
+            android:visibility="gone"
+            android:contentDescription="Auto Trigger Loop Timer" />
 
         <View
             android:layout_width="0dp"
             android:layout_height="1dp"
             android:layout_weight="1" />
 
-        <LinearLayout
-            android:id="@+id/btnProStudio"
+        <!-- Sensor Aspect Ratio (Sleek Monospace Pill: 4:3 / 16:9 / 1:1) -->
+        <TextView
+            android:id="@+id/btnAspectRatio"
             android:layout_width="wrap_content"
-            android:layout_height="38dp"
-            android:orientation="horizontal"
+            android:layout_height="32dp"
             android:gravity="center"
-            android:paddingHorizontal="14dp"
-            android:background="@drawable/bg_pill_badge">
+            android:paddingHorizontal="10dp"
+            android:text="4:3"
+            android:textColor="#E2E8F0"
+            android:textSize="11sp"
+            android:fontFamily="monospace"
+            android:textStyle="bold"
+            android:background="@drawable/bg_circle_icon_button"
+            android:contentDescription="Camera Aspect Ratio" />
 
-            <ImageView
-                android:layout_width="16dp"
-                android:layout_height="16dp"
+        <!-- Clean Screen Mode 1-Tap Toggle (Icon Only: Eye / Eye-Off) -->
+        <ImageButton
+            android:id="@+id/btnCleanScreen"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:layout_marginStart="8dp"
+            android:background="@drawable/bg_circle_icon_button"
+            android:src="@drawable/ic_eye"
+            app:tint="#CCCCCC"
+            android:contentDescription="Clean Viewfinder (Hide All Overlays)" />
+
+        <!-- Unified Pro Tool Shelf Button (Sliders Icon with Active Yellow Dot) -->
+        <FrameLayout
+            android:id="@+id/layoutBtnProStudio"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:layout_marginStart="8dp">
+
+            <ImageButton
+                android:id="@+id/btnProStudio"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:background="@drawable/bg_circle_icon_button"
                 android:src="@drawable/ic_tune"
-                app:tint="#F59E0B"
-                android:layout_marginEnd="6dp" />
+                app:tint="#CCCCCC"
+                android:contentDescription="Camera Pro Tools" />
 
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="PRO FX"
-                android:textColor="#F59E0B"
-                android:textSize="11sp"
-                android:textStyle="bold" />
-        </LinearLayout>
+            <View
+                android:id="@+id/viewStudioBadge"
+                android:layout_width="8dp"
+                android:layout_height="8dp"
+                android:layout_gravity="top|end"
+                android:layout_marginTop="2dp"
+                android:layout_marginEnd="2dp"
+                android:background="@drawable/bg_badge_dot"
+                android:visibility="gone" />
+        </FrameLayout>
+
+        <!-- Audio Mute Button (Circle Icon) -->
+        <ImageButton
+            android:id="@+id/btnAudioMute"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:layout_marginStart="8dp"
+            android:background="@drawable/bg_circle_icon_button"
+            android:src="@drawable/ic_volume_up"
+            app:tint="#CCCCCC"
+            android:contentDescription="Microphone Mute" />
     </LinearLayout>
 
-    <!-- Prominent Centered Video Recording HUD (Pulsing Red Dot + Monospace Chronometer) -->
+    <!-- Prominent Centered Cinema Video Recording HUD (Pulsing Red Dot + Monospace Chronometer) -->
+    <!-- Positioned cleanly BELOW the proModeBar to prevent any collision or overlap! -->
     <LinearLayout
         android:id="@+id/recordingTimer"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
         android:gravity="center_vertical"
-        android:paddingHorizontal="16dp"
-        android:paddingVertical="8dp"
+        android:paddingHorizontal="14dp"
+        android:paddingVertical="6dp"
         android:background="@drawable/bg_recording_badge"
         android:visibility="gone"
         android:elevation="20dp"
-        android:layout_marginTop="36dp"
-        app:layout_constraintTop_toTopOf="parent"
+        android:layout_marginTop="6dp"
+        app:layout_constraintTop_toBottomOf="@id/proModeBar"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent">
 
         <View
             android:id="@+id/recordingDot"
-            android:layout_width="10dp"
-            android:layout_height="10dp"
+            android:layout_width="8dp"
+            android:layout_height="8dp"
             android:background="@drawable/bg_red_dot"
             android:layout_marginEnd="8dp" />
 
@@ -170,10 +211,11 @@
             android:id="@+id/tvRecordingStatus"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="REC"
-            android:textColor="#EF4444"
-            android:textSize="12sp"
+            android:text="STANDBY"
+            android:textColor="#94A3B8"
+            android:textSize="11sp"
             android:textStyle="bold"
+            android:fontFamily="monospace"
             android:layout_marginEnd="8dp" />
 
         <Chronometer
@@ -181,17 +223,27 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:textColor="#FFFFFF"
-            android:textSize="15sp"
+            android:textSize="13sp"
             android:textStyle="bold"
             android:fontFamily="monospace" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="4K 60FPS"
+            android:textColor="#64748B"
+            android:textSize="10sp"
+            android:fontFamily="monospace"
+            android:layout_marginStart="8dp" />
 
         <TextView
             android:id="@+id/tvAutoLoopHud"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:textColor="#FBBF24"
-            android:textSize="11sp"
+            android:textColor="#FACC15"
+            android:textSize="10sp"
             android:textStyle="bold"
+            android:fontFamily="monospace"
             android:layout_marginStart="8dp"
             android:visibility="gone"
             android:text="AUTO: 5s/3s" />
@@ -218,9 +270,10 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:text="BURST: 0"
-        android:textColor="#FBBF24"
-        android:textSize="14sp"
+        android:textColor="#FACC15"
+        android:textSize="13sp"
         android:textStyle="bold"
+        android:fontFamily="monospace"
         android:paddingHorizontal="14dp"
         android:paddingVertical="6dp"
         android:background="@drawable/bg_recording_badge"
@@ -230,7 +283,7 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />
 
-    <!-- Modern Floating Zoom Quick Selector (0.6x, 1x, 2x, 5x) -->
+    <!-- Floating Zoom Quick Selector (0.6x, 1x, 2x, 5x) -->
     <LinearLayout
         android:id="@+id/zoomControls"
         android:layout_width="wrap_content"
@@ -239,7 +292,7 @@
         android:gravity="center"
         android:paddingHorizontal="6dp"
         android:paddingVertical="4dp"
-        android:background="@drawable/bg_pill_badge"
+        android:background="@drawable/bg_tabs_bar"
         android:layout_marginBottom="14dp"
         app:layout_constraintBottom_toTopOf="@id/modeSelector"
         app:layout_constraintStart_toStartOf="parent"
@@ -251,8 +304,9 @@
             android:layout_height="32dp"
             android:gravity="center"
             android:text=".6"
-            android:textColor="#CCCCCC"
+            android:textColor="#94A3B8"
             android:textSize="11sp"
+            android:fontFamily="monospace"
             android:textStyle="bold" />
 
         <TextView
@@ -261,9 +315,11 @@
             android:layout_height="32dp"
             android:gravity="center"
             android:text="1x"
-            android:textColor="#F59E0B"
+            android:textColor="#000000"
             android:textSize="12sp"
-            android:textStyle="bold" />
+            android:fontFamily="monospace"
+            android:textStyle="bold"
+            android:background="@drawable/bg_cinema_button_active" />
 
         <TextView
             android:id="@+id/btnZoom2"
@@ -271,8 +327,9 @@
             android:layout_height="32dp"
             android:gravity="center"
             android:text="2x"
-            android:textColor="#CCCCCC"
+            android:textColor="#94A3B8"
             android:textSize="11sp"
+            android:fontFamily="monospace"
             android:textStyle="bold" />
 
         <TextView
@@ -281,8 +338,9 @@
             android:layout_height="32dp"
             android:gravity="center"
             android:text="5x"
-            android:textColor="#CCCCCC"
+            android:textColor="#94A3B8"
             android:textSize="11sp"
+            android:fontFamily="monospace"
             android:textStyle="bold" />
     </LinearLayout>
 
@@ -306,6 +364,7 @@
             android:textColor="#FFFFFF"
             android:textSize="13sp"
             android:textStyle="bold"
+            android:fontFamily="monospace"
             android:letterSpacing="0.08"
             android:paddingHorizontal="18dp"
             android:paddingVertical="4dp" />
@@ -318,6 +377,7 @@
             android:textColor="#777777"
             android:textSize="13sp"
             android:textStyle="bold"
+            android:fontFamily="monospace"
             android:letterSpacing="0.08"
             android:paddingHorizontal="18dp"
             android:paddingVertical="4dp" />
@@ -386,480 +446,1260 @@
             app:layout_constraintBottom_toBottomOf="parent" />
     </androidx.constraintlayout.widget.ConstraintLayout>
 
-    <!-- Collapsible Modern Pro & Filter Studio Drawer (Hidden by default) -->
+    <!-- Professional Cinema Bottom Sheet Menu (Blackmagic / Filmic Pro Style) -->
+    <!-- Hidden by default on start, opens strictly on demand when user taps tools button -->
     <androidx.constraintlayout.widget.ConstraintLayout
         android:id="@+id/proStudioDrawer"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:padding="20dp"
+        android:paddingHorizontal="16dp"
+        android:paddingTop="10dp"
+        android:paddingBottom="24dp"
         android:background="@drawable/bg_pro_drawer"
         android:visibility="gone"
         android:elevation="30dp"
         app:layout_constraintBottom_toBottomOf="parent">
 
-        <TextView
-            android:id="@+id/tvDrawerTitle"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="PRO CAMERA STUDIO"
-            android:textColor="#F59E0B"
-            android:textSize="12sp"
-            android:textStyle="bold"
-            android:letterSpacing="0.1"
+        <!-- Android Bottom Sheet Drag Handle Indicator -->
+        <View
+            android:id="@+id/drawerHandle"
+            android:layout_width="40dp"
+            android:layout_height="4dp"
+            android:background="@drawable/bg_drawer_handle"
             app:layout_constraintTop_toTopOf="parent"
-            app:layout_constraintStart_toStartOf="parent" />
-
-        <ImageButton
-            android:id="@+id/btnCloseProDrawer"
-            android:layout_width="32dp"
-            android:layout_height="32dp"
-            android:background="?attr/selectableItemBackgroundBorderless"
-            android:src="@drawable/ic_close"
-            app:tint="#94A3B8"
-            android:contentDescription="Close Studio"
-            app:layout_constraintTop_toTopOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintEnd_toEndOf="parent" />
 
-        <!-- Filter Presets Horizontal Scroll -->
-        <TextView
-            android:id="@+id/tvPresetLabel"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="COLOR PROFILES"
-            android:textColor="#94A3B8"
-            android:textSize="10sp"
-            android:textStyle="bold"
-            android:layout_marginTop="14dp"
-            app:layout_constraintTop_toBottomOf="@id/tvDrawerTitle"
-            app:layout_constraintStart_toStartOf="parent" />
-
-        <HorizontalScrollView
-            android:id="@+id/filterPresetsScroll"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:scrollbars="none"
-            android:layout_marginTop="6dp"
-            app:layout_constraintTop_toBottomOf="@id/tvPresetLabel">
-
-            <LinearLayout
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal">
-
-                <Button
-                    android:id="@+id/btnFilterPresetNormal"
-                    android:layout_width="wrap_content"
-                    android:layout_height="34dp"
-                    android:text="Standard"
-                    android:textSize="10sp"
-                    android:textColor="#FFFFFF"
-                    android:backgroundTint="#334155" />
-
-                <Button
-                    android:id="@+id/btnFilterPresetCinematic"
-                    android:layout_width="wrap_content"
-                    android:layout_height="34dp"
-                    android:layout_marginStart="8dp"
-                    android:text="Cinematic"
-                    android:textSize="10sp"
-                    android:textColor="#FFFFFF"
-                    android:backgroundTint="#D97706" />
-
-                <Button
-                    android:id="@+id/btnFilterPresetVintage"
-                    android:layout_width="wrap_content"
-                    android:layout_height="34dp"
-                    android:layout_marginStart="8dp"
-                    android:text="Vintage"
-                    android:textSize="10sp"
-                    android:textColor="#FFFFFF"
-                    android:backgroundTint="#B45309" />
-
-                <Button
-                    android:id="@+id/btnFilterPresetBw"
-                    android:layout_width="wrap_content"
-                    android:layout_height="34dp"
-                    android:layout_marginStart="8dp"
-                    android:text="Noir B&amp;W"
-                    android:textSize="10sp"
-                    android:textColor="#FFFFFF"
-                    android:backgroundTint="#475569" />
-
-                <Button
-                    android:id="@+id/btnFilterPresetHdr"
-                    android:layout_width="wrap_content"
-                    android:layout_height="34dp"
-                    android:layout_marginStart="8dp"
-                    android:text="HDR Vivid"
-                    android:textSize="10sp"
-                    android:textColor="#FFFFFF"
-                    android:backgroundTint="#059669" />
-
-                <Button
-                    android:id="@+id/btnFilterPresetCyberpunk"
-                    android:layout_width="wrap_content"
-                    android:layout_height="34dp"
-                    android:layout_marginStart="8dp"
-                    android:text="Cyberpunk"
-                    android:textSize="10sp"
-                    android:textColor="#FFFFFF"
-                    android:backgroundTint="#9333EA" />
-            </LinearLayout>
-        </HorizontalScrollView>
-
-        <!-- Exposure Compensation Slider -->
+        <!-- Header: Icon + Title + Status + Clean Button + Close X -->
         <LinearLayout
-            android:id="@+id/exposureLayout"
+            android:id="@+id/layoutDrawerHeader"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
             android:gravity="center_vertical"
-            android:layout_marginTop="14dp"
-            app:layout_constraintTop_toBottomOf="@id/filterPresetsScroll">
+            android:layout_marginTop="10dp"
+            app:layout_constraintTop_toBottomOf="@id/drawerHandle">
+
+            <ImageView
+                android:layout_width="22dp"
+                android:layout_height="22dp"
+                android:src="@drawable/ic_tune"
+                app:tint="#FACC15"
+                android:layout_marginEnd="8dp" />
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+
+                    <TextView
+                        android:id="@+id/tvDrawerTitle"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="CAMERA PRO TOOLS"
+                        android:textColor="#F8FAFC"
+                        android:textSize="12sp"
+                        android:textStyle="bold"
+                        android:fontFamily="monospace"
+                        android:letterSpacing="0.08" />
+
+                    <View
+                        android:layout_width="6dp"
+                        android:layout_height="6dp"
+                        android:background="@drawable/bg_green_dot"
+                        android:layout_marginStart="6dp" />
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/tvDrawerSubtitle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="INSTRUMENTS IN STANDBY"
+                    android:textColor="#94A3B8"
+                    android:textSize="9.5sp"
+                    android:fontFamily="monospace" />
+            </LinearLayout>
+
+            <!-- Clean Screen Button -->
+            <TextView
+                android:id="@+id/btnCleanView"
+                android:layout_width="wrap_content"
+                android:layout_height="30dp"
+                android:gravity="center"
+                android:paddingHorizontal="10dp"
+                android:text="CLEAN"
+                android:textColor="#FACC15"
+                android:textSize="10.5sp"
+                android:fontFamily="monospace"
+                android:textStyle="bold"
+                android:background="@drawable/bg_btn_clean"
+                android:layout_marginEnd="6dp" />
+
+            <!-- Close Drawer Button -->
+            <ImageButton
+                android:id="@+id/btnCloseProDrawer"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:src="@drawable/ic_close"
+                app:tint="#94A3B8"
+                android:contentDescription="Close Tools" />
+        </LinearLayout>
+
+        <!-- 4 Main Category Tabs: Equal-Weight Symmetrical Columns -->
+        <LinearLayout
+            android:id="@+id/categoryTabs"
+            android:layout_width="match_parent"
+            android:layout_height="40dp"
+            android:orientation="horizontal"
+            android:background="@drawable/bg_tabs_bar"
+            android:padding="3dp"
+            android:layout_marginTop="12dp"
+            app:layout_constraintTop_toBottomOf="@id/layoutDrawerHeader">
 
             <TextView
-                android:id="@+id/tvExposureValue"
-                android:layout_width="60dp"
-                android:layout_height="wrap_content"
-                android:text="EV 0.0"
-                android:textColor="#F59E0B"
-                android:textSize="12sp"
-                android:fontFamily="monospace"
-                android:textStyle="bold" />
-
-            <SeekBar
-                android:id="@+id/exposureSlider"
+                android:id="@+id/tabCategoryGrids"
                 android:layout_width="0dp"
-                android:layout_height="wrap_content"
+                android:layout_height="match_parent"
                 android:layout_weight="1"
-                android:progressTint="#F59E0B"
-                android:thumbTint="#F59E0B" />
+                android:gravity="center"
+                android:text="GRIDS"
+                android:textColor="#000000"
+                android:textStyle="bold"
+                android:textSize="11sp"
+                android:fontFamily="monospace"
+                android:background="@drawable/bg_tab_active" />
+
+            <TextView
+                android:id="@+id/tabCategoryExposure"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:text="EXPOSURE"
+                android:textColor="#94A3B8"
+                android:textSize="11sp"
+                android:fontFamily="monospace"
+                android:background="@drawable/bg_tab_inactive"
+                android:layout_marginStart="4dp" />
+
+            <TextView
+                android:id="@+id/tabCategoryOptics"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:text="OPTICS"
+                android:textColor="#94A3B8"
+                android:textSize="11sp"
+                android:fontFamily="monospace"
+                android:background="@drawable/bg_tab_inactive"
+                android:layout_marginStart="4dp" />
+
+            <TextView
+                android:id="@+id/tabCategoryAudio"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:text="AUDIO"
+                android:textColor="#94A3B8"
+                android:textSize="11sp"
+                android:fontFamily="monospace"
+                android:background="@drawable/bg_tab_inactive"
+                android:layout_marginStart="4dp" />
         </LinearLayout>
 
-        <!-- Live Adjustment Fine Tuning (Brightness, Contrast, Saturation) -->
-        <LinearLayout
-            android:id="@+id/adjustmentsLayout"
+        <!-- TAB CONTENT CONTAINER -->
+        <FrameLayout
+            android:id="@+id/shelfTabContainer"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:layout_marginTop="8dp"
-            app:layout_constraintTop_toBottomOf="@id/exposureLayout">
+            android:layout_marginTop="12dp"
+            app:layout_constraintTop_toBottomOf="@id/categoryTabs">
 
+            <!-- TAB 1: GRIDS & MATTES -->
             <LinearLayout
+                android:id="@+id/layoutCategoryGrids"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:gravity="center_vertical">
-                <TextView
-                    android:layout_width="36dp"
+                android:orientation="vertical"
+                android:visibility="visible">
+
+                <!-- Symmetrical 3-Column Grid Choices Row 1 -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="42dp"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:id="@+id/btnGridOff"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:layout_weight="1"
+                        android:gravity="center"
+                        android:text="Off"
+                        android:textColor="#000000"
+                        android:textSize="11sp"
+                        android:textStyle="bold"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_active" />
+
+                    <TextView
+                        android:id="@+id/btnGridThirds"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:layout_weight="1"
+                        android:layout_marginStart="6dp"
+                        android:gravity="center"
+                        android:text="3×3 Thirds"
+                        android:textColor="#94A3B8"
+                        android:textSize="11sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+
+                    <TextView
+                        android:id="@+id/btnGridPhi"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:layout_weight="1"
+                        android:layout_marginStart="6dp"
+                        android:gravity="center"
+                        android:text="Phi Ratio"
+                        android:textColor="#94A3B8"
+                        android:textSize="11sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+                </LinearLayout>
+
+                <!-- Symmetrical 3-Column Grid Choices Row 2 -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="42dp"
+                    android:orientation="horizontal"
+                    android:layout_marginTop="6dp">
+
+                    <TextView
+                        android:id="@+id/btnGridSpiral"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:layout_weight="1"
+                        android:gravity="center"
+                        android:text="Spiral"
+                        android:textColor="#94A3B8"
+                        android:textSize="11sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+
+                    <TextView
+                        android:id="@+id/btnGridDiagonal"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:layout_weight="1"
+                        android:layout_marginStart="6dp"
+                        android:gravity="center"
+                        android:text="Dynamic"
+                        android:textColor="#94A3B8"
+                        android:textSize="11sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+
+                    <TextView
+                        android:id="@+id/btnGridCinematic"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:layout_weight="1"
+                        android:layout_marginStart="6dp"
+                        android:gravity="center"
+                        android:text="Cinematic"
+                        android:textColor="#94A3B8"
+                        android:textSize="11sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+                </LinearLayout>
+
+                <!-- Spiral Orientation Axis (Visible only when Spiral is selected) -->
+                <LinearLayout
+                    android:id="@+id/layoutSpiralRotation"
+                    android:layout_width="match_parent"
+                    android:layout_height="40dp"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:paddingHorizontal="10dp"
+                    android:background="@drawable/bg_card_cinema"
+                    android:layout_marginTop="8dp"
+                    android:visibility="gone">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Rotate Spiral Axis"
+                        android:textColor="#E2E8F0"
+                        android:textSize="11sp"
+                        android:fontFamily="monospace" />
+
+                    <LinearLayout
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal">
+
+                        <TextView
+                            android:id="@+id/btnSpiral0"
+                            android:layout_width="40dp"
+                            android:layout_height="28dp"
+                            android:gravity="center"
+                            android:text="0°"
+                            android:textColor="#000000"
+                            android:textStyle="bold"
+                            android:textSize="11sp"
+                            android:fontFamily="monospace"
+                            android:background="@drawable/bg_cinema_button_active" />
+
+                        <TextView
+                            android:id="@+id/btnSpiral90"
+                            android:layout_width="40dp"
+                            android:layout_height="28dp"
+                            android:gravity="center"
+                            android:text="90°"
+                            android:textColor="#94A3B8"
+                            android:textSize="11sp"
+                            android:fontFamily="monospace"
+                            android:background="@drawable/bg_cinema_button_inactive"
+                            android:layout_marginStart="4dp" />
+
+                        <TextView
+                            android:id="@+id/btnSpiral180"
+                            android:layout_width="40dp"
+                            android:layout_height="28dp"
+                            android:gravity="center"
+                            android:text="180°"
+                            android:textColor="#94A3B8"
+                            android:textSize="11sp"
+                            android:fontFamily="monospace"
+                            android:background="@drawable/bg_cinema_button_inactive"
+                            android:layout_marginStart="4dp" />
+
+                        <TextView
+                            android:id="@+id/btnSpiral270"
+                            android:layout_width="40dp"
+                            android:layout_height="28dp"
+                            android:gravity="center"
+                            android:text="270°"
+                            android:textColor="#94A3B8"
+                            android:textSize="11sp"
+                            android:fontFamily="monospace"
+                            android:background="@drawable/bg_cinema_button_inactive"
+                            android:layout_marginStart="4dp" />
+                    </LinearLayout>
+                </LinearLayout>
+
+                <!-- Symmetrical 3-Column Aspect Ratio Matte Row 1 -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="42dp"
+                    android:orientation="horizontal"
+                    android:layout_marginTop="8dp">
+
+                    <TextView
+                        android:id="@+id/btnMatteOff"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:layout_weight="1"
+                        android:gravity="center"
+                        android:text="Off"
+                        android:textColor="#000000"
+                        android:textSize="11sp"
+                        android:textStyle="bold"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_active" />
+
+                    <TextView
+                        android:id="@+id/btnMatte169"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:layout_weight="1"
+                        android:layout_marginStart="6dp"
+                        android:gravity="center"
+                        android:text="16:9 Cinema"
+                        android:textColor="#94A3B8"
+                        android:textSize="11sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+
+                    <TextView
+                        android:id="@+id/btnMatteCine"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:layout_weight="1"
+                        android:layout_marginStart="6dp"
+                        android:gravity="center"
+                        android:text="2.39:1 Cinema"
+                        android:textColor="#94A3B8"
+                        android:textSize="11sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+                </LinearLayout>
+
+                <!-- Symmetrical 3-Column Aspect Ratio Matte Row 2 -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="42dp"
+                    android:orientation="horizontal"
+                    android:layout_marginTop="6dp">
+
+                    <TextView
+                        android:id="@+id/btnMatteSquare"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:layout_weight="1"
+                        android:gravity="center"
+                        android:text="1:1 Square"
+                        android:textColor="#94A3B8"
+                        android:textSize="11sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+
+                    <TextView
+                        android:id="@+id/btnMatte916"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:layout_weight="1"
+                        android:layout_marginStart="6dp"
+                        android:gravity="center"
+                        android:text="9:16 Reel"
+                        android:textColor="#94A3B8"
+                        android:textSize="11sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+
+                    <TextView
+                        android:id="@+id/btnMatte45"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:layout_weight="1"
+                        android:layout_marginStart="6dp"
+                        android:gravity="center"
+                        android:text="4:5 Social"
+                        android:textColor="#94A3B8"
+                        android:textSize="11sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+                </LinearLayout>
+
+                <!-- Horizon Level Pitch & Roll Gyro Switch Card -->
+                <LinearLayout
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="BRI"
-                    android:textColor="#94A3B8"
-                    android:textSize="10sp" />
-                <SeekBar
-                    android:id="@+id/sbBrightness"
-                    android:layout_width="0dp"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:padding="12dp"
+                    android:background="@drawable/bg_card_cinema"
+                    android:layout_marginTop="8dp">
+
+                    <ImageView
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:src="@drawable/ic_compass"
+                        app:tint="#FACC15"
+                        android:layout_marginEnd="10dp" />
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Horizon Level Gyro"
+                            android:textColor="#F8FAFC"
+                            android:textSize="11.5sp"
+                            android:fontFamily="monospace"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:id="@+id/tvHorizonLevelStatus"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="0.0° Level · Pitch and roll active"
+                            android:textColor="#94A3B8"
+                            android:textSize="9.5sp"
+                            android:fontFamily="monospace" />
+                    </LinearLayout>
+
+                    <androidx.appcompat.widget.SwitchCompat
+                        android:id="@+id/switchHorizonLevel"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        app:thumbTint="#FACC15"
+                        app:trackTint="#475569" />
+                </LinearLayout>
+
+                <!-- Smart Visual Balance Reticle Switch Card -->
+                <LinearLayout
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:max="200"
-                    android:progress="100" />
-                <TextView
-                    android:layout_width="36dp"
-                    android:layout_height="wrap_content"
-                    android:text="CON"
-                    android:textColor="#94A3B8"
-                    android:textSize="10sp" />
-                <SeekBar
-                    android:id="@+id/sbContrast"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:max="200"
-                    android:progress="100" />
-                <TextView
-                    android:layout_width="36dp"
-                    android:layout_height="wrap_content"
-                    android:text="SAT"
-                    android:textColor="#94A3B8"
-                    android:textSize="10sp" />
-                <SeekBar
-                    android:id="@+id/sbSaturation"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:max="200"
-                    android:progress="100" />
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:padding="12dp"
+                    android:background="@drawable/bg_card_cinema"
+                    android:layout_marginTop="6dp">
+
+                    <ImageView
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:src="@drawable/ic_crosshair"
+                        app:tint="#FACC15"
+                        android:layout_marginEnd="10dp" />
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Visual Balance Reticle"
+                            android:textColor="#F8FAFC"
+                            android:textSize="11.5sp"
+                            android:fontFamily="monospace"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:id="@+id/tvVisualBalanceStatus"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Balanced subject framing"
+                            android:textColor="#94A3B8"
+                            android:textSize="9.5sp"
+                            android:fontFamily="monospace" />
+                    </LinearLayout>
+
+                    <androidx.appcompat.widget.SwitchCompat
+                        android:id="@+id/switchVisualBalance"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        app:thumbTint="#FACC15"
+                        app:trackTint="#475569" />
+                </LinearLayout>
             </LinearLayout>
-        </LinearLayout>
 
-        <!-- Dedicated Framing Grids Selector with Explicit NO GRID Option -->
-        <TextView
-            android:id="@+id/tvGridModeLabel"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="FRAMING GRIDS"
-            android:textColor="#94A3B8"
-            android:textSize="10sp"
-            android:textStyle="bold"
-            android:layout_marginTop="12dp"
-            app:layout_constraintTop_toBottomOf="@id/adjustmentsLayout"
-            app:layout_constraintStart_toStartOf="parent" />
-
-        <HorizontalScrollView
-            android:id="@+id/gridModeScroll"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:scrollbars="none"
-            android:layout_marginTop="6dp"
-            app:layout_constraintTop_toBottomOf="@id/tvGridModeLabel">
-
+            <!-- TAB 2: EXPOSURE & COLOR -->
             <LinearLayout
-                android:layout_width="wrap_content"
+                android:id="@+id/layoutCategoryExposure"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:orientation="horizontal">
+                android:orientation="vertical"
+                android:visibility="gone">
 
-                <Button
-                    android:id="@+id/btnGridOff"
-                    android:layout_width="wrap_content"
-                    android:layout_height="34dp"
-                    android:text="NO GRID (OFF)"
-                    android:textSize="10sp"
-                    android:textColor="#FFFFFF"
-                    android:backgroundTint="#EF4444" />
+                <!-- Zebra Stripes Card -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:padding="12dp"
+                    android:background="@drawable/bg_card_cinema">
 
-                <Button
-                    android:id="@+id/btnGridThirds"
-                    android:layout_width="wrap_content"
-                    android:layout_height="34dp"
-                    android:layout_marginStart="8dp"
-                    android:text="Rule of Thirds"
-                    android:textSize="10sp"
-                    android:textColor="#FFFFFF"
-                    android:backgroundTint="#334155" />
+                    <ImageView
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:src="@drawable/ic_tune"
+                        app:tint="#FACC15"
+                        android:layout_marginEnd="10dp" />
 
-                <Button
-                    android:id="@+id/btnGridSpiral"
-                    android:layout_width="wrap_content"
-                    android:layout_height="34dp"
-                    android:layout_marginStart="8dp"
-                    android:text="Golden Spiral"
-                    android:textSize="10sp"
-                    android:textColor="#FFFFFF"
-                    android:backgroundTint="#334155" />
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
 
-                <Button
-                    android:id="@+id/btnGridPhi"
-                    android:layout_width="wrap_content"
-                    android:layout_height="34dp"
-                    android:layout_marginStart="8dp"
-                    android:text="Golden Ratio (Phi)"
-                    android:textSize="10sp"
-                    android:textColor="#FFFFFF"
-                    android:backgroundTint="#334155" />
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Zebra Stripes"
+                            android:textColor="#F8FAFC"
+                            android:textSize="11.5sp"
+                            android:fontFamily="monospace"
+                            android:textStyle="bold" />
 
-                <Button
-                    android:id="@+id/btnGridDiagonal"
-                    android:layout_width="wrap_content"
-                    android:layout_height="34dp"
-                    android:layout_marginStart="8dp"
-                    android:text="Dynamic Symmetry"
-                    android:textSize="10sp"
-                    android:textColor="#FFFFFF"
-                    android:backgroundTint="#334155" />
+                        <TextView
+                            android:id="@+id/tvZebraStatus"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Overexposure clipping alert (95% IRE)"
+                            android:textColor="#94A3B8"
+                            android:textSize="9.5sp"
+                            android:fontFamily="monospace" />
+                    </LinearLayout>
 
-                <Button
-                    android:id="@+id/btnGridCinematic"
-                    android:layout_width="wrap_content"
-                    android:layout_height="34dp"
-                    android:layout_marginStart="8dp"
-                    android:text="2.39:1 Cinema"
-                    android:textSize="10sp"
-                    android:textColor="#FFFFFF"
-                    android:backgroundTint="#334155" />
+                    <TextView
+                        android:id="@+id/btnZebraThreshold"
+                        android:layout_width="wrap_content"
+                        android:layout_height="26dp"
+                        android:gravity="center"
+                        android:paddingHorizontal="8dp"
+                        android:text="95%"
+                        android:textColor="#000000"
+                        android:textSize="10sp"
+                        android:fontFamily="monospace"
+                        android:textStyle="bold"
+                        android:background="@drawable/bg_cinema_button_active"
+                        android:layout_marginEnd="8dp" />
+
+                    <androidx.appcompat.widget.SwitchCompat
+                        android:id="@+id/switchZebra"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        app:thumbTint="#FACC15"
+                        app:trackTint="#475569" />
+                </LinearLayout>
+
+                <!-- Waveform Monitor Card -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:padding="12dp"
+                    android:background="@drawable/bg_card_cinema"
+                    android:layout_marginTop="6dp">
+
+                    <ImageView
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:src="@drawable/ic_waves"
+                        app:tint="#FACC15"
+                        android:layout_marginEnd="10dp" />
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Waveform Monitor"
+                            android:textColor="#F8FAFC"
+                            android:textSize="11.5sp"
+                            android:fontFamily="monospace"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Real-time luminance IRE columns"
+                            android:textColor="#94A3B8"
+                            android:textSize="9.5sp"
+                            android:fontFamily="monospace" />
+                    </LinearLayout>
+
+                    <androidx.appcompat.widget.SwitchCompat
+                        android:id="@+id/switchWaveform"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        app:thumbTint="#FACC15"
+                        app:trackTint="#475569" />
+                </LinearLayout>
+
+                <!-- 256-Bin Live Histogram Card -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:padding="12dp"
+                    android:background="@drawable/bg_card_cinema"
+                    android:layout_marginTop="6dp">
+
+                    <ImageView
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:src="@drawable/ic_barchart"
+                        app:tint="#FACC15"
+                        android:layout_marginEnd="10dp" />
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="256-Bin Live Histogram"
+                            android:textColor="#F8FAFC"
+                            android:textSize="11.5sp"
+                            android:fontFamily="monospace"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Luma and RGB channel distribution"
+                            android:textColor="#94A3B8"
+                            android:textSize="9.5sp"
+                            android:fontFamily="monospace" />
+                    </LinearLayout>
+
+                    <androidx.appcompat.widget.SwitchCompat
+                        android:id="@+id/switchHistogram"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        app:thumbTint="#FACC15"
+                        app:trackTint="#475569" />
+                </LinearLayout>
+
+                <!-- Vector Scope Card -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:padding="12dp"
+                    android:background="@drawable/bg_card_cinema"
+                    android:layout_marginTop="6dp">
+
+                    <ImageView
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:src="@drawable/ic_radio"
+                        app:tint="#FACC15"
+                        android:layout_marginEnd="10dp" />
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Vector Scope"
+                            android:textColor="#F8FAFC"
+                            android:textSize="11.5sp"
+                            android:fontFamily="monospace"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Skin tone I-line alignment"
+                            android:textColor="#94A3B8"
+                            android:textSize="9.5sp"
+                            android:fontFamily="monospace" />
+                    </LinearLayout>
+
+                    <androidx.appcompat.widget.SwitchCompat
+                        android:id="@+id/switchVectorScope"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        app:thumbTint="#FACC15"
+                        app:trackTint="#475569" />
+                </LinearLayout>
+
+                <!-- Exposure Compensation Slider in Drawer -->
+                <LinearLayout
+                    android:id="@+id/exposureLayout"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:padding="12dp"
+                    android:background="@drawable/bg_card_cinema"
+                    android:layout_marginTop="6dp">
+
+                    <TextView
+                        android:id="@+id/tvExposureValue"
+                        android:layout_width="60dp"
+                        android:layout_height="wrap_content"
+                        android:text="EV 0.0"
+                        android:textColor="#FACC15"
+                        android:textSize="12sp"
+                        android:fontFamily="monospace"
+                        android:textStyle="bold" />
+
+                    <SeekBar
+                        android:id="@+id/exposureSlider"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:progressTint="#FACC15"
+                        android:thumbTint="#FACC15" />
+                </LinearLayout>
+
+                <!-- Live Adjustment Sliders (BRI, CON, SAT) -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="12dp"
+                    android:background="@drawable/bg_card_cinema"
+                    android:layout_marginTop="6dp">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical">
+
+                        <TextView
+                            android:layout_width="32dp"
+                            android:layout_height="wrap_content"
+                            android:text="BRI"
+                            android:textColor="#94A3B8"
+                            android:textSize="10sp"
+                            android:fontFamily="monospace" />
+
+                        <SeekBar
+                            android:id="@+id/sbBrightness"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:max="200"
+                            android:progress="100"
+                            android:progressTint="#FACC15"
+                            android:thumbTint="#FACC15" />
+
+                        <TextView
+                            android:layout_width="32dp"
+                            android:layout_height="wrap_content"
+                            android:text="CON"
+                            android:textColor="#94A3B8"
+                            android:textSize="10sp"
+                            android:fontFamily="monospace" />
+
+                        <SeekBar
+                            android:id="@+id/sbContrast"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:max="200"
+                            android:progress="100"
+                            android:progressTint="#FACC15"
+                            android:thumbTint="#FACC15" />
+
+                        <TextView
+                            android:layout_width="32dp"
+                            android:layout_height="wrap_content"
+                            android:text="SAT"
+                            android:textColor="#94A3B8"
+                            android:textSize="10sp"
+                            android:fontFamily="monospace" />
+
+                        <SeekBar
+                            android:id="@+id/sbSaturation"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:max="200"
+                            android:progress="100"
+                            android:progressTint="#FACC15"
+                            android:thumbTint="#FACC15" />
+                    </LinearLayout>
+                </LinearLayout>
             </LinearLayout>
-        </HorizontalScrollView>
 
-        <!-- Pro Composition & Sensor Overlays -->
-        <TextView
-            android:id="@+id/tvGuidesLabel"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="PRO SENSORS &amp; TOOLS"
-            android:textColor="#94A3B8"
-            android:textSize="10sp"
-            android:textStyle="bold"
-            android:layout_marginTop="12dp"
-            app:layout_constraintTop_toBottomOf="@id/gridModeScroll"
-            app:layout_constraintStart_toStartOf="parent" />
-
-        <LinearLayout
-            android:id="@+id/guidesRow"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:layout_marginTop="6dp"
-            app:layout_constraintTop_toBottomOf="@id/tvGuidesLabel">
-
-            <Button
-                android:id="@+id/btnFlipSpiral"
-                android:layout_width="0dp"
-                android:layout_height="36dp"
-                android:layout_weight="1"
-                android:text="Flip Spiral"
-                android:textSize="10sp"
-                android:textColor="#FFFFFF"
-                android:backgroundTint="#D97706" />
-
-            <Button
-                android:id="@+id/btnToggleLevel"
-                android:layout_width="0dp"
-                android:layout_height="36dp"
-                android:layout_weight="1"
-                android:layout_marginStart="6dp"
-                android:text="Horizon: ON"
-                android:textSize="10sp"
-                android:textColor="#FFFFFF"
-                android:backgroundTint="#059669" />
-
-            <Button
-                android:id="@+id/btnTogglePeaking"
-                android:layout_width="0dp"
-                android:layout_height="36dp"
-                android:layout_weight="1"
-                android:layout_marginStart="6dp"
-                android:text="Peaking: OFF"
-                android:textSize="10sp"
-                android:textColor="#FFFFFF"
-                android:backgroundTint="#334155" />
-        </LinearLayout>
-
-        <LinearLayout
-            android:id="@+id/scopesRow"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:layout_marginTop="6dp"
-            app:layout_constraintTop_toBottomOf="@id/guidesRow">
-
-            <Button
-                android:id="@+id/btnToggleZebra"
-                android:layout_width="0dp"
-                android:layout_height="36dp"
-                android:layout_weight="1"
-                android:text="Zebra: OFF"
-                android:textSize="9sp"
-                android:textColor="#FFFFFF"
-                android:backgroundTint="#334155" />
-
-            <Button
-                android:id="@+id/btnToggleHistogram"
-                android:layout_width="0dp"
-                android:layout_height="36dp"
-                android:layout_weight="1"
-                android:layout_marginStart="4dp"
-                android:text="Histo: OFF"
-                android:textSize="9sp"
-                android:textColor="#FFFFFF"
-                android:backgroundTint="#334155" />
-
-            <Button
-                android:id="@+id/btnToggleVisualBalance"
-                android:layout_width="0dp"
-                android:layout_height="36dp"
-                android:layout_weight="1"
-                android:layout_marginStart="4dp"
-                android:text="Balance: OFF"
-                android:textSize="9sp"
-                android:textColor="#FFFFFF"
-                android:backgroundTint="#334155" />
-        </LinearLayout>
-
-        <!-- 3. Aspect Ratio Matte Overlays (Cinematic Crop) -->
-        <TextView
-            android:id="@+id/tvMatteLabel"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="CINEMATIC MATTE CROP OVERLAYS"
-            android:textColor="#94A3B8"
-            android:textSize="10sp"
-            android:textStyle="bold"
-            android:layout_marginTop="10dp"
-            app:layout_constraintTop_toBottomOf="@id/scopesRow"
-            app:layout_constraintStart_toStartOf="parent" />
-
-        <HorizontalScrollView
-            android:id="@+id/matteScroll"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:scrollbars="none"
-            android:layout_marginTop="4dp"
-            app:layout_constraintTop_toBottomOf="@id/tvMatteLabel">
-
+            <!-- TAB 3: OPTICS & DE-SQUEEZE -->
             <LinearLayout
-                android:layout_width="wrap_content"
+                android:id="@+id/layoutCategoryOptics"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:orientation="horizontal">
+                android:orientation="vertical"
+                android:visibility="gone">
 
-                <Button
-                    android:id="@+id/btnMatteOff"
-                    android:layout_width="wrap_content"
-                    android:layout_height="34dp"
-                    android:text="NO MATTE (OFF)"
-                    android:textSize="10sp"
-                    android:textColor="#FFFFFF"
-                    android:backgroundTint="#EF4444" />
+                <!-- Symmetrical 4-Column Lenses Row -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="52dp"
+                    android:orientation="horizontal">
 
-                <Button
-                    android:id="@+id/btnMatteCine"
-                    android:layout_width="wrap_content"
-                    android:layout_height="34dp"
-                    android:layout_marginStart="8dp"
-                    android:text="2.39:1 Cinema"
-                    android:textSize="10sp"
-                    android:textColor="#FFFFFF"
-                    android:backgroundTint="#334155" />
+                    <LinearLayout
+                        android:id="@+id/btnLens06"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:layout_weight="1"
+                        android:orientation="vertical"
+                        android:gravity="center"
+                        android:background="@drawable/bg_cinema_button_inactive">
 
-                <Button
-                    android:id="@+id/btnMatteSquare"
-                    android:layout_width="wrap_content"
-                    android:layout_height="34dp"
-                    android:layout_marginStart="8dp"
-                    android:text="1:1 Square"
-                    android:textSize="10sp"
-                    android:textColor="#FFFFFF"
-                    android:backgroundTint="#334155" />
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="0.6x"
+                            android:textColor="#E2E8F0"
+                            android:textSize="12sp"
+                            android:fontFamily="monospace"
+                            android:textStyle="bold" />
 
-                <Button
-                    android:id="@+id/btnMatte916"
-                    android:layout_width="wrap_content"
-                    android:layout_height="34dp"
-                    android:layout_marginStart="8dp"
-                    android:text="9:16 Reel"
-                    android:textSize="10sp"
-                    android:textColor="#FFFFFF"
-                    android:backgroundTint="#334155" />
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="13mm"
+                            android:textColor="#94A3B8"
+                            android:textSize="9.5sp"
+                            android:fontFamily="monospace" />
+                    </LinearLayout>
 
-                <Button
-                    android:id="@+id/btnMatte45"
-                    android:layout_width="wrap_content"
-                    android:layout_height="34dp"
-                    android:layout_marginStart="8dp"
-                    android:text="4:5 Portrait"
-                    android:textSize="10sp"
-                    android:textColor="#FFFFFF"
-                    android:backgroundTint="#334155" />
+                    <LinearLayout
+                        android:id="@+id/btnLens1"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:layout_weight="1"
+                        android:layout_marginStart="6dp"
+                        android:orientation="vertical"
+                        android:gravity="center"
+                        android:background="@drawable/bg_cinema_button_active">
 
-                <Button
-                    android:id="@+id/btnMatte169"
-                    android:layout_width="wrap_content"
-                    android:layout_height="34dp"
-                    android:layout_marginStart="8dp"
-                    android:text="16:9 HD"
-                    android:textSize="10sp"
-                    android:textColor="#FFFFFF"
-                    android:backgroundTint="#334155" />
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="1.0x"
+                            android:textColor="#000000"
+                            android:textSize="12sp"
+                            android:fontFamily="monospace"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="24mm"
+                            android:textColor="#334155"
+                            android:textSize="9.5sp"
+                            android:fontFamily="monospace" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:id="@+id/btnLens2"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:layout_weight="1"
+                        android:layout_marginStart="6dp"
+                        android:orientation="vertical"
+                        android:gravity="center"
+                        android:background="@drawable/bg_cinema_button_inactive">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="2.0x"
+                            android:textColor="#E2E8F0"
+                            android:textSize="12sp"
+                            android:fontFamily="monospace"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="48mm"
+                            android:textColor="#94A3B8"
+                            android:textSize="9.5sp"
+                            android:fontFamily="monospace" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:id="@+id/btnLens5"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:layout_weight="1"
+                        android:layout_marginStart="6dp"
+                        android:orientation="vertical"
+                        android:gravity="center"
+                        android:background="@drawable/bg_cinema_button_inactive">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="5.0x"
+                            android:textColor="#E2E8F0"
+                            android:textSize="12sp"
+                            android:fontFamily="monospace"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="120mm"
+                            android:textColor="#94A3B8"
+                            android:textSize="9.5sp"
+                            android:fontFamily="monospace" />
+                    </LinearLayout>
+                </LinearLayout>
+
+                <!-- Symmetrical 5-Column De-Squeeze Row -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="38dp"
+                    android:orientation="horizontal"
+                    android:layout_marginTop="8dp">
+
+                    <TextView
+                        android:id="@+id/btnSqueezeOff"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:layout_weight="1"
+                        android:gravity="center"
+                        android:text="OFF"
+                        android:textColor="#000000"
+                        android:textSize="11sp"
+                        android:textStyle="bold"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_active" />
+
+                    <TextView
+                        android:id="@+id/btnSqueeze133"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:layout_weight="1"
+                        android:layout_marginStart="4dp"
+                        android:gravity="center"
+                        android:text="1.33x"
+                        android:textColor="#94A3B8"
+                        android:textSize="11sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+
+                    <TextView
+                        android:id="@+id/btnSqueeze155"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:layout_weight="1"
+                        android:layout_marginStart="4dp"
+                        android:gravity="center"
+                        android:text="1.55x"
+                        android:textColor="#94A3B8"
+                        android:textSize="11sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+
+                    <TextView
+                        android:id="@+id/btnSqueeze180"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:layout_weight="1"
+                        android:layout_marginStart="4dp"
+                        android:gravity="center"
+                        android:text="1.8x"
+                        android:textColor="#94A3B8"
+                        android:textSize="11sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+
+                    <TextView
+                        android:id="@+id/btnSqueeze200"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:layout_weight="1"
+                        android:layout_marginStart="4dp"
+                        android:gravity="center"
+                        android:text="2.0x"
+                        android:textColor="#94A3B8"
+                        android:textSize="11sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+                </LinearLayout>
+
+                <!-- Cinema Sensor Transform Info Card -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:padding="12dp"
+                    android:background="@drawable/bg_card_cinema"
+                    android:layout_marginTop="8dp">
+
+                    <ImageView
+                        android:layout_width="18dp"
+                        android:layout_height="18dp"
+                        android:src="@drawable/ic_layers"
+                        app:tint="#FACC15"
+                        android:layout_marginEnd="10dp" />
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Display Transform: Real-time sensor preview de-squeeze. Captured media files retain native optical sensor resolution."
+                        android:textColor="#CBD5E1"
+                        android:textSize="10sp"
+                        android:fontFamily="monospace"
+                        android:lineSpacingExtra="2dp" />
+                </LinearLayout>
             </LinearLayout>
-        </HorizontalScrollView>
+
+            <!-- TAB 4: AUDIO & PIP -->
+            <LinearLayout
+                android:id="@+id/layoutCategoryAudio"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <!-- Audio Peak VU Meter Switch Card -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:padding="12dp"
+                    android:background="@drawable/bg_card_cinema">
+
+                    <ImageView
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:src="@drawable/ic_volume_up"
+                        app:tint="#FACC15"
+                        android:layout_marginEnd="10dp" />
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Audio Peak VU Meter"
+                            android:textColor="#F8FAFC"
+                            android:textSize="11.5sp"
+                            android:fontFamily="monospace"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Dual stereo dB bars (-48 to 0 dB) with clip alert"
+                            android:textColor="#94A3B8"
+                            android:textSize="9.5sp"
+                            android:fontFamily="monospace" />
+                    </LinearLayout>
+
+                    <androidx.appcompat.widget.SwitchCompat
+                        android:id="@+id/switchAudioVuMeter"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        app:thumbTint="#FACC15"
+                        app:trackTint="#475569" />
+                </LinearLayout>
+
+                <!-- Microphone Input Switch Card -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:padding="12dp"
+                    android:background="@drawable/bg_card_cinema"
+                    android:layout_marginTop="6dp">
+
+                    <ImageView
+                        android:id="@+id/iconMic"
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:src="@drawable/ic_mic"
+                        app:tint="#FACC15"
+                        android:layout_marginEnd="10dp" />
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Microphone Input"
+                            android:textColor="#F8FAFC"
+                            android:textSize="11.5sp"
+                            android:fontFamily="monospace"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:id="@+id/tvMicStatus"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Active · Recording ambient stereo"
+                            android:textColor="#94A3B8"
+                            android:textSize="9.5sp"
+                            android:fontFamily="monospace" />
+                    </LinearLayout>
+
+                    <androidx.appcompat.widget.SwitchCompat
+                        android:id="@+id/switchMicInput"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:checked="true"
+                        app:thumbTint="#FACC15"
+                        app:trackTint="#475569" />
+                </LinearLayout>
+
+                <!-- Multi-Camera PiP Deck Switch Card -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:padding="12dp"
+                    android:background="@drawable/bg_card_cinema"
+                    android:layout_marginTop="6dp">
+
+                    <ImageView
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:src="@drawable/ic_layers"
+                        app:tint="#FACC15"
+                        android:layout_marginEnd="10dp" />
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Multi-Camera PiP Deck"
+                            android:textColor="#F8FAFC"
+                            android:textSize="11.5sp"
+                            android:fontFamily="monospace"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Live miniature director preview for all 4 camera lenses"
+                            android:textColor="#94A3B8"
+                            android:textSize="9.5sp"
+                            android:fontFamily="monospace" />
+                    </LinearLayout>
+
+                    <androidx.appcompat.widget.SwitchCompat
+                        android:id="@+id/switchMultiCamPip"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        app:thumbTint="#FACC15"
+                        app:trackTint="#475569" />
+                </LinearLayout>
+            </LinearLayout>
+        </FrameLayout>
     </androidx.constraintlayout.widget.ConstraintLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>

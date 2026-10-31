@@ -61,8 +61,8 @@ public class MainActivity extends AppCompatActivity {
     private static final String FILENAME_FORMAT = "yyyy-MM-dd-HH-mm-ss-SSS";
 
     private PreviewView viewFinder;
-    private ImageButton btnCapture, btnSwitchCamera, btnPauseResume, btnGrid;
-    private TextView tabPhoto, tabVideo, tvExposureValue, tvCountdown, tvBurstBadge, btnTimer;
+    private ImageButton btnCapture, btnSwitchCamera, btnPauseResume, btnProStudio, btnTimer;
+    private TextView tabPhoto, tabVideo, tvExposureValue, tvCountdown, tvBurstBadge;
     private View recordingTimer, proModeBar, gridOverlay, exposureLayout;
     private Chronometer chronometer;
     private SeekBar exposureSlider;
@@ -122,7 +122,7 @@ public class MainActivity extends AppCompatActivity {
         btnCapture = findViewById(R.id.btnCapture);
         btnSwitchCamera = findViewById(R.id.btnSwitchCamera);
         btnPauseResume = findViewById(R.id.btnPauseResume);
-        btnGrid = findViewById(R.id.btnGrid);
+        btnProStudio = findViewById(R.id.btnProStudio);
         btnTimer = findViewById(R.id.btnTimer);
         tabPhoto = findViewById(R.id.tabPhoto);
         tabVideo = findViewById(R.id.tabVideo);
@@ -148,12 +148,14 @@ public class MainActivity extends AppCompatActivity {
             else if (countdownSeconds == 3) countdownSeconds = 5;
             else if (countdownSeconds == 5) countdownSeconds = 10;
             else countdownSeconds = 0;
-            btnTimer.setText(countdownSeconds == 0 ? "TIMER OFF" : countdownSeconds + "s");
+            Toast.makeText(this, "Timer: " + (countdownSeconds == 0 ? "Off" : countdownSeconds + "s"), Toast.LENGTH_SHORT).show();
         });
 
-        btnGrid.setOnClickListener(v -> {
-            boolean visible = gridOverlay.getVisibility() == View.VISIBLE;
-            gridOverlay.setVisibility(visible ? View.GONE : View.VISIBLE);
+        btnProStudio.setOnClickListener(v -> {
+            View drawer = findViewById(R.id.proStudioDrawer);
+            if (drawer != null) {
+                drawer.setVisibility(drawer.getVisibility() == View.VISIBLE ? View.GONE : View.VISIBLE);
+            }
         });
     }
 
