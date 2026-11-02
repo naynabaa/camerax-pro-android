@@ -207,8 +207,8 @@ class MainActivity : AppCompatActivity() {
         sensorManager.unregisterListener(sensorEventListener)
     }
 
-    enum class ShelfCategory { LOOKS, GRIDS, EXPOSURE, OPTICS, AUDIO }
-    private var currentShelfTab = ShelfCategory.LOOKS
+    enum class ShelfCategory { GRIDS, EXPOSURE, OPTICS, AUDIO }
+    private var currentShelfTab = ShelfCategory.GRIDS
     private var isAudioMuted = false
     private var currentAspectRatio = "4:3"
     private var currentDeSqueeze = "OFF"
@@ -232,10 +232,16 @@ class MainActivity : AppCompatActivity() {
         // Top Toolbar: Flash Button
         viewBinding.btnFlash.setOnClickListener { toggleFlashMode() }
 
-        // Top Toolbar: Creative Filters / Looks Tab Quick Open
+        // Top Toolbar: Creative Filters / Effects Drawer (strictly Filters, Lens, and Effects only)
         viewBinding.btnFilter.setOnClickListener {
-            viewBinding.proStudioDrawer.visibility = View.VISIBLE
-            selectShelfTab(ShelfCategory.LOOKS)
+            val isVisible = viewBinding.effectsStudioDrawer.visibility == View.VISIBLE
+            viewBinding.effectsStudioDrawer.visibility = if (isVisible) View.GONE else View.VISIBLE
+            if (!isVisible) {
+                viewBinding.proStudioDrawer.visibility = View.GONE
+            }
+        }
+        viewBinding.btnCloseEffectsDrawer.setOnClickListener {
+            viewBinding.effectsStudioDrawer.visibility = View.GONE
         }
 
         // Top Toolbar: Self-Timer Toggle (Photo Mode)
@@ -252,6 +258,7 @@ class MainActivity : AppCompatActivity() {
         viewBinding.btnCleanView.setOnClickListener {
             toggleCleanScreen()
             viewBinding.proStudioDrawer.visibility = View.GONE
+            viewBinding.effectsStudioDrawer.visibility = View.GONE
         }
 
         // Top Toolbar: Pro Studio Drawer Open / Close (Single unified entry point)
@@ -265,8 +272,7 @@ class MainActivity : AppCompatActivity() {
         // Top Toolbar: Audio Mute Toggle
         viewBinding.btnAudioMute.setOnClickListener { toggleAudioMute() }
 
-        // 5 Category Tabs Bar
-        viewBinding.tabCategoryLooks.setOnClickListener { selectShelfTab(ShelfCategory.LOOKS) }
+        // 4 Category Tabs Bar for Camera Pro Tools
         viewBinding.tabCategoryGrids.setOnClickListener { selectShelfTab(ShelfCategory.GRIDS) }
         viewBinding.tabCategoryExposure.setOnClickListener { selectShelfTab(ShelfCategory.EXPOSURE) }
         viewBinding.tabCategoryOptics.setOnClickListener { selectShelfTab(ShelfCategory.OPTICS) }
@@ -872,28 +878,28 @@ class MainActivity : AppCompatActivity() {
 
     private fun selectShelfTab(category: ShelfCategory) {
         currentShelfTab = category
-        viewBinding.layoutCategoryLooks.visibility = if (category == ShelfCategory.LOOKS) View.VISIBLE else View.GONE
         viewBinding.layoutCategoryGrids.visibility = if (category == ShelfCategory.GRIDS) View.VISIBLE else View.GONE
         viewBinding.layoutCategoryExposure.visibility = if (category == ShelfCategory.EXPOSURE) View.VISIBLE else View.GONE
         viewBinding.layoutCategoryOptics.visibility = if (category == ShelfCategory.OPTICS) View.VISIBLE else View.GONE
         viewBinding.layoutCategoryAudio.visibility = if (category == ShelfCategory.AUDIO) View.VISIBLE else View.GONE
 
-        // Update tab styles: Solid yellow background for active, translucent slate for inactive
+        // Update tab styles: Single un-bordered row, sharp solid neon yellow horizontal line (2dp thick) positioned exactly beneath active text
         val tabs = listOf(
-            Pair(viewBinding.tabCategoryLooks, ShelfCategory.LOOKS),
-            Pair(viewBinding.tabCategoryGrids, ShelfCategory.GRIDS),
-            Pair(viewBinding.tabCategoryExposure, ShelfCategory.EXPOSURE),
-            Pair(viewBinding.tabCategoryOptics, ShelfCategory.OPTICS),
-            Pair(viewBinding.tabCategoryAudio, ShelfCategory.AUDIO)
+            Triple(viewBinding.tabCategoryGrids, viewBinding.indicatorGrids, ShelfCategory.GRIDS),
+            Triple(viewBinding.tabCategoryExposure, viewBinding.indicatorExposure, ShelfCategory.EXPOSURE),
+            Triple(viewBinding.tabCategoryOptics, viewBinding.indicatorOptics, ShelfCategory.OPTICS),
+            Triple(viewBinding.tabCategoryAudio, viewBinding.indicatorAudio, ShelfCategory.AUDIO)
         )
-        for ((tabView, cat) in tabs) {
+        for ((tabView, indicatorView, cat) in tabs) {
             val isActive = cat == category
             if (isActive) {
-                tabView.setBackgroundResource(R.drawable.bg_tab_active)
-                tabView.setTextColor(Color.parseColor("#000000"))
+                tabView.setTextColor(Color.parseColor("#FFC107"))
+                indicatorView.setBackgroundColor(Color.parseColor("#FFC107"))
+                indicatorView.visibility = View.VISIBLE
             } else {
-                tabView.setBackgroundResource(R.drawable.bg_tab_inactive)
-                tabView.setTextColor(Color.parseColor("#94A3B8"))
+                tabView.setTextColor(Color.parseColor("#64748B"))
+                indicatorView.setBackgroundColor(Color.TRANSPARENT)
+                indicatorView.visibility = View.INVISIBLE
             }
         }
     }
@@ -913,7 +919,7 @@ class MainActivity : AppCompatActivity() {
             val isActive = name == preset
             if (isActive) {
                 btn.setBackgroundResource(R.drawable.bg_cinema_button_active)
-                btn.setTextColor(Color.parseColor("#000000"))
+                btn.setTextColor(Color.parseColor("#0F172A"))
             } else {
                 btn.setBackgroundResource(R.drawable.bg_cinema_button_inactive)
                 btn.setTextColor(Color.parseColor("#94A3B8"))
@@ -935,7 +941,7 @@ class MainActivity : AppCompatActivity() {
             val isActive = name == lens
             if (isActive) {
                 btn.setBackgroundResource(R.drawable.bg_cinema_button_active)
-                btn.setTextColor(Color.parseColor("#000000"))
+                btn.setTextColor(Color.parseColor("#0F172A"))
             } else {
                 btn.setBackgroundResource(R.drawable.bg_cinema_button_inactive)
                 btn.setTextColor(Color.parseColor("#94A3B8"))
@@ -947,6 +953,10 @@ class MainActivity : AppCompatActivity() {
     private fun toggleProDrawer() {
         val isVisible = viewBinding.proStudioDrawer.visibility == View.VISIBLE
         viewBinding.proStudioDrawer.visibility = if (isVisible) View.GONE else View.VISIBLE
+        if (!isVisible) {
+            viewBinding.effectsStudioDrawer.visibility = View.GONE
+            selectShelfTab(currentShelfTab)
+        }
     }
 
     private fun toggleCleanScreen() {
