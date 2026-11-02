@@ -11,6 +11,7 @@ import jp.co.cyberagent.android.gpuimage.filter.GPUImageGrayscaleFilter
 import jp.co.cyberagent.android.gpuimage.filter.GPUImageSaturationFilter
 import jp.co.cyberagent.android.gpuimage.filter.GPUImageSepiaToneFilter
 import jp.co.cyberagent.android.gpuimage.filter.GPUImageSharpenFilter
+import java.util.Locale
 
 /**
  * FilterManager: Production Real-Time Filter Engine
@@ -150,6 +151,22 @@ class FilterManager(private val context: Context) {
     fun setPreset(preset: FilterPreset) {
         currentPreset = preset
         gpuImage.setFilter(buildActiveFilterGroup())
+    }
+
+    fun applyPreset(presetName: String) {
+        val preset = when (presetName.lowercase(Locale.ROOT)) {
+            "cinematic" -> FilterPreset.CINEMATIC
+            "vintage" -> FilterPreset.VINTAGE
+            "bw", "black_and_white", "mono" -> FilterPreset.BLACK_AND_WHITE
+            "hdr" -> FilterPreset.HDR
+            "cyberpunk", "cyber" -> FilterPreset.CYBERPUNK
+            else -> FilterPreset.NORMAL
+        }
+        setPreset(preset)
+    }
+
+    fun applyPreset(preset: FilterPreset) {
+        setPreset(preset)
     }
 
     fun getPreset(): FilterPreset = currentPreset
