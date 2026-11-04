@@ -215,9 +215,17 @@ class MainActivity : AppCompatActivity() {
     private var currentFilterName = "normal"
     private var currentArLensName = "none"
 
+    enum class CreativeTarget { FILTERS, LENSES, EFFECTS }
+    private var currentCreativeTarget = CreativeTarget.FILTERS
+    private var isLastActionCreative = false
+    private var currentTextureEffectIndex = 0
+
     private fun setupClickListeners() {
         // Lens Flip Switch Listener
         viewBinding.btnSwitchCamera.setOnClickListener { switchCamera() }
+
+        // Bottom-Left Gallery Button Listener
+        viewBinding.btnGallery.setOnClickListener { openSystemGallery() }
 
         // Mode Switcher: 5 Sliding Cinema Modes
         viewBinding.tabSlowMo.setOnClickListener { setMode(CameraMode.SLOW_MO) }
@@ -293,13 +301,16 @@ class MainActivity : AppCompatActivity() {
         viewBinding.btnArHud.setOnClickListener { setArLens("scifi_hud") }
 
         viewBinding.switchFilmGrain.setOnCheckedChangeListener { _, isChecked ->
-            Toast.makeText(this, if (isChecked) "35mm Analog Grain: Active" else "Film Grain: Disabled", Toast.LENGTH_SHORT).show()
+            currentCreativeTarget = CreativeTarget.EFFECTS
+            isLastActionCreative = true
         }
         viewBinding.switchDateStamp.setOnCheckedChangeListener { _, isChecked ->
-            Toast.makeText(this, if (isChecked) "Retro 90s Timestamp: Active" else "Timestamp: Disabled", Toast.LENGTH_SHORT).show()
+            currentCreativeTarget = CreativeTarget.EFFECTS
+            isLastActionCreative = true
         }
         viewBinding.switchCineFlare.setOnCheckedChangeListener { _, isChecked ->
-            Toast.makeText(this, if (isChecked) "Anamorphic Blue Flare: Active" else "Lens Flare: Disabled", Toast.LENGTH_SHORT).show()
+            currentCreativeTarget = CreativeTarget.EFFECTS
+            isLastActionCreative = true
         }
 
         // TAB 1: Framing Grids Symmetrical Buttons
@@ -347,7 +358,7 @@ class MainActivity : AppCompatActivity() {
             viewBinding.proOverlayView.zebraThreshold = next
             viewBinding.btnZebraThreshold.text = if (next == 250) "98%" else "95%"
             viewBinding.tvZebraStatus.text = "Clipping warning (${if (next == 250) "98%" else "95%"} IRE)"
-            Toast.makeText(this, "Zebra Threshold: ${if (next == 250) "98%" else "95%"} IRE", Toast.LENGTH_SHORT).show()
+            // silent (no popup)
         }
         viewBinding.switchWaveform.setOnCheckedChangeListener { _, isChecked ->
             viewBinding.proOverlayView.showWaveform = isChecked
@@ -385,7 +396,7 @@ class MainActivity : AppCompatActivity() {
             updateAudioMuteUI()
         }
         viewBinding.switchMultiCamPip.setOnCheckedChangeListener { _, isChecked ->
-            Toast.makeText(this, if (isChecked) "Multi-Camera PiP Deck: Active" else "Multi-Camera PiP: Inactive", Toast.LENGTH_SHORT).show()
+            // silent (no popup)
             updateActiveInstrumentsCount()
         }
 
@@ -736,7 +747,7 @@ class MainActivity : AppCompatActivity() {
             viewBinding.tvTimerBadge.text = "${countdownSeconds}"
             viewBinding.btnTimer.setColorFilter(Color.parseColor("#FACC15"))
         }
-        Toast.makeText(this, "Timer: ${if (countdownSeconds == 0) "Off" else "${countdownSeconds}s"}", Toast.LENGTH_SHORT).show()
+        // silent (no popup)
     }
 
     // Auto Trigger Interval Loop Cycle (Auto Record -> Auto Pause -> Auto Resume Loop)
@@ -747,30 +758,30 @@ class MainActivity : AppCompatActivity() {
                 autoRecordDuration = 5
                 autoPauseDuration = 3
                 viewBinding.btnAutoLoop.setColorFilter(Color.parseColor("#FACC15"))
-                Toast.makeText(this, "Auto Loop: 5s Record / 3s Pause", Toast.LENGTH_SHORT).show()
+                // silent (no popup)
             }
             autoRecordDuration == 5 -> {
                 autoRecordDuration = 10
                 autoPauseDuration = 5
                 viewBinding.btnAutoLoop.setColorFilter(Color.parseColor("#FACC15"))
-                Toast.makeText(this, "Auto Loop: 10s Record / 5s Pause", Toast.LENGTH_SHORT).show()
+                // silent (no popup)
             }
             autoRecordDuration == 10 -> {
                 autoRecordDuration = 15
                 autoPauseDuration = 5
                 viewBinding.btnAutoLoop.setColorFilter(Color.parseColor("#FACC15"))
-                Toast.makeText(this, "Auto Loop: 15s Record / 5s Pause", Toast.LENGTH_SHORT).show()
+                // silent (no popup)
             }
             autoRecordDuration == 15 -> {
                 autoRecordDuration = 30
                 autoPauseDuration = 10
                 viewBinding.btnAutoLoop.setColorFilter(Color.parseColor("#FACC15"))
-                Toast.makeText(this, "Auto Loop: 30s Record / 10s Pause", Toast.LENGTH_SHORT).show()
+                // silent (no popup)
             }
             else -> {
                 isAutoLoopEnabled = false
                 viewBinding.btnAutoLoop.setColorFilter(Color.parseColor("#CCCCCC"))
-                Toast.makeText(this, "Auto Loop: Disabled", Toast.LENGTH_SHORT).show()
+                // silent (no popup)
             }
         }
         updateAutoLoopHud()
@@ -906,7 +917,17 @@ class MainActivity : AppCompatActivity() {
 
     private fun setFilterPreset(preset: String) {
         currentFilterName = preset
-        filterManager.applyPreset(preset)
+        currentCreativeTarget = CreativeTarget.FILTERS
+        isLastActionCreative = true
+        val filterPreset = when (preset.lowercase(Locale.ROOT)) {
+            "cinematic" -> FilterManager.FilterPreset.CINEMATIC
+            "vintage" -> FilterManager.FilterPreset.VINTAGE
+            "bw", "black_and_white", "mono" -> FilterManager.FilterPreset.BLACK_AND_WHITE
+            "hdr" -> FilterManager.FilterPreset.HDR
+            "cyberpunk", "cyber" -> FilterManager.FilterPreset.CYBERPUNK
+            else -> FilterManager.FilterPreset.NORMAL
+        }
+        filterManager.setPreset(filterPreset)
         val filterButtons = listOf(
             viewBinding.btnFilterNormal to "normal",
             viewBinding.btnFilterCinematic to "cinematic",
@@ -925,11 +946,13 @@ class MainActivity : AppCompatActivity() {
                 btn.setTextColor(Color.parseColor("#94A3B8"))
             }
         }
-        Toast.makeText(this, "Filter: ${preset.uppercase()}", Toast.LENGTH_SHORT).show()
+        // silent (no popup)
     }
 
     private fun setArLens(lens: String) {
         currentArLensName = lens
+        currentCreativeTarget = CreativeTarget.LENSES
+        isLastActionCreative = true
         val lensButtons = listOf(
             viewBinding.btnArNone to "none",
             viewBinding.btnArMesh to "mesh_contour",
@@ -947,7 +970,7 @@ class MainActivity : AppCompatActivity() {
                 btn.setTextColor(Color.parseColor("#94A3B8"))
             }
         }
-        Toast.makeText(this, "AR Lens: ${lens.uppercase()}", Toast.LENGTH_SHORT).show()
+        // silent (no popup)
     }
 
     private fun toggleProDrawer() {
@@ -965,11 +988,11 @@ class MainActivity : AppCompatActivity() {
         if (isClean) {
             viewBinding.btnCleanScreen.setImageResource(R.drawable.ic_eye_off)
             viewBinding.btnCleanScreen.setColorFilter(Color.parseColor("#FACC15"))
-            Toast.makeText(this, "Clean Screen: All overlays hidden", Toast.LENGTH_SHORT).show()
+            // silent (no popup)
         } else {
             viewBinding.btnCleanScreen.setImageResource(R.drawable.ic_eye)
             viewBinding.btnCleanScreen.setColorFilter(Color.parseColor("#CCCCCC"))
-            Toast.makeText(this, "HUD Overlays Restored", Toast.LENGTH_SHORT).show()
+            // silent (no popup)
         }
     }
 
@@ -984,12 +1007,12 @@ class MainActivity : AppCompatActivity() {
             viewBinding.btnAudioMute.setImageResource(R.drawable.ic_volume_off)
             viewBinding.btnAudioMute.setColorFilter(Color.parseColor("#EF4444"))
             viewBinding.tvMicInputStatus.text = "Microphone muted"
-            Toast.makeText(this, "Microphone: Muted", Toast.LENGTH_SHORT).show()
+            // silent (no popup)
         } else {
             viewBinding.btnAudioMute.setImageResource(R.drawable.ic_volume_up)
             viewBinding.btnAudioMute.setColorFilter(Color.parseColor("#CCCCCC"))
             viewBinding.tvMicInputStatus.text = "Studio stereo input active"
-            Toast.makeText(this, "Microphone: Active", Toast.LENGTH_SHORT).show()
+            // silent (no popup)
         }
     }
 
@@ -1001,7 +1024,7 @@ class MainActivity : AppCompatActivity() {
         }
         viewBinding.btnAspectRatio.text = currentAspectRatio
         viewBinding.proOverlayView.sensorAspectRatio = currentAspectRatio
-        Toast.makeText(this, "Sensor Ratio: $currentAspectRatio", Toast.LENGTH_SHORT).show()
+        // silent (no popup)
     }
 
     private fun setSpiralOrientation(rot: Int) {
@@ -1043,7 +1066,7 @@ class MainActivity : AppCompatActivity() {
                 btn.setTextColor(Color.parseColor("#94A3B8"))
             }
         }
-        Toast.makeText(this, "Anamorphic De-Squeeze: $label", Toast.LENGTH_SHORT).show()
+        // silent (no popup)
     }
 
     private fun updateActiveInstrumentsCount() {
@@ -1087,7 +1110,7 @@ class MainActivity : AppCompatActivity() {
             ProOverlayView.GridType.DIAGONAL_SYMMETRY -> "Grid: Dynamic Symmetry"
             ProOverlayView.GridType.CINEMATIC_239 -> "Grid: 2.39:1 CinemaScope"
         }
-        Toast.makeText(this, name, Toast.LENGTH_SHORT).show()
+        // silent (no popup)
     }
 
     private fun setGridMode(mode: ProOverlayView.GridType) {
@@ -1150,7 +1173,7 @@ class MainActivity : AppCompatActivity() {
             ProOverlayView.AspectMatte.PORTRAIT_4_5 -> "Matte: 4:5 Social Portrait"
             ProOverlayView.AspectMatte.WIDESCREEN_16_9 -> "Matte: 16:9 Cinema"
         }
-        Toast.makeText(this, label, Toast.LENGTH_SHORT).show()
+        // silent (no popup)
         updateActiveInstrumentsCount()
     }
 
@@ -1244,6 +1267,7 @@ class MainActivity : AppCompatActivity() {
                         viewBinding.tvRecordingStatus.setTextColor(Color.parseColor("#EF4444"))
                         viewBinding.recordingDot.visibility = View.VISIBLE
                         viewBinding.btnPauseResume.visibility = View.VISIBLE
+                        viewBinding.btnGallery.visibility = View.VISIBLE
                         viewBinding.btnPauseResume.setImageResource(R.drawable.ic_pause)
 
                         // Reset stopped offset and start chronometer from 00:00
@@ -1267,7 +1291,7 @@ class MainActivity : AppCompatActivity() {
                         viewBinding.tvRecordingStatus.setTextColor(Color.parseColor("#F59E0B"))
                         viewBinding.recordingDot.visibility = View.GONE
                         viewBinding.btnPauseResume.setImageResource(R.drawable.ic_play_arrow)
-                        Toast.makeText(this, "Recording Paused", Toast.LENGTH_SHORT).show()
+                        // silent (no popup)
                     }
 
                     is VideoRecordEvent.Resume -> {
@@ -1279,7 +1303,7 @@ class MainActivity : AppCompatActivity() {
                         viewBinding.tvRecordingStatus.setTextColor(Color.parseColor("#EF4444"))
                         viewBinding.recordingDot.visibility = View.VISIBLE
                         viewBinding.btnPauseResume.setImageResource(R.drawable.ic_pause)
-                        Toast.makeText(this, "Recording Resumed", Toast.LENGTH_SHORT).show()
+                        // silent (no popup)
                     }
 
                     is VideoRecordEvent.Finalize -> {
@@ -1291,6 +1315,7 @@ class MainActivity : AppCompatActivity() {
                         viewBinding.recordingDot.visibility = View.GONE
                         viewBinding.chronometer.text = "00:00:00"
                         viewBinding.btnPauseResume.visibility = View.GONE
+                        viewBinding.btnGallery.visibility = View.VISIBLE
                         viewBinding.btnCapture.setImageResource(R.drawable.bg_record_button_idle)
 
                         viewBinding.tabPhoto.isEnabled = true
@@ -1299,7 +1324,6 @@ class MainActivity : AppCompatActivity() {
 
                         if (!recordEvent.hasError()) {
                             val msg = "Video saved: ${recordEvent.outputResults.outputUri}"
-                            Toast.makeText(baseContext, msg, Toast.LENGTH_SHORT).show()
                             Log.d(TAG, msg)
                         } else {
                             recording?.close()
@@ -1334,7 +1358,7 @@ class MainActivity : AppCompatActivity() {
             put(MediaStore.MediaColumns.DISPLAY_NAME, name)
             put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/CameraX-Image")
+                put(MediaStore.Images.Media.RELATIVE_PATH, "${photoRelativeFolder}")
             }
         }
 
@@ -1359,9 +1383,7 @@ class MainActivity : AppCompatActivity() {
                 }
 
                 override fun onImageSaved(output: ImageCapture.OutputFileResults) {
-                    if (!isBurst) {
-                        Toast.makeText(baseContext, "Photo saved: ${output.savedUri}", Toast.LENGTH_SHORT).show()
-                    }
+                    Log.d(TAG, "Photo saved: ${output.savedUri}")
                 }
             }
         )
@@ -1370,6 +1392,7 @@ class MainActivity : AppCompatActivity() {
     private fun setMode(mode: CameraMode) {
         if (recording != null) return
         cameraMode = mode
+        isLastActionCreative = false
 
         // Smoothly highlight active mode and mute others
         val modeTabs = listOf(
@@ -1396,7 +1419,7 @@ class MainActivity : AppCompatActivity() {
                 CameraMode.NIGHT -> "Night Mode: Low-Light Long Exposure active"
                 else -> "Photo Mode: Single & Burst ready"
             }
-            Toast.makeText(this, modeToast, Toast.LENGTH_SHORT).show()
+            // silent (no popup)
         } else {
             viewBinding.btnCapture.setImageResource(R.drawable.bg_record_button_idle)
             viewBinding.layoutBtnTimer.visibility = View.GONE
@@ -1408,9 +1431,109 @@ class MainActivity : AppCompatActivity() {
             viewBinding.chronometer.text = "00:00:00"
             updateAutoLoopHud()
             val modeToast = if (mode == CameraMode.SLOW_MO) "Slow-Motion Mode: 120 FPS high-frame-rate" else "Video Mode: Studio Recording"
-            Toast.makeText(this, modeToast, Toast.LENGTH_SHORT).show()
+            // silent (no popup)
         }
+        val activeTab = when (mode) {
+            CameraMode.SLOW_MO -> viewBinding.tabSlowMo
+            CameraMode.VIDEO -> viewBinding.tabVideo
+            CameraMode.PHOTO -> viewBinding.tabPhoto
+            CameraMode.PORTRAIT -> viewBinding.tabPortrait
+            CameraMode.NIGHT -> viewBinding.tabNight
+        }
+        viewBinding.modeScrollView.post {
+            val scrollX = activeTab.left + (activeTab.width / 2) - (viewBinding.modeScrollView.width / 2)
+            viewBinding.modeScrollView.smoothScrollTo(Math.max(0, scrollX), 0)
+        }
+
         bindCameraUseCases()
+    }
+
+
+    private fun openSystemGallery() {
+        try {
+            val intent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
+                type = "image/*"
+                flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            startActivity(intent)
+        } catch (e: Exception) {
+            try {
+                val intent = android.content.Intent(android.content.Intent.ACTION_GET_CONTENT).apply {
+                    type = "image/*"
+                }
+                startActivity(intent)
+            } catch (err: Exception) {
+                Log.e(TAG, "Cannot open gallery", err)
+            }
+        }
+    }
+
+    private fun navigateNextCameraMode() {
+        val modes = listOf(CameraMode.SLOW_MO, CameraMode.VIDEO, CameraMode.PHOTO, CameraMode.PORTRAIT, CameraMode.NIGHT)
+        val currentIndex = modes.indexOf(cameraMode)
+        val nextIndex = (currentIndex + 1) % modes.size
+        setMode(modes[nextIndex])
+    }
+
+    private fun navigatePreviousCameraMode() {
+        val modes = listOf(CameraMode.SLOW_MO, CameraMode.VIDEO, CameraMode.PHOTO, CameraMode.PORTRAIT, CameraMode.NIGHT)
+        val currentIndex = modes.indexOf(cameraMode)
+        val prevIndex = if (currentIndex <= 0) modes.size - 1 else currentIndex - 1
+        setMode(modes[prevIndex])
+    }
+
+    private fun navigateNextEffectOrFilter() {
+        when (currentCreativeTarget) {
+            CreativeTarget.LENSES -> {
+                val lensList = listOf("none", "mesh_contour", "cyberpunk_visor", "golden_crown", "scifi_hud")
+                val currentIdx = lensList.indexOf(currentArLensName)
+                val safeIdx = if (currentIdx >= 0) currentIdx else 0
+                val nextIdx = (safeIdx + 1) % lensList.size
+                setArLens(lensList[nextIdx])
+            }
+            CreativeTarget.EFFECTS -> {
+                currentTextureEffectIndex = (currentTextureEffectIndex + 1) % 3
+                toggleTextureEffectByIndex(currentTextureEffectIndex)
+            }
+            else -> {
+                val filterList = listOf("normal", "cinematic", "vintage", "bw", "cyberpunk", "hdr")
+                val currentIdx = filterList.indexOf(currentFilterName)
+                val safeIdx = if (currentIdx >= 0) currentIdx else 0
+                val nextIdx = (safeIdx + 1) % filterList.size
+                setFilterPreset(filterList[nextIdx])
+            }
+        }
+    }
+
+    private fun navigatePreviousEffectOrFilter() {
+        when (currentCreativeTarget) {
+            CreativeTarget.LENSES -> {
+                val lensList = listOf("none", "mesh_contour", "cyberpunk_visor", "golden_crown", "scifi_hud")
+                val currentIdx = lensList.indexOf(currentArLensName)
+                val safeIdx = if (currentIdx >= 0) currentIdx else 0
+                val prevIdx = if (safeIdx <= 0) lensList.size - 1 else safeIdx - 1
+                setArLens(lensList[prevIdx])
+            }
+            CreativeTarget.EFFECTS -> {
+                currentTextureEffectIndex = if (currentTextureEffectIndex <= 0) 2 else currentTextureEffectIndex - 1
+                toggleTextureEffectByIndex(currentTextureEffectIndex)
+            }
+            else -> {
+                val filterList = listOf("normal", "cinematic", "vintage", "bw", "cyberpunk", "hdr")
+                val currentIdx = filterList.indexOf(currentFilterName)
+                val safeIdx = if (currentIdx >= 0) currentIdx else 0
+                val prevIdx = if (safeIdx <= 0) filterList.size - 1 else safeIdx - 1
+                setFilterPreset(filterList[prevIdx])
+            }
+        }
+    }
+
+    private fun toggleTextureEffectByIndex(index: Int) {
+        when (index) {
+            0 -> viewBinding.switchFilmGrain.isChecked = !viewBinding.switchFilmGrain.isChecked
+            1 -> viewBinding.switchDateStamp.isChecked = !viewBinding.switchDateStamp.isChecked
+            2 -> viewBinding.switchCineFlare.isChecked = !viewBinding.switchCineFlare.isChecked
+        }
     }
 
     private fun switchCamera() {
@@ -1473,6 +1596,21 @@ class MainActivity : AppCompatActivity() {
                 // Touch to change grid! Double-tap on viewfinder cycles through composition grids
                 cycleToNextGrid()
                 return true
+            }
+
+            override fun onFling(e1: MotionEvent?, e2: MotionEvent, velocityX: Float, velocityY: Float): Boolean {
+                if (e1 == null) return false
+                val diffX = e2.x - e1.x
+                val diffY = e2.y - e1.y
+                if (Math.abs(diffX) > Math.abs(diffY) && Math.abs(diffX) > 40) {
+                    if (viewBinding.effectsStudioDrawer.visibility == View.VISIBLE || isLastActionCreative) {
+                        if (diffX < 0) navigateNextEffectOrFilter() else navigatePreviousEffectOrFilter()
+                    } else {
+                        if (diffX < 0) navigateNextCameraMode() else navigatePreviousCameraMode()
+                    }
+                    return true
+                }
+                return false
             }
         })
 

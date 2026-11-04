@@ -153,6 +153,10 @@ class FilterManager(private val context: Context) {
         gpuImage.setFilter(buildActiveFilterGroup())
     }
 
+    fun setPreset(presetName: String) {
+        applyPreset(presetName)
+    }
+
     fun applyPreset(presetName: String) {
         val preset = when (presetName.lowercase(Locale.ROOT)) {
             "cinematic" -> FilterPreset.CINEMATIC
