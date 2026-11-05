@@ -787,7 +787,6 @@
                         android:singleLine="true"
                         android:textSize="10.5sp"
                         android:textColor="#94A3B8"
-                        android:textSize="11sp"
                         android:fontFamily="monospace"
                         android:background="@drawable/bg_cinema_button_inactive" />
 
@@ -802,7 +801,6 @@
                         android:singleLine="true"
                         android:textSize="10.5sp"
                         android:textColor="#94A3B8"
-                        android:textSize="11sp"
                         android:fontFamily="monospace"
                         android:background="@drawable/bg_cinema_button_inactive" />
                 </LinearLayout>
@@ -824,7 +822,6 @@
                         android:singleLine="true"
                         android:textSize="10.5sp"
                         android:textColor="#94A3B8"
-                        android:textSize="11sp"
                         android:fontFamily="monospace"
                         android:background="@drawable/bg_cinema_button_inactive" />
 
@@ -839,7 +836,6 @@
                         android:singleLine="true"
                         android:textSize="10.5sp"
                         android:textColor="#94A3B8"
-                        android:textSize="11sp"
                         android:fontFamily="monospace"
                         android:background="@drawable/bg_cinema_button_inactive" />
 
@@ -854,7 +850,6 @@
                         android:singleLine="true"
                         android:textSize="10.5sp"
                         android:textColor="#94A3B8"
-                        android:textSize="11sp"
                         android:fontFamily="monospace"
                         android:background="@drawable/bg_cinema_button_inactive" />
                 </LinearLayout>
@@ -966,7 +961,6 @@
                         android:singleLine="true"
                         android:textSize="10.5sp"
                         android:textColor="#94A3B8"
-                        android:textSize="11sp"
                         android:fontFamily="monospace"
                         android:background="@drawable/bg_cinema_button_inactive" />
 
@@ -981,7 +975,6 @@
                         android:singleLine="true"
                         android:textSize="10.5sp"
                         android:textColor="#94A3B8"
-                        android:textSize="11sp"
                         android:fontFamily="monospace"
                         android:background="@drawable/bg_cinema_button_inactive" />
                 </LinearLayout>
@@ -1003,7 +996,6 @@
                         android:singleLine="true"
                         android:textSize="10.5sp"
                         android:textColor="#94A3B8"
-                        android:textSize="11sp"
                         android:fontFamily="monospace"
                         android:background="@drawable/bg_cinema_button_inactive" />
 
@@ -1018,7 +1010,6 @@
                         android:singleLine="true"
                         android:textSize="10.5sp"
                         android:textColor="#94A3B8"
-                        android:textSize="11sp"
                         android:fontFamily="monospace"
                         android:background="@drawable/bg_cinema_button_inactive" />
 
@@ -1033,7 +1024,6 @@
                         android:singleLine="true"
                         android:textSize="10.5sp"
                         android:textColor="#94A3B8"
-                        android:textSize="11sp"
                         android:fontFamily="monospace"
                         android:background="@drawable/bg_cinema_button_inactive" />
                 </LinearLayout>
