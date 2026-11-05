@@ -192,10 +192,10 @@
         android:gravity="center_vertical"
         android:paddingHorizontal="14dp"
         android:paddingVertical="6dp"
-        android:background="@drawable/bg_recording_badge"
-        android:visibility="gone"
+        android:background="@drawable/bg_pill_badge"
+        android:visibility="visible"
         android:elevation="20dp"
-        android:layout_marginTop="6dp"
+        android:layout_marginTop="8dp"
         app:layout_constraintTop_toBottomOf="@id/proModeBar"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent">
@@ -204,15 +204,15 @@
             android:id="@+id/recordingDot"
             android:layout_width="8dp"
             android:layout_height="8dp"
-            android:background="@drawable/bg_red_dot"
+            android:background="@drawable/bg_green_dot"
             android:layout_marginEnd="8dp" />
 
         <TextView
             android:id="@+id/tvRecordingStatus"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="STANDBY"
-            android:textColor="#94A3B8"
+            android:text="READY"
+            android:textColor="#10B981"
             android:textSize="11sp"
             android:textStyle="bold"
             android:fontFamily="monospace"
@@ -287,14 +287,14 @@
     <LinearLayout
         android:id="@+id/zoomControls"
         android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
+        android:layout_height="36dp"
         android:orientation="horizontal"
         android:gravity="center"
         android:paddingHorizontal="6dp"
-        android:paddingVertical="4dp"
-        android:background="@drawable/bg_tabs_bar"
-        android:layout_marginBottom="14dp"
-        app:layout_constraintBottom_toTopOf="@id/modeSelector"
+        android:paddingVertical="3dp"
+        android:background="@drawable/bg_pill_badge"
+        android:layout_marginBottom="12dp"
+        app:layout_constraintBottom_toTopOf="@id/modeScrollView"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent">
 
