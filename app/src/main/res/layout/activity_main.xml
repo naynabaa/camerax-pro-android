@@ -363,7 +363,7 @@
         android:scrollbars="none"
         android:overScrollMode="never"
         android:clipToPadding="false"
-        android:paddingHorizontal="140dp"
+        android:paddingHorizontal="0dp"
         android:layout_marginBottom="14dp"
         app:layout_constraintBottom_toTopOf="@id/bottomControls"
         app:layout_constraintStart_toStartOf="parent"
@@ -1855,49 +1855,83 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="76dp"
             android:layout_marginHorizontal="12dp"
-            android:paddingHorizontal="14dp"
-            android:paddingVertical="10dp"
+            android:paddingHorizontal="10dp"
+            android:paddingVertical="8dp"
             android:background="@drawable/bg_pro_drawer"
             android:orientation="horizontal"
             android:gravity="center_vertical"
-            app:layout_constraintTop_toTopOf="parent">
+            app:layout_constraintTop_toTopOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent">
 
-            <ImageView
-                android:layout_width="20dp"
-                android:layout_height="20dp"
-                android:src="@drawable/ic_sparkles"
-                app:tint="#FFC107"
-                android:layout_marginEnd="8dp" />
-
+            <!-- Category Switcher Pill: FILTERS | LENSES | EFFECTS -->
             <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_tabs_bar"
+                android:orientation="horizontal"
+                android:padding="2dp">
+
+                <TextView
+                    android:id="@+id/btnCategoryFilters"
+                    android:layout_width="wrap_content"
+                    android:layout_height="28dp"
+                    android:paddingHorizontal="10dp"
+                    android:gravity="center"
+                    android:text="FILTERS"
+                    android:textColor="#0F172A"
+                    android:textSize="9.5sp"
+                    android:textStyle="bold"
+                    android:fontFamily="monospace"
+                    android:background="@drawable/bg_cinema_button_active" />
+
+                <TextView
+                    android:id="@+id/btnCategoryLenses"
+                    android:layout_width="wrap_content"
+                    android:layout_height="28dp"
+                    android:layout_marginStart="2dp"
+                    android:paddingHorizontal="10dp"
+                    android:gravity="center"
+                    android:text="LENSES"
+                    android:textColor="#94A3B8"
+                    android:textSize="9.5sp"
+                    android:fontFamily="monospace"
+                    android:background="@drawable/bg_cinema_button_inactive" />
+
+                <TextView
+                    android:id="@+id/btnCategoryEffects"
+                    android:layout_width="wrap_content"
+                    android:layout_height="28dp"
+                    android:layout_marginStart="2dp"
+                    android:paddingHorizontal="10dp"
+                    android:gravity="center"
+                    android:text="EFFECTS"
+                    android:textColor="#94A3B8"
+                    android:textSize="9.5sp"
+                    android:fontFamily="monospace"
+                    android:background="@drawable/bg_cinema_button_inactive" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/tvEffectsActiveStatus"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:orientation="vertical">
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="CREATIVE STUDIO"
-                    android:textColor="#F8FAFC"
-                    android:textSize="12sp"
-                    android:textStyle="bold"
-                    android:fontFamily="monospace"
-                    android:letterSpacing="0.08" />
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="FILTERS · AR LENSES · TEXTURES"
-                    android:textColor="#94A3B8"
-                    android:textSize="9.5sp"
-                    android:fontFamily="monospace" />
-            </LinearLayout>
+                android:layout_marginStart="10dp"
+                android:text="FILTER: NORMAL"
+                android:textColor="#FFC107"
+                android:textSize="10sp"
+                android:textStyle="bold"
+                android:fontFamily="monospace"
+                android:gravity="center_vertical|end"
+                android:singleLine="true"
+                android:ellipsize="end" />
 
             <ImageButton
                 android:id="@+id/btnCloseEffectsDrawer"
-                android:layout_width="32dp"
-                android:layout_height="32dp"
+                android:layout_width="28dp"
+                android:layout_height="28dp"
+                android:layout_marginStart="6dp"
                 android:background="?attr/selectableItemBackgroundBorderless"
                 android:src="@drawable/ic_close"
                 app:tint="#94A3B8"
@@ -1905,45 +1939,39 @@
         </LinearLayout>
 
         <!-- Bottom Options Floating Strip (Docked directly above mode selector, leaves center 70% open!) -->
-        <ScrollView
-            android:id="@+id/scrollEffectsOptions"
+        <FrameLayout
+            android:id="@+id/layoutEffectsSubItems"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginHorizontal="12dp"
-            android:layout_marginBottom="8dp"
+            android:layout_marginBottom="145dp"
             android:background="@drawable/bg_pro_drawer"
-            android:padding="12dp"
-            android:scrollbars="none"
-            app:layout_constraintBottom_toTopOf="@id/modeScrollView">
+            android:paddingHorizontal="10dp"
+            android:paddingVertical="8dp"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent">
 
-            <LinearLayout
+            <!-- Category 1: Filters Horizontal Scroll Strip -->
+            <HorizontalScrollView
+                android:id="@+id/scrollFiltersStrip"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:orientation="vertical">
+                android:scrollbars="none"
+                android:visibility="visible">
 
-                <!-- Section Label: Color Profiles -->
-                <TextView
+                <LinearLayout
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="COLOR PROFILES &amp; SHADERS"
-                    android:textColor="#FFC107"
-                    android:textSize="10sp"
-                    android:fontFamily="monospace"
-                    android:textStyle="bold"
-                    android:letterSpacing="0.08"
-                    android:layout_marginBottom="6dp" />
-
-                <!-- Row 1: Filters (Normal, Cinema, Vintage) -->
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="40dp"
-                    android:orientation="horizontal">
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
 
                     <TextView
                         android:id="@+id/btnFilterNormal"
-                        android:layout_width="0dp"
-                        android:layout_height="match_parent"
-                        android:layout_weight="1"
+                        android:layout_width="wrap_content"
+                        android:minWidth="80dp"
+                        android:layout_height="36dp"
+                        android:paddingHorizontal="12dp"
                         android:gravity="center"
                         android:text="NORMAL"
                         android:textColor="#0F172A"
@@ -1954,10 +1982,11 @@
 
                     <TextView
                         android:id="@+id/btnFilterCinematic"
-                        android:layout_width="0dp"
-                        android:layout_height="match_parent"
-                        android:layout_weight="1"
+                        android:layout_width="wrap_content"
+                        android:minWidth="80dp"
+                        android:layout_height="36dp"
                         android:layout_marginStart="6dp"
+                        android:paddingHorizontal="12dp"
                         android:gravity="center"
                         android:text="CINEMA"
                         android:textColor="#94A3B8"
@@ -1967,30 +1996,25 @@
 
                     <TextView
                         android:id="@+id/btnFilterVintage"
-                        android:layout_width="0dp"
-                        android:layout_height="match_parent"
-                        android:layout_weight="1"
+                        android:layout_width="wrap_content"
+                        android:minWidth="80dp"
+                        android:layout_height="36dp"
                         android:layout_marginStart="6dp"
+                        android:paddingHorizontal="12dp"
                         android:gravity="center"
                         android:text="VINTAGE"
                         android:textColor="#94A3B8"
                         android:textSize="10.5sp"
                         android:fontFamily="monospace"
                         android:background="@drawable/bg_cinema_button_inactive" />
-                </LinearLayout>
-
-                <!-- Row 2: Filters (B&W, Cyber, HDR) -->
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="40dp"
-                    android:orientation="horizontal"
-                    android:layout_marginTop="6dp">
 
                     <TextView
                         android:id="@+id/btnFilterBW"
-                        android:layout_width="0dp"
-                        android:layout_height="match_parent"
-                        android:layout_weight="1"
+                        android:layout_width="wrap_content"
+                        android:minWidth="80dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="6dp"
+                        android:paddingHorizontal="12dp"
                         android:gravity="center"
                         android:text="MONO B&amp;W"
                         android:textColor="#94A3B8"
@@ -2000,10 +2024,11 @@
 
                     <TextView
                         android:id="@+id/btnFilterCyber"
-                        android:layout_width="0dp"
-                        android:layout_height="match_parent"
-                        android:layout_weight="1"
+                        android:layout_width="wrap_content"
+                        android:minWidth="80dp"
+                        android:layout_height="36dp"
                         android:layout_marginStart="6dp"
+                        android:paddingHorizontal="12dp"
                         android:gravity="center"
                         android:text="CYBERPUNK"
                         android:textColor="#94A3B8"
@@ -2013,10 +2038,11 @@
 
                     <TextView
                         android:id="@+id/btnFilterHDR"
-                        android:layout_width="0dp"
-                        android:layout_height="match_parent"
-                        android:layout_weight="1"
+                        android:layout_width="wrap_content"
+                        android:minWidth="80dp"
+                        android:layout_height="36dp"
                         android:layout_marginStart="6dp"
+                        android:paddingHorizontal="12dp"
                         android:gravity="center"
                         android:text="VIVID HDR"
                         android:textColor="#94A3B8"
@@ -2024,31 +2050,28 @@
                         android:fontFamily="monospace"
                         android:background="@drawable/bg_cinema_button_inactive" />
                 </LinearLayout>
+            </HorizontalScrollView>
 
-                <!-- Section Label: AR Lenses -->
-                <TextView
+            <!-- Category 2: AR Face Lenses Horizontal Scroll Strip -->
+            <HorizontalScrollView
+                android:id="@+id/scrollLensesStrip"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:scrollbars="none"
+                android:visibility="gone">
+
+                <LinearLayout
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="AR FACE LENSES &amp; TRACKING"
-                    android:textColor="#FFC107"
-                    android:textSize="10sp"
-                    android:fontFamily="monospace"
-                    android:textStyle="bold"
-                    android:letterSpacing="0.08"
-                    android:layout_marginTop="10dp"
-                    android:layout_marginBottom="6dp" />
-
-                <!-- Row 3: AR Face Lenses (Off, 3D Mesh, Visor, Tiara, HUD) -->
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="38dp"
-                    android:orientation="horizontal">
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
 
                     <TextView
                         android:id="@+id/btnArNone"
-                        android:layout_width="0dp"
-                        android:layout_height="match_parent"
-                        android:layout_weight="1"
+                        android:layout_width="wrap_content"
+                        android:minWidth="76dp"
+                        android:layout_height="36dp"
+                        android:paddingHorizontal="12dp"
                         android:gravity="center"
                         android:text="OFF"
                         android:textColor="#0F172A"
@@ -2059,12 +2082,13 @@
 
                     <TextView
                         android:id="@+id/btnArMesh"
-                        android:layout_width="0dp"
-                        android:layout_height="match_parent"
-                        android:layout_weight="1"
-                        android:layout_marginStart="4dp"
+                        android:layout_width="wrap_content"
+                        android:minWidth="76dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="6dp"
+                        android:paddingHorizontal="12dp"
                         android:gravity="center"
-                        android:text="MESH"
+                        android:text="3D MESH"
                         android:textColor="#94A3B8"
                         android:textSize="10sp"
                         android:fontFamily="monospace"
@@ -2072,10 +2096,11 @@
 
                     <TextView
                         android:id="@+id/btnArVisor"
-                        android:layout_width="0dp"
-                        android:layout_height="match_parent"
-                        android:layout_weight="1"
-                        android:layout_marginStart="4dp"
+                        android:layout_width="wrap_content"
+                        android:minWidth="76dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="6dp"
+                        android:paddingHorizontal="12dp"
                         android:gravity="center"
                         android:text="CYBER"
                         android:textColor="#94A3B8"
@@ -2085,10 +2110,11 @@
 
                     <TextView
                         android:id="@+id/btnArCrown"
-                        android:layout_width="0dp"
-                        android:layout_height="match_parent"
-                        android:layout_weight="1"
-                        android:layout_marginStart="4dp"
+                        android:layout_width="wrap_content"
+                        android:minWidth="76dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="6dp"
+                        android:paddingHorizontal="12dp"
                         android:gravity="center"
                         android:text="TIARA"
                         android:textColor="#94A3B8"
@@ -2098,10 +2124,11 @@
 
                     <TextView
                         android:id="@+id/btnArHud"
-                        android:layout_width="0dp"
-                        android:layout_height="match_parent"
-                        android:layout_weight="1"
-                        android:layout_marginStart="4dp"
+                        android:layout_width="wrap_content"
+                        android:minWidth="76dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="6dp"
+                        android:paddingHorizontal="12dp"
                         android:gravity="center"
                         android:text="HUD"
                         android:textColor="#94A3B8"
@@ -2109,43 +2136,39 @@
                         android:fontFamily="monospace"
                         android:background="@drawable/bg_cinema_button_inactive" />
                 </LinearLayout>
+            </HorizontalScrollView>
 
-                <!-- Section Label: Texture Effects -->
-                <TextView
+            <!-- Category 3: Cinema Texture Effects Strip -->
+            <HorizontalScrollView
+                android:id="@+id/scrollEffectsStrip"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:scrollbars="none"
+                android:visibility="gone">
+
+                <LinearLayout
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="CINEMA TEXTURE EFFECTS"
-                    android:textColor="#FFC107"
-                    android:textSize="10sp"
-                    android:fontFamily="monospace"
-                    android:textStyle="bold"
-                    android:letterSpacing="0.08"
-                    android:layout_marginTop="10dp"
-                    android:layout_marginBottom="6dp" />
-
-                <!-- Live Texture Effects Card -->
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="vertical"
-                    android:background="@drawable/bg_card_cinema"
-                    android:padding="12dp">
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
 
                     <LinearLayout
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
+                        android:layout_width="wrap_content"
+                        android:layout_height="36dp"
+                        android:background="@drawable/bg_card_cinema"
                         android:orientation="horizontal"
-                        android:gravity="center_vertical">
+                        android:gravity="center_vertical"
+                        android:paddingHorizontal="10dp">
 
                         <TextView
-                            android:layout_width="0dp"
+                            android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:layout_weight="1"
                             android:text="35mm Film Grain"
                             android:textColor="#F1F5F9"
-                            android:textSize="11.5sp"
+                            android:textSize="10.5sp"
                             android:fontFamily="monospace"
-                            android:textStyle="bold" />
+                            android:textStyle="bold"
+                            android:layout_marginEnd="8dp" />
 
                         <androidx.appcompat.widget.SwitchCompat
                             android:id="@+id/switchFilmGrain"
@@ -2156,21 +2179,23 @@
                     </LinearLayout>
 
                     <LinearLayout
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
+                        android:layout_width="wrap_content"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="6dp"
+                        android:background="@drawable/bg_card_cinema"
                         android:orientation="horizontal"
                         android:gravity="center_vertical"
-                        android:layout_marginTop="8dp">
+                        android:paddingHorizontal="10dp">
 
                         <TextView
-                            android:layout_width="0dp"
+                            android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:layout_weight="1"
-                            android:text="Retro 90s Timestamp"
+                            android:text="Retro 90s Stamp"
                             android:textColor="#F1F5F9"
-                            android:textSize="11.5sp"
+                            android:textSize="10.5sp"
                             android:fontFamily="monospace"
-                            android:textStyle="bold" />
+                            android:textStyle="bold"
+                            android:layout_marginEnd="8dp" />
 
                         <androidx.appcompat.widget.SwitchCompat
                             android:id="@+id/switchDateStamp"
@@ -2181,21 +2206,23 @@
                     </LinearLayout>
 
                     <LinearLayout
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
+                        android:layout_width="wrap_content"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="6dp"
+                        android:background="@drawable/bg_card_cinema"
                         android:orientation="horizontal"
                         android:gravity="center_vertical"
-                        android:layout_marginTop="8dp">
+                        android:paddingHorizontal="10dp">
 
                         <TextView
-                            android:layout_width="0dp"
+                            android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:layout_weight="1"
-                            android:text="Anamorphic Blue Flare"
+                            android:text="Blue Flare"
                             android:textColor="#F1F5F9"
-                            android:textSize="11.5sp"
+                            android:textSize="10.5sp"
                             android:fontFamily="monospace"
-                            android:textStyle="bold" />
+                            android:textStyle="bold"
+                            android:layout_marginEnd="8dp" />
 
                         <androidx.appcompat.widget.SwitchCompat
                             android:id="@+id/switchCineFlare"
@@ -2205,8 +2232,8 @@
                             app:trackTint="#475569" />
                     </LinearLayout>
                 </LinearLayout>
-            </LinearLayout>
-        </ScrollView>
+            </HorizontalScrollView>
+        </FrameLayout>
     </androidx.constraintlayout.widget.ConstraintLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>

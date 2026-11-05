@@ -4,6 +4,8 @@ import android.Manifest
 import android.content.ContentValues
 import android.content.pm.PackageManager
 import android.graphics.Color
+import android.graphics.Rect
+import android.graphics.Typeface
 import android.os.Build
 import android.os.Bundle
 import android.os.CountDownTimer
@@ -187,6 +189,8 @@ class MainActivity : AppCompatActivity() {
         setupBurstMode()
         setupExposureSlider()
         setupFilterAndArControls()
+        selectCreativeCategory(CreativeTarget.FILTERS)
+        viewBinding.modeScrollView.post { centerModeTab(cameraMode, smooth = false) }
 
         if (allPermissionsGranted()) {
             startCamera()
@@ -246,11 +250,17 @@ class MainActivity : AppCompatActivity() {
             viewBinding.effectsStudioDrawer.visibility = if (isVisible) View.GONE else View.VISIBLE
             if (!isVisible) {
                 viewBinding.proStudioDrawer.visibility = View.GONE
+                selectCreativeCategory(currentCreativeTarget)
             }
         }
         viewBinding.btnCloseEffectsDrawer.setOnClickListener {
             viewBinding.effectsStudioDrawer.visibility = View.GONE
         }
+
+        // Creative Drawer Category Switcher Buttons (FILTERS, LENSES, EFFECTS)
+        viewBinding.btnCategoryFilters.setOnClickListener { selectCreativeCategory(CreativeTarget.FILTERS) }
+        viewBinding.btnCategoryLenses.setOnClickListener { selectCreativeCategory(CreativeTarget.LENSES) }
+        viewBinding.btnCategoryEffects.setOnClickListener { selectCreativeCategory(CreativeTarget.EFFECTS) }
 
         // Top Toolbar: Self-Timer Toggle (Photo Mode)
         viewBinding.btnTimer.setOnClickListener { cycleCountdownTimer() }
@@ -915,6 +925,39 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun selectCreativeCategory(target: CreativeTarget) {
+        currentCreativeTarget = target
+        isLastActionCreative = true
+
+        val isFilter = target == CreativeTarget.FILTERS
+        val isLens = target == CreativeTarget.LENSES
+        val isEffect = target == CreativeTarget.EFFECTS
+
+        viewBinding.btnCategoryFilters.setBackgroundResource(if (isFilter) R.drawable.bg_cinema_button_active else R.drawable.bg_cinema_button_inactive)
+        viewBinding.btnCategoryFilters.setTextColor(Color.parseColor(if (isFilter) "#0F172A" else "#94A3B8"))
+
+        viewBinding.btnCategoryLenses.setBackgroundResource(if (isLens) R.drawable.bg_cinema_button_active else R.drawable.bg_cinema_button_inactive)
+        viewBinding.btnCategoryLenses.setTextColor(Color.parseColor(if (isLens) "#0F172A" else "#94A3B8"))
+
+        viewBinding.btnCategoryEffects.setBackgroundResource(if (isEffect) R.drawable.bg_cinema_button_active else R.drawable.bg_cinema_button_inactive)
+        viewBinding.btnCategoryEffects.setTextColor(Color.parseColor(if (isEffect) "#0F172A" else "#94A3B8"))
+
+        viewBinding.scrollFiltersStrip.visibility = if (isFilter) View.VISIBLE else View.GONE
+        viewBinding.scrollLensesStrip.visibility = if (isLens) View.VISIBLE else View.GONE
+        viewBinding.scrollEffectsStrip.visibility = if (isEffect) View.VISIBLE else View.GONE
+
+        updateCreativeStatusUI()
+    }
+
+    private fun updateCreativeStatusUI() {
+        val statusText = when (currentCreativeTarget) {
+            CreativeTarget.FILTERS -> "FILTER: " + currentFilterName.uppercase(Locale.ROOT)
+            CreativeTarget.LENSES -> "LENS: " + currentArLensName.replace("_", " ").uppercase(Locale.ROOT)
+            CreativeTarget.EFFECTS -> "TEXTURES: LIVE"
+        }
+        viewBinding.tvEffectsActiveStatus.text = statusText
+    }
+
     private fun setFilterPreset(preset: String) {
         currentFilterName = preset
         currentCreativeTarget = CreativeTarget.FILTERS
@@ -946,6 +989,7 @@ class MainActivity : AppCompatActivity() {
                 btn.setTextColor(Color.parseColor("#94A3B8"))
             }
         }
+        updateCreativeStatusUI()
         // silent (no popup)
     }
 
@@ -970,6 +1014,7 @@ class MainActivity : AppCompatActivity() {
                 btn.setTextColor(Color.parseColor("#94A3B8"))
             }
         }
+        updateCreativeStatusUI()
         // silent (no popup)
     }
 
@@ -1404,7 +1449,8 @@ class MainActivity : AppCompatActivity() {
         )
         for ((tab, m) in modeTabs) {
             val isActive = m == mode
-            tab.setTextColor(if (isActive) Color.parseColor("#FACC15") else Color.parseColor("#64748B"))
+            tab.setTextColor(if (isActive) Color.parseColor("#FFC107") else Color.parseColor("#94A3B8"))
+            tab.setTypeface(null, if (isActive) Typeface.BOLD else Typeface.NORMAL)
         }
 
         val isVideoType = mode == CameraMode.VIDEO || mode == CameraMode.SLOW_MO
@@ -1433,19 +1479,43 @@ class MainActivity : AppCompatActivity() {
             val modeToast = if (mode == CameraMode.SLOW_MO) "Slow-Motion Mode: 120 FPS high-frame-rate" else "Video Mode: Studio Recording"
             // silent (no popup)
         }
-        val activeTab = when (mode) {
-            CameraMode.SLOW_MO -> viewBinding.tabSlowMo
-            CameraMode.VIDEO -> viewBinding.tabVideo
-            CameraMode.PHOTO -> viewBinding.tabPhoto
-            CameraMode.PORTRAIT -> viewBinding.tabPortrait
-            CameraMode.NIGHT -> viewBinding.tabNight
-        }
-        viewBinding.modeScrollView.post {
-            val scrollX = activeTab.left + (activeTab.width / 2) - (viewBinding.modeScrollView.width / 2)
-            viewBinding.modeScrollView.smoothScrollTo(Math.max(0, scrollX), 0)
-        }
+
+        centerModeTab(mode, smooth = true)
 
         bindCameraUseCases()
+    }
+
+    private fun centerModeTab(mode: CameraMode, smooth: Boolean = true) {
+        viewBinding.modeScrollView.post {
+            val scrollViewWidth = viewBinding.modeScrollView.width
+            if (scrollViewWidth <= 0) return@post
+
+            val firstTab = viewBinding.tabSlowMo
+            val lastTab = viewBinding.tabNight
+            val leftPad = (scrollViewWidth / 2) - (firstTab.width / 2)
+            val rightPad = (scrollViewWidth / 2) - (lastTab.width / 2)
+
+            if (viewBinding.modeSelector.paddingLeft != leftPad || viewBinding.modeSelector.paddingRight != rightPad) {
+                viewBinding.modeSelector.setPadding(Math.max(0, leftPad), 0, Math.max(0, rightPad), 0)
+            }
+
+            val activeTab = when (mode) {
+                CameraMode.SLOW_MO -> viewBinding.tabSlowMo
+                CameraMode.VIDEO -> viewBinding.tabVideo
+                CameraMode.PHOTO -> viewBinding.tabPhoto
+                CameraMode.PORTRAIT -> viewBinding.tabPortrait
+                CameraMode.NIGHT -> viewBinding.tabNight
+            }
+
+            val targetCenter = activeTab.left + (activeTab.width / 2)
+            val targetScrollX = targetCenter - (scrollViewWidth / 2)
+
+            if (smooth) {
+                viewBinding.modeScrollView.smoothScrollTo(targetScrollX, 0)
+            } else {
+                viewBinding.modeScrollView.scrollTo(targetScrollX, 0)
+            }
+        }
     }
 
 
@@ -1665,6 +1735,67 @@ class MainActivity : AppCompatActivity() {
             override fun onStartTrackingTouch(sb: SeekBar?) {}
             override fun onStopTrackingTouch(sb: SeekBar?) {}
         })
+    }
+
+    private var touchDownX = 0f
+    private var touchDownY = 0f
+    private var touchDownTime = 0L
+
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        when (ev.action) {
+            MotionEvent.ACTION_DOWN -> {
+                touchDownX = ev.rawX
+                touchDownY = ev.rawY
+                touchDownTime = SystemClock.uptimeMillis()
+
+                // 1. Touch outside to close Effects Studio Drawer
+                if (viewBinding.effectsStudioDrawer.visibility == View.VISIBLE) {
+                    val headerRect = Rect()
+                    viewBinding.layoutEffectsHeader.getGlobalVisibleRect(headerRect)
+                    val subItemsRect = Rect()
+                    viewBinding.layoutEffectsSubItems.getGlobalVisibleRect(subItemsRect)
+                    val x = ev.rawX.toInt()
+                    val y = ev.rawY.toInt()
+
+                    if (!headerRect.contains(x, y) && !subItemsRect.contains(x, y)) {
+                        viewBinding.effectsStudioDrawer.visibility = View.GONE
+                        return true
+                    }
+                }
+
+                // 2. Touch outside to close Pro Studio Drawer
+                if (viewBinding.proStudioDrawer.visibility == View.VISIBLE) {
+                    val proDrawerRect = Rect()
+                    viewBinding.proStudioDrawer.getGlobalVisibleRect(proDrawerRect)
+                    val x = ev.rawX.toInt()
+                    val y = ev.rawY.toInt()
+
+                    if (!proDrawerRect.contains(x, y)) {
+                        viewBinding.proStudioDrawer.visibility = View.GONE
+                        return true
+                    }
+                }
+            }
+            MotionEvent.ACTION_UP -> {
+                val diffX = ev.rawX - touchDownX
+                val diffY = ev.rawY - touchDownY
+                val duration = SystemClock.uptimeMillis() - touchDownTime
+
+                // 3. Reliable horizontal swipe gesture across screen
+                if (Math.abs(diffX) > 70 && Math.abs(diffX) > Math.abs(diffY) * 1.25f && duration < 700) {
+                    val isViewfinderOrModeArea = touchDownY > 120 && touchDownY < (viewBinding.root.height - 120)
+                    if (isViewfinderOrModeArea) {
+                        if (viewBinding.effectsStudioDrawer.visibility == View.VISIBLE || isLastActionCreative) {
+                            if (diffX < 0) navigateNextEffectOrFilter() else navigatePreviousEffectOrFilter()
+                        } else {
+                            if (diffX < 0) navigateNextCameraMode() else navigatePreviousCameraMode()
+                        }
+                        return true
+                    }
+                }
+            }
+        }
+        return super.dispatchTouchEvent(ev)
     }
 
     override fun onDestroy() {
