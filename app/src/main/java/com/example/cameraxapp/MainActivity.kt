@@ -15,9 +15,11 @@ import android.os.SystemClock
 import android.provider.MediaStore
 import android.util.Log
 import android.view.GestureDetector
+import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.view.View
+import android.view.animation.DecelerateInterpolator
 import android.widget.Chronometer
 import android.widget.FrameLayout
 import android.widget.ImageButton
@@ -231,7 +233,14 @@ class MainActivity : AppCompatActivity() {
         // Bottom-Left Gallery Button Listener
         viewBinding.btnGallery.setOnClickListener { openSystemGallery() }
 
-        // Mode Switcher: 5 Sliding Cinema Modes
+        // Mode Switcher: 5-Slot Infinite Rotating Carousel (Stationary center highlighter, endless rotation)
+        viewBinding.tabSlotFarLeft.setOnClickListener { if (recording == null) navigatePreviousCameraMode() }
+        viewBinding.tabSlotLeft.setOnClickListener { if (recording == null) navigatePreviousCameraMode() }
+        viewBinding.tabSlotRight.setOnClickListener { if (recording == null) navigateNextCameraMode() }
+        viewBinding.tabSlotFarRight.setOnClickListener { if (recording == null) navigateNextCameraMode() }
+        viewBinding.tabSlotCenter.setOnClickListener {
+            window.decorView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+        }
         viewBinding.tabSlowMo.setOnClickListener { setMode(CameraMode.SLOW_MO) }
         viewBinding.tabVideo.setOnClickListener { setMode(CameraMode.VIDEO) }
         viewBinding.tabPhoto.setOnClickListener { setMode(CameraMode.PHOTO) }
@@ -255,6 +264,11 @@ class MainActivity : AppCompatActivity() {
         }
         viewBinding.btnCloseEffectsDrawer.setOnClickListener {
             viewBinding.effectsStudioDrawer.visibility = View.GONE
+            window.decorView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+        }
+        viewBinding.effectsDrawerBackdrop.setOnClickListener {
+            viewBinding.effectsStudioDrawer.visibility = View.GONE
+            window.decorView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
         }
 
         // Creative Drawer Category Switcher Buttons (FILTERS, LENSES, EFFECTS)
@@ -1434,12 +1448,37 @@ class MainActivity : AppCompatActivity() {
         )
     }
 
-    private fun setMode(mode: CameraMode) {
-        if (recording != null) return
-        cameraMode = mode
-        isLastActionCreative = false
+    private val allCameraModes = listOf(
+        CameraMode.SLOW_MO,
+        CameraMode.VIDEO,
+        CameraMode.PHOTO,
+        CameraMode.PORTRAIT,
+        CameraMode.NIGHT
+    )
 
-        // Smoothly highlight active mode and mute others
+    private fun getModeLabel(mode: CameraMode): String = when (mode) {
+        CameraMode.SLOW_MO -> "SLOW-MO"
+        CameraMode.VIDEO -> "VIDEO"
+        CameraMode.PHOTO -> "PHOTO"
+        CameraMode.PORTRAIT -> "PORTRAIT"
+        CameraMode.NIGHT -> "NIGHT"
+    }
+
+    private fun updateModeCarouselSlots(animated: Boolean = true, slideDirection: Int = 0) {
+        val curIdx = allCameraModes.indexOf(cameraMode)
+        val farLeftMode = allCameraModes[(curIdx - 2 + 50) % 5]
+        val leftMode = allCameraModes[(curIdx - 1 + 50) % 5]
+        val centerMode = allCameraModes[curIdx]
+        val rightMode = allCameraModes[(curIdx + 1) % 5]
+        val farRightMode = allCameraModes[(curIdx + 2) % 5]
+
+        viewBinding.tabSlotFarLeft.text = getModeLabel(farLeftMode)
+        viewBinding.tabSlotLeft.text = getModeLabel(leftMode)
+        viewBinding.tabSlotCenter.text = getModeLabel(centerMode)
+        viewBinding.tabSlotRight.text = getModeLabel(rightMode)
+        viewBinding.tabSlotFarRight.text = getModeLabel(farRightMode)
+
+        // Legacy compatibility
         val modeTabs = listOf(
             viewBinding.tabSlowMo to CameraMode.SLOW_MO,
             viewBinding.tabVideo to CameraMode.VIDEO,
@@ -1448,10 +1487,30 @@ class MainActivity : AppCompatActivity() {
             viewBinding.tabNight to CameraMode.NIGHT
         )
         for ((tab, m) in modeTabs) {
-            val isActive = m == mode
+            val isActive = m == cameraMode
             tab.setTextColor(if (isActive) Color.parseColor("#FFC107") else Color.parseColor("#94A3B8"))
             tab.setTypeface(null, if (isActive) Typeface.BOLD else Typeface.NORMAL)
         }
+
+        if (animated && slideDirection != 0) {
+            val startX = if (slideDirection > 0) 50f else -50f
+            viewBinding.modeSelector.translationX = startX
+            viewBinding.modeSelector.animate()
+                .translationX(0f)
+                .setDuration(160)
+                .setInterpolator(DecelerateInterpolator())
+                .start()
+        } else {
+            viewBinding.modeSelector.translationX = 0f
+        }
+    }
+
+    private fun setMode(mode: CameraMode, slideDirection: Int = 0) {
+        if (recording != null) return
+        cameraMode = mode
+        isLastActionCreative = false
+
+        updateModeCarouselSlots(animated = true, slideDirection = slideDirection)
 
         val isVideoType = mode == CameraMode.VIDEO || mode == CameraMode.SLOW_MO
         if (!isVideoType) {
@@ -1460,12 +1519,6 @@ class MainActivity : AppCompatActivity() {
             viewBinding.btnPauseResume.visibility = View.GONE
             viewBinding.layoutBtnTimer.visibility = View.VISIBLE
             viewBinding.btnAutoLoop.visibility = View.GONE
-            val modeToast = when (mode) {
-                CameraMode.PORTRAIT -> "Portrait Mode: Soft Bokeh Depth active"
-                CameraMode.NIGHT -> "Night Mode: Low-Light Long Exposure active"
-                else -> "Photo Mode: Single & Burst ready"
-            }
-            // silent (no popup)
         } else {
             viewBinding.btnCapture.setImageResource(R.drawable.bg_record_button_idle)
             viewBinding.layoutBtnTimer.visibility = View.GONE
@@ -1476,48 +1529,14 @@ class MainActivity : AppCompatActivity() {
             viewBinding.recordingDot.visibility = View.GONE
             viewBinding.chronometer.text = "00:00:00"
             updateAutoLoopHud()
-            val modeToast = if (mode == CameraMode.SLOW_MO) "Slow-Motion Mode: 120 FPS high-frame-rate" else "Video Mode: Studio Recording"
-            // silent (no popup)
         }
-
-        centerModeTab(mode, smooth = true)
 
         bindCameraUseCases()
     }
 
     private fun centerModeTab(mode: CameraMode, smooth: Boolean = true) {
-        viewBinding.modeScrollView.post {
-            val scrollViewWidth = viewBinding.modeScrollView.width
-            if (scrollViewWidth <= 0) return@post
-
-            val firstTab = viewBinding.tabSlowMo
-            val lastTab = viewBinding.tabNight
-            val leftPad = (scrollViewWidth / 2) - (firstTab.width / 2)
-            val rightPad = (scrollViewWidth / 2) - (lastTab.width / 2)
-
-            if (viewBinding.modeSelector.paddingLeft != leftPad || viewBinding.modeSelector.paddingRight != rightPad) {
-                viewBinding.modeSelector.setPadding(Math.max(0, leftPad), 0, Math.max(0, rightPad), 0)
-            }
-
-            val activeTab = when (mode) {
-                CameraMode.SLOW_MO -> viewBinding.tabSlowMo
-                CameraMode.VIDEO -> viewBinding.tabVideo
-                CameraMode.PHOTO -> viewBinding.tabPhoto
-                CameraMode.PORTRAIT -> viewBinding.tabPortrait
-                CameraMode.NIGHT -> viewBinding.tabNight
-            }
-
-            val targetCenter = activeTab.left + (activeTab.width / 2)
-            val targetScrollX = targetCenter - (scrollViewWidth / 2)
-
-            if (smooth) {
-                viewBinding.modeScrollView.smoothScrollTo(targetScrollX, 0)
-            } else {
-                viewBinding.modeScrollView.scrollTo(targetScrollX, 0)
-            }
-        }
+        updateModeCarouselSlots(animated = smooth, slideDirection = 0)
     }
-
 
     private fun openSystemGallery() {
         try {
@@ -1539,17 +1558,19 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun navigateNextCameraMode() {
-        val modes = listOf(CameraMode.SLOW_MO, CameraMode.VIDEO, CameraMode.PHOTO, CameraMode.PORTRAIT, CameraMode.NIGHT)
-        val currentIndex = modes.indexOf(cameraMode)
-        val nextIndex = (currentIndex + 1) % modes.size
-        setMode(modes[nextIndex])
+        if (recording != null) return
+        val currentIndex = allCameraModes.indexOf(cameraMode)
+        val nextIndex = (currentIndex + 1) % allCameraModes.size
+        setMode(allCameraModes[nextIndex], slideDirection = 1)
+        window.decorView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
     }
 
     private fun navigatePreviousCameraMode() {
-        val modes = listOf(CameraMode.SLOW_MO, CameraMode.VIDEO, CameraMode.PHOTO, CameraMode.PORTRAIT, CameraMode.NIGHT)
-        val currentIndex = modes.indexOf(cameraMode)
-        val prevIndex = if (currentIndex <= 0) modes.size - 1 else currentIndex - 1
-        setMode(modes[prevIndex])
+        if (recording != null) return
+        val currentIndex = allCameraModes.indexOf(cameraMode)
+        val prevIndex = if (currentIndex <= 0) allCameraModes.size - 1 else currentIndex - 1
+        setMode(allCameraModes[prevIndex], slideDirection = -1)
+        window.decorView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
     }
 
     private fun navigateNextEffectOrFilter() {
@@ -1667,21 +1688,6 @@ class MainActivity : AppCompatActivity() {
                 cycleToNextGrid()
                 return true
             }
-
-            override fun onFling(e1: MotionEvent?, e2: MotionEvent, velocityX: Float, velocityY: Float): Boolean {
-                if (e1 == null) return false
-                val diffX = e2.x - e1.x
-                val diffY = e2.y - e1.y
-                if (Math.abs(diffX) > Math.abs(diffY) && Math.abs(diffX) > 40) {
-                    if (viewBinding.effectsStudioDrawer.visibility == View.VISIBLE || isLastActionCreative) {
-                        if (diffX < 0) navigateNextEffectOrFilter() else navigatePreviousEffectOrFilter()
-                    } else {
-                        if (diffX < 0) navigateNextCameraMode() else navigatePreviousCameraMode()
-                    }
-                    return true
-                }
-                return false
-            }
         })
 
         viewBinding.proOverlayView.setOnTouchListener { view, event ->
@@ -1740,6 +1746,7 @@ class MainActivity : AppCompatActivity() {
     private var touchDownX = 0f
     private var touchDownY = 0f
     private var touchDownTime = 0L
+    private var isSwipeConsumed = false
 
     override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
         when (ev.action) {
@@ -1747,6 +1754,10 @@ class MainActivity : AppCompatActivity() {
                 touchDownX = ev.rawX
                 touchDownY = ev.rawY
                 touchDownTime = SystemClock.uptimeMillis()
+                isSwipeConsumed = false
+
+                val x = ev.rawX.toInt()
+                val y = ev.rawY.toInt()
 
                 // 1. Touch outside to close Effects Studio Drawer
                 if (viewBinding.effectsStudioDrawer.visibility == View.VISIBLE) {
@@ -1754,11 +1765,10 @@ class MainActivity : AppCompatActivity() {
                     viewBinding.layoutEffectsHeader.getGlobalVisibleRect(headerRect)
                     val subItemsRect = Rect()
                     viewBinding.layoutEffectsSubItems.getGlobalVisibleRect(subItemsRect)
-                    val x = ev.rawX.toInt()
-                    val y = ev.rawY.toInt()
 
                     if (!headerRect.contains(x, y) && !subItemsRect.contains(x, y)) {
                         viewBinding.effectsStudioDrawer.visibility = View.GONE
+                        window.decorView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                         return true
                     }
                 }
@@ -1767,30 +1777,50 @@ class MainActivity : AppCompatActivity() {
                 if (viewBinding.proStudioDrawer.visibility == View.VISIBLE) {
                     val proDrawerRect = Rect()
                     viewBinding.proStudioDrawer.getGlobalVisibleRect(proDrawerRect)
-                    val x = ev.rawX.toInt()
-                    val y = ev.rawY.toInt()
-
                     if (!proDrawerRect.contains(x, y)) {
                         viewBinding.proStudioDrawer.visibility = View.GONE
+                        window.decorView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                         return true
                     }
                 }
             }
-            MotionEvent.ACTION_UP -> {
-                val diffX = ev.rawX - touchDownX
-                val diffY = ev.rawY - touchDownY
-                val duration = SystemClock.uptimeMillis() - touchDownTime
-
-                // 3. Reliable horizontal swipe gesture across screen
-                if (Math.abs(diffX) > 70 && Math.abs(diffX) > Math.abs(diffY) * 1.25f && duration < 700) {
-                    val isViewfinderOrModeArea = touchDownY > 120 && touchDownY < (viewBinding.root.height - 120)
-                    if (isViewfinderOrModeArea) {
-                        if (viewBinding.effectsStudioDrawer.visibility == View.VISIBLE || isLastActionCreative) {
-                            if (diffX < 0) navigateNextEffectOrFilter() else navigatePreviousEffectOrFilter()
-                        } else {
-                            if (diffX < 0) navigateNextCameraMode() else navigatePreviousCameraMode()
+            MotionEvent.ACTION_MOVE -> {
+                if (!isSwipeConsumed && recording == null) {
+                    val dx = ev.rawX - touchDownX
+                    val dy = ev.rawY - touchDownY
+                    // Natural human swipe detection with curved thumb tolerance
+                    if (Math.abs(dx) > 65 && Math.abs(dx) > Math.abs(dy) * 1.05f) {
+                        val isViewfinderOrModeArea = touchDownY > 120 && touchDownY < (viewBinding.root.height - 120)
+                        if (isViewfinderOrModeArea) {
+                            isSwipeConsumed = true
+                            if (viewBinding.effectsStudioDrawer.visibility == View.VISIBLE || isLastActionCreative) {
+                                if (dx < 0) navigateNextEffectOrFilter() else navigatePreviousEffectOrFilter()
+                            } else {
+                                if (dx < 0) navigateNextCameraMode() else navigatePreviousCameraMode()
+                            }
+                            return true
                         }
-                        return true
+                    }
+                }
+            }
+            MotionEvent.ACTION_UP -> {
+                if (!isSwipeConsumed && recording == null) {
+                    val diffX = ev.rawX - touchDownX
+                    val diffY = ev.rawY - touchDownY
+                    val duration = SystemClock.uptimeMillis() - touchDownTime
+
+                    // Quick flick gesture support
+                    if (Math.abs(diffX) > 40 && Math.abs(diffX) > Math.abs(diffY) * 0.95f && duration < 900) {
+                        val isViewfinderOrModeArea = touchDownY > 120 && touchDownY < (viewBinding.root.height - 120)
+                        if (isViewfinderOrModeArea) {
+                            isSwipeConsumed = true
+                            if (viewBinding.effectsStudioDrawer.visibility == View.VISIBLE || isLastActionCreative) {
+                                if (diffX < 0) navigateNextEffectOrFilter() else navigatePreviousEffectOrFilter()
+                            } else {
+                                if (diffX < 0) navigateNextCameraMode() else navigatePreviousCameraMode()
+                            }
+                            return true
+                        }
                     }
                 }
             }
