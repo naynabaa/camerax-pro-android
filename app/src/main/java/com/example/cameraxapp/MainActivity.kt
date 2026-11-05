@@ -973,11 +973,6 @@ class MainActivity : AppCompatActivity() {
         // silent (no popup)
     }
 
-    private fun setupFilterAndArControls() {
-        setFilterPreset("normal")
-        setArLens("none")
-    }
-
     private fun toggleProDrawer() {
         val isVisible = viewBinding.proStudioDrawer.visibility == View.VISIBLE
         viewBinding.proStudioDrawer.visibility = if (isVisible) View.GONE else View.VISIBLE
@@ -1643,6 +1638,9 @@ class MainActivity : AppCompatActivity() {
      * 6. Real-Time Filter & Image Adjustment Controls
      */
     private fun setupFilterAndArControls() {
+        setFilterPreset("normal")
+        setArLens("none")
+
         // Live Adjustments: Brightness, Contrast, Saturation
         viewBinding.sbBrightness.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
