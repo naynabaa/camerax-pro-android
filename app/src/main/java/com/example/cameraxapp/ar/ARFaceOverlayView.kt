@@ -41,6 +41,37 @@ class ARFaceOverlayView @JvmOverloads constructor(
             invalidate()
         }
 
+    // 3D Landmark Mesh Calibration Offsets (for real-time alignment tuning)
+    var calibrationOffsetX: Float = 0f // Normalized -0.25f to +0.25f
+    var calibrationOffsetY: Float = 0f // Normalized -0.25f to +0.25f
+    var calibrationScale: Float = 1.0f  // 0.5f to 2.0f
+    var calibrationRotationDeg: Float = 0f // -45f to +45f
+    var eyeSpacingFactor: Float = 1.0f // 0.6f to 1.6f
+    var foreheadOffset: Float = 0f // Normalized -0.1f to +0.1f
+    var chinOffset: Float = 0f // Normalized -0.1f to +0.1f
+    var showDebugReticle: Boolean = false
+
+    fun setCalibration(
+        offsetX: Float,
+        offsetY: Float,
+        scale: Float = 1.0f,
+        rotationDeg: Float = 0f,
+        eyeSpacing: Float = 1.0f,
+        forehead: Float = 0f,
+        chin: Float = 0f,
+        debug: Boolean = false
+    ) {
+        calibrationOffsetX = offsetX
+        calibrationOffsetY = offsetY
+        calibrationScale = scale
+        calibrationRotationDeg = rotationDeg
+        eyeSpacingFactor = eyeSpacing
+        foreheadOffset = forehead
+        chinOffset = chin
+        showDebugReticle = debug
+        invalidate()
+    }
+
     private var landmarks: List<NormalizedLandmark>? = null
     private var imageWidth: Int = 1
     private var imageHeight: Int = 1
@@ -110,7 +141,7 @@ class ARFaceOverlayView @JvmOverloads constructor(
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
-        if (currentLens == ArLensMode.NONE) return
+        if (currentLens == ArLensMode.NONE && !showDebugReticle) return
 
         val marks = landmarks ?: return
         if (marks.size < 468) return
@@ -118,12 +149,45 @@ class ARFaceOverlayView @JvmOverloads constructor(
         val viewW = width.toFloat()
         val viewH = height.toFloat()
 
-        fun getX(idx: Int): Float {
-            val normX = marks[idx].x()
-            return if (isFrontCamera) (1.0f - normX) * viewW else normX * viewW
+        val rawCenterX = if (isFrontCamera) (1.0f - marks[1].x()) * viewW else marks[1].x() * viewW
+        val rawCenterY = marks[1].y() * viewH
+        val cx = rawCenterX + (calibrationOffsetX * viewW)
+        val cy = rawCenterY + (calibrationOffsetY * viewH)
+
+        val needsRestore = calibrationRotationDeg != 0f
+        if (needsRestore) {
+            canvas.save()
+            canvas.rotate(calibrationRotationDeg, cx, cy)
         }
 
-        fun getY(idx: Int): Float = marks[idx].y() * viewH
+        fun getX(idx: Int): Float {
+            val normX = marks[idx].x()
+            val base = if (isFrontCamera) (1.0f - normX) * viewW else normX * viewW
+            val dist = base - rawCenterX
+            val isEye = idx == 33 || idx == 263 || idx == 133 || idx == 362
+            val spacing = if (isEye) eyeSpacingFactor else 1.0f
+            return cx + (dist * calibrationScale * spacing)
+        }
+
+        fun getY(idx: Int): Float {
+            val base = marks[idx].y() * viewH
+            val dist = base - rawCenterY
+            var extraY = 0f
+            if (idx == 10 || idx == 338 || idx == 297) extraY = foreheadOffset * viewH
+            if (idx == 152 || idx == 148 || idx == 176) extraY = chinOffset * viewH
+            return cy + (dist * calibrationScale) + extraY
+        }
+
+        if (showDebugReticle) {
+            val reticlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.parseColor("#FFC107")
+                strokeWidth = 2f
+                style = Paint.Style.STROKE
+            }
+            canvas.drawLine(cx - 40f, cy, cx + 40f, cy, reticlePaint)
+            canvas.drawLine(cx, cy - 40f, cx, cy + 40f, reticlePaint)
+            canvas.drawCircle(cx, cy, 6f, reticlePaint)
+        }
 
         when (currentLens) {
             ArLensMode.MESH_CONTOUR -> {
@@ -139,6 +203,10 @@ class ARFaceOverlayView @JvmOverloads constructor(
                 drawSciFiHud(canvas, ::getX, ::getY)
             }
             ArLensMode.NONE -> {}
+        }
+
+        if (needsRestore) {
+            canvas.restore()
         }
     }
 

@@ -973,6 +973,11 @@ class MainActivity : AppCompatActivity() {
         // silent (no popup)
     }
 
+    private fun setupFilterAndArControls() {
+        setFilterPreset("normal")
+        setArLens("none")
+    }
+
     private fun toggleProDrawer() {
         val isVisible = viewBinding.proStudioDrawer.visibility == View.VISIBLE
         viewBinding.proStudioDrawer.visibility = if (isVisible) View.GONE else View.VISIBLE
@@ -1358,7 +1363,7 @@ class MainActivity : AppCompatActivity() {
             put(MediaStore.MediaColumns.DISPLAY_NAME, name)
             put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                put(MediaStore.Images.Media.RELATIVE_PATH, "${photoRelativeFolder}")
+                put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/CameraX-Image")
             }
         }
 
