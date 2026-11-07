@@ -823,7 +823,7 @@ class MainActivity : AppCompatActivity() {
         } else {
             viewBinding.tvTimerBadge.visibility = View.VISIBLE
             viewBinding.tvTimerBadge.text = "${countdownSeconds}"
-            viewBinding.btnTimer.setColorFilter(Color.parseColor("#F5D076"))
+            viewBinding.btnTimer.setColorFilter(Color.parseColor("#E2E8F0"))
         }
         // silent (no popup)
     }
@@ -835,25 +835,25 @@ class MainActivity : AppCompatActivity() {
                 isAutoLoopEnabled = true
                 autoRecordDuration = 5
                 autoPauseDuration = 3
-                viewBinding.btnAutoLoop.setColorFilter(Color.parseColor("#F5D076"))
+                viewBinding.btnAutoLoop.setColorFilter(Color.parseColor("#E2E8F0"))
                 // silent (no popup)
             }
             autoRecordDuration == 5 -> {
                 autoRecordDuration = 10
                 autoPauseDuration = 5
-                viewBinding.btnAutoLoop.setColorFilter(Color.parseColor("#F5D076"))
+                viewBinding.btnAutoLoop.setColorFilter(Color.parseColor("#E2E8F0"))
                 // silent (no popup)
             }
             autoRecordDuration == 10 -> {
                 autoRecordDuration = 15
                 autoPauseDuration = 5
-                viewBinding.btnAutoLoop.setColorFilter(Color.parseColor("#F5D076"))
+                viewBinding.btnAutoLoop.setColorFilter(Color.parseColor("#E2E8F0"))
                 // silent (no popup)
             }
             autoRecordDuration == 15 -> {
                 autoRecordDuration = 30
                 autoPauseDuration = 10
-                viewBinding.btnAutoLoop.setColorFilter(Color.parseColor("#F5D076"))
+                viewBinding.btnAutoLoop.setColorFilter(Color.parseColor("#E2E8F0"))
                 // silent (no popup)
             }
             else -> {
@@ -982,8 +982,8 @@ class MainActivity : AppCompatActivity() {
         for ((tabView, indicatorView, cat) in tabs) {
             val isActive = cat == category
             if (isActive) {
-                tabView.setTextColor(Color.parseColor("#FFC107"))
-                indicatorView.setBackgroundColor(Color.parseColor("#FFC107"))
+                tabView.setTextColor(Color.parseColor("#FFFFFF"))
+                indicatorView.setBackgroundColor(Color.parseColor("#E2E8F0"))
                 indicatorView.visibility = View.VISIBLE
             } else {
                 tabView.setTextColor(Color.parseColor("#64748B"))
@@ -1100,7 +1100,7 @@ class MainActivity : AppCompatActivity() {
         viewBinding.proOverlayView.isCleanScreen = isClean
         if (isClean) {
             viewBinding.btnCleanScreen.setImageResource(R.drawable.ic_eye_off)
-            viewBinding.btnCleanScreen.setColorFilter(Color.parseColor("#F5D076"))
+            viewBinding.btnCleanScreen.setColorFilter(Color.parseColor("#E2E8F0"))
             // silent (no popup)
         } else {
             viewBinding.btnCleanScreen.setImageResource(R.drawable.ic_eye)
@@ -1197,7 +1197,7 @@ class MainActivity : AppCompatActivity() {
         if (count > 0) {
             viewBinding.viewStudioBadge.visibility = View.VISIBLE
             viewBinding.tvDrawerSubtitle.text = "$count ACTIVE INSTRUMENTS"
-            viewBinding.btnProStudio.setColorFilter(Color.parseColor("#F5D076"))
+            viewBinding.btnProStudio.setColorFilter(Color.parseColor("#E2E8F0"))
         } else {
             viewBinding.viewStudioBadge.visibility = View.GONE
             viewBinding.tvDrawerSubtitle.text = "INSTRUMENTS IN STANDBY"
@@ -1235,7 +1235,7 @@ class MainActivity : AppCompatActivity() {
         // Update Guide button icon color and active badge
         val hasActiveGrid = mode != ProOverlayView.GridType.NONE
         viewBinding.viewGuideBadge.visibility = if (hasActiveGrid) View.VISIBLE else View.GONE
-        viewBinding.btnGuide.setColorFilter(if (hasActiveGrid) Color.parseColor("#F5D076") else Color.parseColor("#CCCCCC"))
+        viewBinding.btnGuide.setColorFilter(if (hasActiveGrid) Color.parseColor("#E2E8F0") else Color.parseColor("#94A3B8"))
 
         // Update Pro Drawer grid buttons
         val gridButtons = listOf(
@@ -1250,10 +1250,10 @@ class MainActivity : AppCompatActivity() {
             val isActive = m == mode
             if (isActive) {
                 btn.setBackgroundResource(R.drawable.bg_cinema_button_active)
-                btn.setTextColor(Color.parseColor("#000000"))
+                btn.setTextColor(Color.parseColor("#0F172A"))
             } else {
                 btn.setBackgroundResource(R.drawable.bg_cinema_button_inactive)
-                btn.setTextColor(Color.parseColor("#94A3B8"))
+                btn.setTextColor(Color.parseColor("#CBD5E1"))
             }
         }
 
@@ -1270,10 +1270,10 @@ class MainActivity : AppCompatActivity() {
             val isActive = m == mode
             if (isActive) {
                 chip.setBackgroundResource(R.drawable.bg_cinema_button_active)
-                chip.setTextColor(Color.parseColor("#000000"))
+                chip.setTextColor(Color.parseColor("#0F172A"))
             } else {
                 chip.setBackgroundResource(R.drawable.bg_cinema_button_inactive)
-                chip.setTextColor(Color.parseColor("#94A3B8"))
+                chip.setTextColor(Color.parseColor("#CBD5E1"))
             }
         }
 
@@ -1298,10 +1298,10 @@ class MainActivity : AppCompatActivity() {
             val isActive = m == matte
             if (isActive) {
                 btn.setBackgroundResource(R.drawable.bg_cinema_button_active)
-                btn.setTextColor(Color.parseColor("#000000"))
+                btn.setTextColor(Color.parseColor("#0F172A"))
             } else {
                 btn.setBackgroundResource(R.drawable.bg_cinema_button_inactive)
-                btn.setTextColor(Color.parseColor("#94A3B8"))
+                btn.setTextColor(Color.parseColor("#CBD5E1"))
             }
         }
 
@@ -1329,10 +1329,10 @@ class MainActivity : AppCompatActivity() {
         for (i in pillViews.indices) {
             if (i == index) {
                 pillViews[i].setBackgroundResource(R.drawable.bg_zoom_pill_active)
-                pillViews[i].setTextColor(Color.parseColor("#FACC15"))
+                pillViews[i].setTextColor(Color.parseColor("#0F172A"))
             } else {
                 pillViews[i].setBackgroundResource(android.R.color.transparent)
-                pillViews[i].setTextColor(Color.parseColor("#94A3B8"))
+                pillViews[i].setTextColor(Color.parseColor("#CBD5E1"))
             }
         }
 
@@ -1345,7 +1345,7 @@ class MainActivity : AppCompatActivity() {
                 btn.setBackgroundResource(R.drawable.bg_cinema_button_active)
                 val title = btn.getChildAt(0) as? TextView
                 val sub = btn.getChildAt(1) as? TextView
-                title?.setTextColor(Color.parseColor("#000000"))
+                title?.setTextColor(Color.parseColor("#0F172A"))
                 sub?.setTextColor(Color.parseColor("#334155"))
             } else {
                 btn.setBackgroundResource(R.drawable.bg_cinema_button_inactive)
@@ -1591,7 +1591,7 @@ class MainActivity : AppCompatActivity() {
         )
         for ((tab, m) in modeTabs) {
             val isActive = m == cameraMode
-            tab.setTextColor(if (isActive) Color.parseColor("#FFC107") else Color.parseColor("#94A3B8"))
+            tab.setTextColor(if (isActive) Color.parseColor("#FFFFFF") else Color.parseColor("#94A3B8"))
             tab.setTypeface(null, if (isActive) Typeface.BOLD else Typeface.NORMAL)
         }
 

@@ -2,4 +2,12 @@
 <resources>
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>
+    <color name="silver_white">#FFF8FAFC</color>
+    <color name="silver_bright">#FFE2E8F0</color>
+    <color name="silver_light">#FFCBD5E1</color>
+    <color name="silver_gray">#FF94A3B8</color>
+    <color name="silver_glass_bg">#331E293B</color>
+    <color name="silver_glass_active">#E6E2E8F0</color>
+    <color name="silver_stroke">#40CBD5E1</color>
+    <color name="silver_stroke_active">#FFFFFFFF</color>
 </resources>
