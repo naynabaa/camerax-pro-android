@@ -237,13 +237,14 @@ class ProOverlayView @JvmOverloads constructor(
     private val spiralPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeWidth = dpToPx(1.2f)
-        color = Color.parseColor("#B3FFFFFF") // Clean Crisp White Curve (Not colored)
+        color = Color.parseColor("#D9F5D076") // Professional Champagne Titanium Gold Spiral
+        strokeCap = Paint.Cap.ROUND
     }
 
     private val spiralBoxPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
-        strokeWidth = dpToPx(0.8f)
-        color = Color.parseColor("#40FFFFFF") // Subtle 25% White Box lines
+        strokeWidth = dpToPx(0.75f)
+        color = Color.parseColor("#33F5D076") // Subtle Champagne Gold Subdivided Box Lines
     }
 
     private val levelNormalPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {

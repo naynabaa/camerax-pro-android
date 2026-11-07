@@ -296,6 +296,34 @@ class MainActivity : AppCompatActivity() {
             window.decorView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
         }
 
+        // Top Toolbar: Dedicated Framing Guides & Grids HUD
+        viewBinding.btnGuide.setOnClickListener {
+            val isVisible = viewBinding.layoutGuideFloatingBar.visibility == View.VISIBLE
+            viewBinding.layoutGuideFloatingBar.visibility = if (isVisible) View.GONE else View.VISIBLE
+            if (!isVisible) {
+                viewBinding.effectsStudioDrawer.visibility = View.GONE
+                viewBinding.proStudioDrawer.visibility = View.GONE
+            }
+            window.decorView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+        }
+        viewBinding.btnCloseGuideBar.setOnClickListener {
+            viewBinding.layoutGuideFloatingBar.visibility = View.GONE
+            window.decorView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+        }
+        viewBinding.btnQuickRotateSpiral.setOnClickListener {
+            val nextRot = (viewBinding.proOverlayView.spiralOrientation + 1) % 4
+            setSpiralOrientation(nextRot)
+            window.decorView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+        }
+
+        // Quick Grid Chips on Floating Guide HUD
+        viewBinding.btnQuickGridOff.setOnClickListener { setGridMode(ProOverlayView.GridType.NONE) }
+        viewBinding.btnQuickGridThirds.setOnClickListener { setGridMode(ProOverlayView.GridType.RULE_OF_THIRDS) }
+        viewBinding.btnQuickGridSpiral.setOnClickListener { setGridMode(ProOverlayView.GridType.GOLDEN_SPIRAL) }
+        viewBinding.btnQuickGridPhi.setOnClickListener { setGridMode(ProOverlayView.GridType.GOLDEN_RATIO_PHI) }
+        viewBinding.btnQuickGridDiagonal.setOnClickListener { setGridMode(ProOverlayView.GridType.DIAGONAL_SYMMETRY) }
+        viewBinding.btnQuickGridCinematic.setOnClickListener { setGridMode(ProOverlayView.GridType.CINEMATIC_239) }
+
         // Creative Drawer Category Switcher Buttons (FILTERS, LENSES, EFFECTS)
         viewBinding.btnCategoryFilters.setOnClickListener { selectCreativeCategory(CreativeTarget.FILTERS) }
         viewBinding.btnCategoryLenses.setOnClickListener { selectCreativeCategory(CreativeTarget.LENSES) }
@@ -316,6 +344,7 @@ class MainActivity : AppCompatActivity() {
             toggleCleanScreen()
             viewBinding.proStudioDrawer.visibility = View.GONE
             viewBinding.effectsStudioDrawer.visibility = View.GONE
+            viewBinding.layoutGuideFloatingBar.visibility = View.GONE
         }
 
         // Top Toolbar: Pro Studio Drawer Open / Close (Single unified entry point)
@@ -794,7 +823,7 @@ class MainActivity : AppCompatActivity() {
         } else {
             viewBinding.tvTimerBadge.visibility = View.VISIBLE
             viewBinding.tvTimerBadge.text = "${countdownSeconds}"
-            viewBinding.btnTimer.setColorFilter(Color.parseColor("#FACC15"))
+            viewBinding.btnTimer.setColorFilter(Color.parseColor("#F5D076"))
         }
         // silent (no popup)
     }
@@ -806,25 +835,25 @@ class MainActivity : AppCompatActivity() {
                 isAutoLoopEnabled = true
                 autoRecordDuration = 5
                 autoPauseDuration = 3
-                viewBinding.btnAutoLoop.setColorFilter(Color.parseColor("#FACC15"))
+                viewBinding.btnAutoLoop.setColorFilter(Color.parseColor("#F5D076"))
                 // silent (no popup)
             }
             autoRecordDuration == 5 -> {
                 autoRecordDuration = 10
                 autoPauseDuration = 5
-                viewBinding.btnAutoLoop.setColorFilter(Color.parseColor("#FACC15"))
+                viewBinding.btnAutoLoop.setColorFilter(Color.parseColor("#F5D076"))
                 // silent (no popup)
             }
             autoRecordDuration == 10 -> {
                 autoRecordDuration = 15
                 autoPauseDuration = 5
-                viewBinding.btnAutoLoop.setColorFilter(Color.parseColor("#FACC15"))
+                viewBinding.btnAutoLoop.setColorFilter(Color.parseColor("#F5D076"))
                 // silent (no popup)
             }
             autoRecordDuration == 15 -> {
                 autoRecordDuration = 30
                 autoPauseDuration = 10
-                viewBinding.btnAutoLoop.setColorFilter(Color.parseColor("#FACC15"))
+                viewBinding.btnAutoLoop.setColorFilter(Color.parseColor("#F5D076"))
                 // silent (no popup)
             }
             else -> {
@@ -1071,7 +1100,7 @@ class MainActivity : AppCompatActivity() {
         viewBinding.proOverlayView.isCleanScreen = isClean
         if (isClean) {
             viewBinding.btnCleanScreen.setImageResource(R.drawable.ic_eye_off)
-            viewBinding.btnCleanScreen.setColorFilter(Color.parseColor("#FACC15"))
+            viewBinding.btnCleanScreen.setColorFilter(Color.parseColor("#F5D076"))
             // silent (no popup)
         } else {
             viewBinding.btnCleanScreen.setImageResource(R.drawable.ic_eye)
@@ -1168,7 +1197,7 @@ class MainActivity : AppCompatActivity() {
         if (count > 0) {
             viewBinding.viewStudioBadge.visibility = View.VISIBLE
             viewBinding.tvDrawerSubtitle.text = "$count ACTIVE INSTRUMENTS"
-            viewBinding.btnProStudio.setColorFilter(Color.parseColor("#FACC15"))
+            viewBinding.btnProStudio.setColorFilter(Color.parseColor("#F5D076"))
         } else {
             viewBinding.viewStudioBadge.visibility = View.GONE
             viewBinding.tvDrawerSubtitle.text = "INSTRUMENTS IN STANDBY"
@@ -1201,7 +1230,14 @@ class MainActivity : AppCompatActivity() {
         viewBinding.proOverlayView.currentGrid = mode
         val isSpiral = mode == ProOverlayView.GridType.GOLDEN_SPIRAL
         viewBinding.layoutSpiralRotation.visibility = if (isSpiral) View.VISIBLE else View.GONE
+        viewBinding.layoutQuickSpiralRotate.visibility = if (isSpiral) View.VISIBLE else View.GONE
 
+        // Update Guide button icon color and active badge
+        val hasActiveGrid = mode != ProOverlayView.GridType.NONE
+        viewBinding.viewGuideBadge.visibility = if (hasActiveGrid) View.VISIBLE else View.GONE
+        viewBinding.btnGuide.setColorFilter(if (hasActiveGrid) Color.parseColor("#F5D076") else Color.parseColor("#CCCCCC"))
+
+        // Update Pro Drawer grid buttons
         val gridButtons = listOf(
             viewBinding.btnGridOff to ProOverlayView.GridType.NONE,
             viewBinding.btnGridThirds to ProOverlayView.GridType.RULE_OF_THIRDS,
@@ -1218,6 +1254,26 @@ class MainActivity : AppCompatActivity() {
             } else {
                 btn.setBackgroundResource(R.drawable.bg_cinema_button_inactive)
                 btn.setTextColor(Color.parseColor("#94A3B8"))
+            }
+        }
+
+        // Update Floating Guide Bar Quick Chips
+        val quickChips = listOf(
+            viewBinding.btnQuickGridOff to ProOverlayView.GridType.NONE,
+            viewBinding.btnQuickGridThirds to ProOverlayView.GridType.RULE_OF_THIRDS,
+            viewBinding.btnQuickGridSpiral to ProOverlayView.GridType.GOLDEN_SPIRAL,
+            viewBinding.btnQuickGridPhi to ProOverlayView.GridType.GOLDEN_RATIO_PHI,
+            viewBinding.btnQuickGridDiagonal to ProOverlayView.GridType.DIAGONAL_SYMMETRY,
+            viewBinding.btnQuickGridCinematic to ProOverlayView.GridType.CINEMATIC_239
+        )
+        for ((chip, m) in quickChips) {
+            val isActive = m == mode
+            if (isActive) {
+                chip.setBackgroundResource(R.drawable.bg_cinema_button_active)
+                chip.setTextColor(Color.parseColor("#000000"))
+            } else {
+                chip.setBackgroundResource(R.drawable.bg_cinema_button_inactive)
+                chip.setTextColor(Color.parseColor("#94A3B8"))
             }
         }
 
@@ -1723,6 +1779,32 @@ class MainActivity : AppCompatActivity() {
         window.decorView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
     }
 
+    private fun navigateNextGrid() {
+        val nextMode = when (viewBinding.proOverlayView.currentGrid) {
+            ProOverlayView.GridType.NONE -> ProOverlayView.GridType.RULE_OF_THIRDS
+            ProOverlayView.GridType.RULE_OF_THIRDS -> ProOverlayView.GridType.GOLDEN_SPIRAL
+            ProOverlayView.GridType.GOLDEN_SPIRAL -> ProOverlayView.GridType.GOLDEN_RATIO_PHI
+            ProOverlayView.GridType.GOLDEN_RATIO_PHI -> ProOverlayView.GridType.DIAGONAL_SYMMETRY
+            ProOverlayView.GridType.DIAGONAL_SYMMETRY -> ProOverlayView.GridType.CINEMATIC_239
+            ProOverlayView.GridType.CINEMATIC_239 -> ProOverlayView.GridType.NONE
+        }
+        setGridMode(nextMode)
+        window.decorView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+    }
+
+    private fun navigatePreviousGrid() {
+        val prevMode = when (viewBinding.proOverlayView.currentGrid) {
+            ProOverlayView.GridType.NONE -> ProOverlayView.GridType.CINEMATIC_239
+            ProOverlayView.GridType.RULE_OF_THIRDS -> ProOverlayView.GridType.NONE
+            ProOverlayView.GridType.GOLDEN_SPIRAL -> ProOverlayView.GridType.RULE_OF_THIRDS
+            ProOverlayView.GridType.GOLDEN_RATIO_PHI -> ProOverlayView.GridType.GOLDEN_SPIRAL
+            ProOverlayView.GridType.DIAGONAL_SYMMETRY -> ProOverlayView.GridType.GOLDEN_RATIO_PHI
+            ProOverlayView.GridType.CINEMATIC_239 -> ProOverlayView.GridType.DIAGONAL_SYMMETRY
+        }
+        setGridMode(prevMode)
+        window.decorView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+    }
+
     private fun navigateNextEffectOrFilter() {
         when (currentCreativeTarget) {
             CreativeTarget.LENSES -> {
@@ -1807,6 +1889,12 @@ class MainActivity : AppCompatActivity() {
 
         val gestureDetector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
             override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+                if (viewBinding.proOverlayView.currentGrid == ProOverlayView.GridType.GOLDEN_SPIRAL) {
+                    val nextRot = (viewBinding.proOverlayView.spiralOrientation + 1) % 4
+                    setSpiralOrientation(nextRot)
+                    window.decorView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                }
+
                 
                 val point = viewBinding.viewFinder.meteringPointFactory.createPoint(e.x, e.y)
                 val action = FocusMeteringAction.Builder(point).build()
@@ -1903,6 +1991,18 @@ class MainActivity : AppCompatActivity() {
                 val x = ev.rawX.toInt()
                 val y = ev.rawY.toInt()
 
+                // 0. Touch outside to dismiss Guide Floating Bar
+                if (viewBinding.layoutGuideFloatingBar.visibility == View.VISIBLE) {
+                    val guideBarRect = Rect()
+                    viewBinding.layoutGuideFloatingBar.getGlobalVisibleRect(guideBarRect)
+                    val guideBtnRect = Rect()
+                    viewBinding.layoutBtnGuide.getGlobalVisibleRect(guideBtnRect)
+                    if (!guideBarRect.contains(x, y) && !guideBtnRect.contains(x, y)) {
+                        viewBinding.layoutGuideFloatingBar.visibility = View.GONE
+                        window.decorView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                    }
+                }
+
                 // 1. Touch outside to dismiss Effects Studio Drawer
                 if (viewBinding.effectsStudioDrawer.visibility == View.VISIBLE) {
                     val headerRect = Rect()
@@ -1945,15 +2045,10 @@ class MainActivity : AppCompatActivity() {
 
                         if (inSwipeZone) {
                             isSwipeConsumed = true
-                            if (viewBinding.effectsStudioDrawer.visibility == View.VISIBLE) {
-                                val subItemsRect = Rect()
-                                viewBinding.layoutEffectsSubItems.getGlobalVisibleRect(subItemsRect)
-                                if (subItemsRect.contains(touchDownX.toInt(), touchDownY.toInt())) {
-                                    if (dx < 0) navigateNextEffectOrFilter() else navigatePreviousEffectOrFilter()
-                                } else {
-                                    viewBinding.effectsStudioDrawer.visibility = View.GONE
-                                    if (dx < 0) navigateNextCameraMode() else navigatePreviousCameraMode()
-                                }
+                            if (viewBinding.layoutGuideFloatingBar.visibility == View.VISIBLE) {
+                                if (dx < 0) navigateNextGrid() else navigatePreviousGrid()
+                            } else if (viewBinding.effectsStudioDrawer.visibility == View.VISIBLE) {
+                                if (dx < 0) navigateNextEffectOrFilter() else navigatePreviousEffectOrFilter()
                             } else {
                                 if (dx < 0) navigateNextCameraMode() else navigatePreviousCameraMode()
                             }
@@ -1981,15 +2076,10 @@ class MainActivity : AppCompatActivity() {
 
                         if (inSwipeZone) {
                             isSwipeConsumed = true
-                            if (viewBinding.effectsStudioDrawer.visibility == View.VISIBLE) {
-                                val subItemsRect = Rect()
-                                viewBinding.layoutEffectsSubItems.getGlobalVisibleRect(subItemsRect)
-                                if (subItemsRect.contains(touchDownX.toInt(), touchDownY.toInt())) {
-                                    if (diffX < 0) navigateNextEffectOrFilter() else navigatePreviousEffectOrFilter()
-                                } else {
-                                    viewBinding.effectsStudioDrawer.visibility = View.GONE
-                                    if (diffX < 0) navigateNextCameraMode() else navigatePreviousCameraMode()
-                                }
+                            if (viewBinding.layoutGuideFloatingBar.visibility == View.VISIBLE) {
+                                if (diffX < 0) navigateNextGrid() else navigatePreviousGrid()
+                            } else if (viewBinding.effectsStudioDrawer.visibility == View.VISIBLE) {
+                                if (diffX < 0) navigateNextEffectOrFilter() else navigatePreviousEffectOrFilter()
                             } else {
                                 if (diffX < 0) navigateNextCameraMode() else navigatePreviousCameraMode()
                             }

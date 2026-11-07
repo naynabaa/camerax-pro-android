@@ -71,6 +71,33 @@
             app:tint="#CCCCCC"
             android:contentDescription="Creative Filters" />
 
+        <!-- Dedicated Framing Guide & Grid Button (Direct on-screen access) -->
+        <FrameLayout
+            android:id="@+id/layoutBtnGuide"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:layout_marginStart="8dp">
+
+            <ImageButton
+                android:id="@+id/btnGuide"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:background="@drawable/bg_circle_icon_button"
+                android:src="@drawable/ic_grid_on"
+                app:tint="#CCCCCC"
+                android:contentDescription="Framing Guides & Grids" />
+
+            <View
+                android:id="@+id/viewGuideBadge"
+                android:layout_width="8dp"
+                android:layout_height="8dp"
+                android:layout_gravity="top|end"
+                android:layout_marginTop="2dp"
+                android:layout_marginEnd="2dp"
+                android:background="@drawable/bg_badge_dot"
+                android:visibility="gone" />
+        </FrameLayout>
+
         <!-- Self-Timer (Circle Icon, Photo Mode Only) -->
         <FrameLayout
             android:id="@+id/layoutBtnTimer"
@@ -1862,6 +1889,193 @@
                 </LinearLayout>
             </LinearLayout>
         </FrameLayout>
+    </androidx.constraintlayout.widget.ConstraintLayout>
+
+    <!-- Dedicated Framing Guide & Grid Quick Floating Bar (HUD) -->
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:id="@+id/layoutGuideFloatingBar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginHorizontal="12dp"
+        android:layout_marginTop="72dp"
+        android:background="@drawable/bg_pro_drawer"
+        android:paddingHorizontal="12dp"
+        android:paddingVertical="10dp"
+        android:visibility="gone"
+        android:elevation="32dp"
+        app:layout_constraintTop_toTopOf="parent">
+
+        <LinearLayout
+            android:id="@+id/layoutGuideHeader"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            app:layout_constraintTop_toTopOf="parent">
+
+            <ImageView
+                android:layout_width="16dp"
+                android:layout_height="16dp"
+                android:src="@drawable/ic_grid_on"
+                app:tint="#F5D076" />
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginStart="8dp"
+                android:text="FRAMING GUIDES &amp; GRIDS"
+                android:textColor="#F5D076"
+                android:textSize="12sp"
+                android:textStyle="bold"
+                android:letterSpacing="0.08" />
+
+            <TextView
+                android:id="@+id/tvGuideSlideHint"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Slide screen to cycle"
+                android:textColor="#64748B"
+                android:textSize="10sp"
+                android:layout_marginEnd="8dp" />
+
+            <ImageButton
+                android:id="@+id/btnCloseGuideBar"
+                android:layout_width="28dp"
+                android:layout_height="28dp"
+                android:background="@drawable/bg_circle_icon_button"
+                android:src="@drawable/ic_close"
+                app:tint="#94A3B8"
+                android:contentDescription="Close Guides" />
+        </LinearLayout>
+
+        <!-- Horizontal Scroll of Quick Grid Chips -->
+        <HorizontalScrollView
+            android:id="@+id/scrollGuideChips"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:scrollbars="none"
+            android:overScrollMode="never"
+            app:layout_constraintTop_toBottomOf="@id/layoutGuideHeader">
+
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <Button
+                    android:id="@+id/btnQuickGridOff"
+                    android:layout_width="wrap_content"
+                    android:layout_height="32dp"
+                    android:minWidth="54dp"
+                    android:text="OFF"
+                    android:textSize="11sp"
+                    android:textStyle="bold"
+                    android:textColor="#FFFFFF"
+                    android:background="@drawable/bg_cinema_button_inactive"
+                    android:paddingHorizontal="10dp"
+                    android:layout_marginEnd="6dp" />
+
+                <Button
+                    android:id="@+id/btnQuickGridThirds"
+                    android:layout_width="wrap_content"
+                    android:layout_height="32dp"
+                    android:minWidth="64dp"
+                    android:text="3×3 THIRDS"
+                    android:textSize="11sp"
+                    android:textStyle="bold"
+                    android:textColor="#94A3B8"
+                    android:background="@drawable/bg_cinema_button_inactive"
+                    android:paddingHorizontal="10dp"
+                    android:layout_marginEnd="6dp" />
+
+                <Button
+                    android:id="@+id/btnQuickGridSpiral"
+                    android:layout_width="wrap_content"
+                    android:layout_height="32dp"
+                    android:minWidth="76dp"
+                    android:text="GOLDEN SPIRAL"
+                    android:textSize="11sp"
+                    android:textStyle="bold"
+                    android:textColor="#94A3B8"
+                    android:background="@drawable/bg_cinema_button_inactive"
+                    android:paddingHorizontal="10dp"
+                    android:layout_marginEnd="6dp" />
+
+                <Button
+                    android:id="@+id/btnQuickGridPhi"
+                    android:layout_width="wrap_content"
+                    android:layout_height="32dp"
+                    android:minWidth="68dp"
+                    android:text="PHI RATIO"
+                    android:textSize="11sp"
+                    android:textStyle="bold"
+                    android:textColor="#94A3B8"
+                    android:background="@drawable/bg_cinema_button_inactive"
+                    android:paddingHorizontal="10dp"
+                    android:layout_marginEnd="6dp" />
+
+                <Button
+                    android:id="@+id/btnQuickGridDiagonal"
+                    android:layout_width="wrap_content"
+                    android:layout_height="32dp"
+                    android:minWidth="70dp"
+                    android:text="DIAGONAL"
+                    android:textSize="11sp"
+                    android:textStyle="bold"
+                    android:textColor="#94A3B8"
+                    android:background="@drawable/bg_cinema_button_inactive"
+                    android:paddingHorizontal="10dp"
+                    android:layout_marginEnd="6dp" />
+
+                <Button
+                    android:id="@+id/btnQuickGridCinematic"
+                    android:layout_width="wrap_content"
+                    android:layout_height="32dp"
+                    android:minWidth="74dp"
+                    android:text="2.39:1 CINE"
+                    android:textSize="11sp"
+                    android:textStyle="bold"
+                    android:textColor="#94A3B8"
+                    android:background="@drawable/bg_cinema_button_inactive"
+                    android:paddingHorizontal="10dp" />
+            </LinearLayout>
+        </HorizontalScrollView>
+
+        <!-- Spiral Rotation Hint & Quick Action (Only when Golden Spiral is active) -->
+        <LinearLayout
+            android:id="@+id/layoutQuickSpiralRotate"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:visibility="gone"
+            app:layout_constraintTop_toBottomOf="@id/scrollGuideChips">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Tap screen to rotate spiral"
+                android:textColor="#F5D076"
+                android:textSize="10sp"
+                android:textStyle="italic" />
+
+            <Button
+                android:id="@+id/btnQuickRotateSpiral"
+                android:layout_width="wrap_content"
+                android:layout_height="28dp"
+                android:minWidth="64dp"
+                android:text="ROTATE 90°"
+                android:textSize="10sp"
+                android:textStyle="bold"
+                android:textColor="#000000"
+                android:background="@drawable/bg_cinema_button_active"
+                android:paddingHorizontal="8dp" />
+        </LinearLayout>
     </androidx.constraintlayout.widget.ConstraintLayout>
 
     <!-- Creative Effects & AR Lenses Floating Dual Layer (Top bar + Bottom options, leaving central viewfinder open) -->

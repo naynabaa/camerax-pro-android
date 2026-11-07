@@ -166,6 +166,24 @@ public class MainActivity extends AppCompatActivity {
         if (btnGallery != null) {
             btnGallery.setOnClickListener(v -> openAppMediaGallery());
         }
+
+        View btnGuide = findViewById(R.id.btnGuide);
+        if (btnGuide != null) {
+            btnGuide.setOnClickListener(v -> {
+                View guideBar = findViewById(R.id.layoutGuideFloatingBar);
+                if (guideBar != null) {
+                    guideBar.setVisibility(guideBar.getVisibility() == View.VISIBLE ? View.GONE : View.VISIBLE);
+                }
+            });
+        }
+
+        View btnCloseGuideBar = findViewById(R.id.btnCloseGuideBar);
+        if (btnCloseGuideBar != null) {
+            btnCloseGuideBar.setOnClickListener(v -> {
+                View guideBar = findViewById(R.id.layoutGuideFloatingBar);
+                if (guideBar != null) guideBar.setVisibility(View.GONE);
+            });
+        }
     }
 
     private void setupBurstMode() {
