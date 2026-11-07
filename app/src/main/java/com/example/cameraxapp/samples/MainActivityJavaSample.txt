@@ -2,7 +2,9 @@ package com.example.cameraxapp;
 
 import android.Manifest;
 import android.content.ContentValues;
+import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.CountDownTimer;
@@ -74,6 +76,8 @@ public class MainActivity extends AppCompatActivity {
 
     private boolean isRecordingPaused = false;
     private long timeWhenStopped = 0;
+    private Uri lastCapturedUri = null;
+    private String lastCapturedMimeType = null;
 
     private int countdownSeconds = 0;
     private boolean isCountingDown = false;
@@ -157,6 +161,11 @@ public class MainActivity extends AppCompatActivity {
                 drawer.setVisibility(drawer.getVisibility() == View.VISIBLE ? View.GONE : View.VISIBLE);
             }
         });
+
+        View btnGallery = findViewById(R.id.btnGallery);
+        if (btnGallery != null) {
+            btnGallery.setOnClickListener(v -> openAppMediaGallery());
+        }
     }
 
     private void setupBurstMode() {
@@ -331,6 +340,15 @@ public class MainActivity extends AppCompatActivity {
                 chronometer.start();
                 btnPauseResume.setImageResource(R.drawable.ic_pause);
             } else if (recordEvent instanceof VideoRecordEvent.Finalize) {
+                var finalizeEvent = (VideoRecordEvent.Finalize) recordEvent;
+                if (!finalizeEvent.hasError()) {
+                    lastCapturedUri = finalizeEvent.getOutputResults().getOutputUri();
+                    lastCapturedMimeType = "video/mp4";
+                    android.widget.ImageView ivThumb = findViewById(R.id.ivGalleryThumbnail);
+                    if (ivThumb != null && lastCapturedUri != null) {
+                        runOnUiThread(() -> ivThumb.setImageURI(lastCapturedUri));
+                    }
+                }
                 chronometer.stop();
                 timeWhenStopped = 0L;
                 recordingTimer.setVisibility(View.GONE);
@@ -349,6 +367,21 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    private void openAppMediaGallery() {
+        if (lastCapturedUri != null && lastCapturedMimeType != null) {
+            try {
+                Intent intent = new Intent(Intent.ACTION_VIEW);
+                intent.setDataAndType(lastCapturedUri, lastCapturedMimeType);
+                intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                startActivity(intent);
+                return;
+            } catch (Exception e) {
+                Log.e(TAG, "Could not open app media", e);
+            }
+        }
+        Toast.makeText(this, "No CameraX photos or videos captured yet. Capture a photo or video to view in app gallery!", Toast.LENGTH_SHORT).show();
+    }
+
     private void takePhoto() {
         if (imageCapture == null) return;
         String name = new SimpleDateFormat(FILENAME_FORMAT, Locale.US).format(System.currentTimeMillis());
@@ -365,7 +398,16 @@ public class MainActivity extends AppCompatActivity {
         imageCapture.takePicture(options, ContextCompat.getMainExecutor(this), new ImageCapture.OnImageSavedCallback() {
             @Override
             public void onImageSaved(@NonNull ImageCapture.OutputFileResults results) {
-                Log.d(TAG, "Saved: " + results.getSavedUri());
+                Uri savedUri = results.getSavedUri();
+                if (savedUri != null) {
+                    lastCapturedUri = savedUri;
+                    lastCapturedMimeType = "image/jpeg";
+                    android.widget.ImageView ivThumb = findViewById(R.id.ivGalleryThumbnail);
+                    if (ivThumb != null) {
+                        runOnUiThread(() -> ivThumb.setImageURI(savedUri));
+                    }
+                }
+                Log.d(TAG, "Saved: " + savedUri);
             }
 
             @Override

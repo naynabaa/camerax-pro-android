@@ -1,8 +1,10 @@
 package com.example.cameraxapp
 
 import android.Manifest
+import android.content.ContentUris
 import android.content.ContentValues
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.graphics.Color
 import android.graphics.Rect
 import android.graphics.Typeface
@@ -225,13 +227,16 @@ class MainActivity : AppCompatActivity() {
     private var currentCreativeTarget = CreativeTarget.FILTERS
     private var isLastActionCreative = false
     private var currentTextureEffectIndex = 0
+    private var lastCapturedUri: Uri? = null
+    private var lastCapturedMimeType: String? = null
 
     private fun setupClickListeners() {
         // Lens Flip Switch Listener
         viewBinding.btnSwitchCamera.setOnClickListener { switchCamera() }
 
-        // Bottom-Left Gallery Button Listener
-        viewBinding.btnGallery.setOnClickListener { openSystemGallery() }
+        // Bottom-Left Gallery Button Listener - opens ONLY photos & videos captured by this app
+        viewBinding.btnGallery.setOnClickListener { openAppMediaGallery() }
+        updateGalleryThumbnail()
 
         // Mode Switcher: 5-Slot Infinite Rotating Carousel (Stationary center highlighter, endless rotation)
         viewBinding.tabSlotFarLeft.setOnClickListener {
@@ -1402,8 +1407,18 @@ class MainActivity : AppCompatActivity() {
                         viewBinding.btnSwitchCamera.isEnabled = true
 
                         if (!recordEvent.hasError()) {
-                            val msg = "Video saved: ${recordEvent.outputResults.outputUri}"
+                            val outputUri = recordEvent.outputResults.outputUri
+                            lastCapturedUri = outputUri
+                            lastCapturedMimeType = "video/mp4"
+                            val msg = "Video saved: ${outputUri}"
                             Log.d(TAG, msg)
+                            runOnUiThread {
+                                try {
+                                    viewBinding.ivGalleryThumbnail.setImageURI(outputUri)
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "Failed updating video thumbnail", e)
+                                }
+                            }
                         } else {
                             recording?.close()
                             recording = null
@@ -1462,7 +1477,19 @@ class MainActivity : AppCompatActivity() {
                 }
 
                 override fun onImageSaved(output: ImageCapture.OutputFileResults) {
-                    Log.d(TAG, "Photo saved: ${output.savedUri}")
+                    val savedUri = output.savedUri
+                    Log.d(TAG, "Photo saved: ${savedUri}")
+                    if (savedUri != null) {
+                        lastCapturedUri = savedUri
+                        lastCapturedMimeType = "image/jpeg"
+                        runOnUiThread {
+                            try {
+                                viewBinding.ivGalleryThumbnail.setImageURI(savedUri)
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Failed updating gallery thumbnail", e)
+                            }
+                        }
+                    }
                 }
             }
         )
@@ -1566,23 +1593,118 @@ class MainActivity : AppCompatActivity() {
         updateModeCarouselSlots(animated = smooth, slideDirection = 0)
     }
 
-    private fun openSystemGallery() {
+    /**
+     * Query MediaStore specifically for photos or videos captured by this CameraX Pro app.
+     * Restricts queries to the app's folder and files starting with CameraX or timestamp formats.
+     */
+    private fun getLatestAppMediaUri(): Pair<Uri, String>? {
+        val cachedUri = lastCapturedUri
+        val cachedMime = lastCapturedMimeType
+        if (cachedUri != null && cachedMime != null) {
+            return Pair(cachedUri, cachedMime)
+        }
+
+        var latestUri: Uri? = null
+        var latestMime = "image/jpeg"
+        var latestTimestamp = 0L
+
+        val projection = arrayOf(
+            MediaStore.MediaColumns._ID,
+            MediaStore.MediaColumns.DATE_ADDED,
+            MediaStore.MediaColumns.MIME_TYPE
+        )
+        // Match files saved in CameraX folders or with CameraX file naming
+        val selection = "${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ? OR ${MediaStore.MediaColumns.DISPLAY_NAME} LIKE ?"
+        val selectionArgs = arrayOf("%CameraX%", "%CameraX%")
+        val sortOrder = "${MediaStore.MediaColumns.DATE_ADDED} DESC"
+
         try {
-            val intent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
-                type = "image/*"
-                flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK
-            }
-            startActivity(intent)
-        } catch (e: Exception) {
-            try {
-                val intent = android.content.Intent(android.content.Intent.ACTION_GET_CONTENT).apply {
-                    type = "image/*"
+            contentResolver.query(
+                MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                projection,
+                selection,
+                selectionArgs,
+                sortOrder
+            )?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val id = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.MediaColumns._ID))
+                    val date = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DATE_ADDED))
+                    val mime = cursor.getString(cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.MIME_TYPE)) ?: "image/jpeg"
+                    latestTimestamp = date
+                    latestUri = ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id)
+                    latestMime = mime
                 }
-                startActivity(intent)
-            } catch (err: Exception) {
-                Log.e(TAG, "Cannot open gallery", err)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed querying app images", e)
+        }
+
+        try {
+            contentResolver.query(
+                MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+                projection,
+                selection,
+                selectionArgs,
+                sortOrder
+            )?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val id = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.MediaColumns._ID))
+                    val date = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DATE_ADDED))
+                    val mime = cursor.getString(cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.MIME_TYPE)) ?: "video/mp4"
+                    if (date > latestTimestamp || latestUri == null) {
+                        latestUri = ContentUris.withAppendedId(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, id)
+                        latestMime = mime
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed querying app videos", e)
+        }
+
+        return if (latestUri != null) {
+            lastCapturedUri = latestUri
+            lastCapturedMimeType = latestMime
+            Pair(latestUri!!, latestMime)
+        } else null
+    }
+
+    private fun updateGalleryThumbnail() {
+        val media = getLatestAppMediaUri()
+        if (media != null) {
+            runOnUiThread {
+                try {
+                    viewBinding.ivGalleryThumbnail.setImageURI(media.first)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Could not set thumbnail", e)
+                }
             }
         }
+    }
+
+    /**
+     * Opens ONLY the photos and videos captured by this CameraX Pro application.
+     * Prevents dumping random device files, downloads, or external messaging media.
+     */
+    private fun openAppMediaGallery() {
+        val media = getLatestAppMediaUri()
+        if (media != null) {
+            try {
+                val intent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
+                    setDataAndType(media.first, media.second)
+                    flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                }
+                startActivity(intent)
+                return
+            } catch (e: Exception) {
+                Log.e(TAG, "Could not launch app media viewer", e)
+            }
+        }
+
+        Toast.makeText(
+            this,
+            "No CameraX photos or videos captured yet. Capture a photo or video to view in app gallery!",
+            Toast.LENGTH_SHORT
+        ).show()
     }
 
     private fun navigateNextCameraMode() {
@@ -1781,7 +1903,7 @@ class MainActivity : AppCompatActivity() {
                 val x = ev.rawX.toInt()
                 val y = ev.rawY.toInt()
 
-                // 1. Touch outside to close Effects Studio Drawer
+                // 1. Touch outside to dismiss Effects Studio Drawer
                 if (viewBinding.effectsStudioDrawer.visibility == View.VISIBLE) {
                     val headerRect = Rect()
                     viewBinding.layoutEffectsHeader.getGlobalVisibleRect(headerRect)
@@ -1791,18 +1913,16 @@ class MainActivity : AppCompatActivity() {
                     if (!headerRect.contains(x, y) && !subItemsRect.contains(x, y)) {
                         viewBinding.effectsStudioDrawer.visibility = View.GONE
                         window.decorView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-                        return true
                     }
                 }
 
-                // 2. Touch outside to close Pro Studio Drawer
+                // 2. Touch outside to dismiss Pro Studio Drawer
                 if (viewBinding.proStudioDrawer.visibility == View.VISIBLE) {
                     val proDrawerRect = Rect()
                     viewBinding.proStudioDrawer.getGlobalVisibleRect(proDrawerRect)
                     if (!proDrawerRect.contains(x, y)) {
                         viewBinding.proStudioDrawer.visibility = View.GONE
                         window.decorView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-                        return true
                     }
                 }
             }
@@ -1811,18 +1931,29 @@ class MainActivity : AppCompatActivity() {
                     val dx = ev.rawX - touchDownX
                     val dy = ev.rawY - touchDownY
 
-                    // Natural human swipe detection with curved thumb tolerance
-                    if (Math.abs(dx) > 55 && Math.abs(dx) > Math.abs(dy) * 1.05f) {
+                    // Responsive swipe detection with curved thumb gesture tolerance
+                    if (Math.abs(dx) > 36 && Math.abs(dx) > Math.abs(dy) * 0.88f) {
                         val topToolbarRect = Rect()
                         viewBinding.proModeBar.getGlobalVisibleRect(topToolbarRect)
                         val bottomControlsRect = Rect()
                         viewBinding.bottomControls.getGlobalVisibleRect(bottomControlsRect)
 
-                        val inSwipeZone = ev.rawY > topToolbarRect.bottom && (bottomControlsRect.top <= 0 || ev.rawY < bottomControlsRect.top)
+                        // Swipe zone covers the entire active camera screen: viewfinder, overlay, and mode carousel
+                        val minSwipeY = if (topToolbarRect.bottom > 0) topToolbarRect.bottom.toFloat() else 0f
+                        val maxSwipeY = if (bottomControlsRect.bottom > 0) bottomControlsRect.bottom.toFloat() else Float.MAX_VALUE
+                        val inSwipeZone = ev.rawY >= minSwipeY && ev.rawY <= maxSwipeY
+
                         if (inSwipeZone) {
                             isSwipeConsumed = true
                             if (viewBinding.effectsStudioDrawer.visibility == View.VISIBLE) {
-                                if (dx < 0) navigateNextEffectOrFilter() else navigatePreviousEffectOrFilter()
+                                val subItemsRect = Rect()
+                                viewBinding.layoutEffectsSubItems.getGlobalVisibleRect(subItemsRect)
+                                if (subItemsRect.contains(touchDownX.toInt(), touchDownY.toInt())) {
+                                    if (dx < 0) navigateNextEffectOrFilter() else navigatePreviousEffectOrFilter()
+                                } else {
+                                    viewBinding.effectsStudioDrawer.visibility = View.GONE
+                                    if (dx < 0) navigateNextCameraMode() else navigatePreviousCameraMode()
+                                }
                             } else {
                                 if (dx < 0) navigateNextCameraMode() else navigatePreviousCameraMode()
                             }
@@ -1838,17 +1969,27 @@ class MainActivity : AppCompatActivity() {
                     val duration = SystemClock.uptimeMillis() - touchDownTime
 
                     // Quick flick gesture support
-                    if (Math.abs(diffX) > 35 && Math.abs(diffX) > Math.abs(diffY) * 0.9f && duration < 900) {
+                    if (Math.abs(diffX) > 26 && Math.abs(diffX) > Math.abs(diffY) * 0.85f && duration < 900) {
                         val topToolbarRect = Rect()
                         viewBinding.proModeBar.getGlobalVisibleRect(topToolbarRect)
                         val bottomControlsRect = Rect()
                         viewBinding.bottomControls.getGlobalVisibleRect(bottomControlsRect)
 
-                        val inSwipeZone = ev.rawY > topToolbarRect.bottom && (bottomControlsRect.top <= 0 || ev.rawY < bottomControlsRect.top)
+                        val minSwipeY = if (topToolbarRect.bottom > 0) topToolbarRect.bottom.toFloat() else 0f
+                        val maxSwipeY = if (bottomControlsRect.bottom > 0) bottomControlsRect.bottom.toFloat() else Float.MAX_VALUE
+                        val inSwipeZone = ev.rawY >= minSwipeY && ev.rawY <= maxSwipeY
+
                         if (inSwipeZone) {
                             isSwipeConsumed = true
                             if (viewBinding.effectsStudioDrawer.visibility == View.VISIBLE) {
-                                if (diffX < 0) navigateNextEffectOrFilter() else navigatePreviousEffectOrFilter()
+                                val subItemsRect = Rect()
+                                viewBinding.layoutEffectsSubItems.getGlobalVisibleRect(subItemsRect)
+                                if (subItemsRect.contains(touchDownX.toInt(), touchDownY.toInt())) {
+                                    if (diffX < 0) navigateNextEffectOrFilter() else navigatePreviousEffectOrFilter()
+                                } else {
+                                    viewBinding.effectsStudioDrawer.visibility = View.GONE
+                                    if (diffX < 0) navigateNextCameraMode() else navigatePreviousCameraMode()
+                                }
                             } else {
                                 if (diffX < 0) navigateNextCameraMode() else navigatePreviousCameraMode()
                             }
