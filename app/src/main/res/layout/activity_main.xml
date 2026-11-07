@@ -85,7 +85,7 @@
                 android:background="@drawable/bg_circle_icon_button"
                 android:src="@drawable/ic_grid_on"
                 app:tint="#CCCCCC"
-                android:contentDescription="Framing Guides & Grids" />
+                android:contentDescription="Framing Guides &amp; Grids" />
 
             <View
                 android:id="@+id/viewGuideBadge"
