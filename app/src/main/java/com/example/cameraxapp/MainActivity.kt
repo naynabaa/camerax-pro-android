@@ -1936,45 +1936,11 @@ class MainActivity : AppCompatActivity() {
             ): Boolean {
                 if (e1 != null && Math.abs(velocityX) > Math.abs(velocityY) * 1.1f && Math.abs(e2.x - e1.x) > 40) {
                     val isNext = velocityX < 0
-                    if (viewBinding.proOverlayView.currentGrid != ProOverlayView.GridType.NONE || viewBinding.cardGuidePicker.visibility == View.VISIBLE) {
-                        val grids = listOf(
-                            ProOverlayView.GridType.NONE,
-                            ProOverlayView.GridType.THIRDS,
-                            ProOverlayView.GridType.GOLDEN_SPIRAL,
-                            ProOverlayView.GridType.GOLDEN_PHI,
-                            ProOverlayView.GridType.DIAGONAL,
-                            ProOverlayView.GridType.CINEMATIC
-                        )
-                        val curIdx = grids.indexOf(viewBinding.proOverlayView.currentGrid)
-                        val nextIdx = if (isNext) (curIdx + 1) % grids.size else (curIdx - 1 + grids.size) % grids.size
-                        setFramingGrid(grids[nextIdx])
-                        window.decorView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-                        return true
-                    } else if (viewBinding.panelCreativeFilterTray.visibility == View.VISIBLE) {
-                        val filterList = listOf(
-                            GPUImageFilterPreset.NORMAL,
-                            GPUImageFilterPreset.PORTRA_400,
-                            GPUImageFilterPreset.TEAL_ORANGE,
-                            GPUImageFilterPreset.FUJI_400H,
-                            GPUImageFilterPreset.CINEMATIC,
-                            GPUImageFilterPreset.NOIR_CONTRAST,
-                            GPUImageFilterPreset.BLACK_AND_WHITE,
-                            GPUImageFilterPreset.VINTAGE,
-                            GPUImageFilterPreset.SUNSET_WARMTH,
-                            GPUImageFilterPreset.HDR_LOOK,
-                            GPUImageFilterPreset.CYBERPUNK
-                        )
-                        val curIdx = filterList.indexOf(activeFilter)
-                        val nextIdx = if (isNext) (curIdx + 1) % filterList.size else (curIdx - 1 + filterList.size) % filterList.size
-                        applyCreativeFilter(filterList[nextIdx])
-                        window.decorView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-                        return true
-                    } else {
-                        val curIdx = allCameraModes.indexOf(cameraMode)
-                        val nextIdx = if (isNext) (curIdx + 1) % allCameraModes.size else (curIdx - 1 + allCameraModes.size) % allCameraModes.size
-                        setMode(allCameraModes[nextIdx], slideDirection = if (isNext) 1 else -1)
-                        return true
-                    }
+                    val curIdx = allCameraModes.indexOf(cameraMode)
+                    val nextIdx = if (isNext) (curIdx + 1) % allCameraModes.size else (curIdx - 1 + allCameraModes.size) % allCameraModes.size
+                    setMode(allCameraModes[nextIdx], slideDirection = if (isNext) 1 else -1)
+                    window.decorView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                    return true
                 }
                 return false
             }
