@@ -266,7 +266,7 @@ class ProOverlayView @JvmOverloads constructor(
 
     private val cineMattePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
-        color = Color.parseColor("#CC000000") // 80% Black letterbox
+        color = Color.parseColor("#FF000000") // Pure Jet Black (#000000) hard frame around live video feed
     }
 
     private val focusPeakingPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -321,7 +321,7 @@ class ProOverlayView @JvmOverloads constructor(
     // --- PRE-ALLOCATED ASPECT MATTE & VISUAL BALANCE PAINTS & RECTS ---
     private val mattePaint = Paint().apply {
         style = Paint.Style.FILL
-        color = Color.parseColor("#AA000000") // 67% translucent dark matte per user specification
+        color = Color.parseColor("#FF000000") // Pure Jet Black (#000000) hard frame around live video feed
     }
     private val matteGuideLinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE

@@ -286,10 +286,10 @@ public class MainActivity extends AppCompatActivity {
         Preview preview = new Preview.Builder().build();
         preview.setSurfaceProvider(viewFinder.getSurfaceProvider());
 
-        imageCapture = new ImageCapture.Builder().setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY).build();
+        imageCapture = new ImageCapture.Builder().setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY).build();
 
         Recorder recorder = new Recorder.Builder()
-                .setQualitySelector(QualitySelector.from(Quality.HD)).build();
+                .setQualitySelector(QualitySelector.from(Quality.FHD)).build();
         videoCapture = VideoCapture.withOutput(recorder);
 
         try {

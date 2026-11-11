@@ -121,6 +121,8 @@ class MainActivity : AppCompatActivity() {
     private var isCountingDown = false
     private var isBurstCapturing = false
     private var burstCount = 0
+    private val maxBurstBuffer = 30
+    private var remainingBurstBuffer = 30
     private val burstHandler = Handler(Looper.getMainLooper())
     private var burstRunnable: Runnable? = null
     private var isGridVisible = true
@@ -512,7 +514,7 @@ class MainActivity : AppCompatActivity() {
 
         // ImageCapture Use Case
         imageCapture = ImageCapture.Builder()
-            .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+            .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
             .setFlashMode(flashMode)
             .build()
 
@@ -520,8 +522,8 @@ class MainActivity : AppCompatActivity() {
         val recorder = Recorder.Builder()
             .setQualitySelector(
                 QualitySelector.from(
-                    Quality.HD,
-                    FallbackStrategy.lowerQualityOrHigherThan(Quality.HD)
+                    Quality.FHD,
+                    FallbackStrategy.lowerQualityOrHigherThan(Quality.FHD)
                 )
             )
             .build()
@@ -765,15 +767,20 @@ class MainActivity : AppCompatActivity() {
 
     private fun startBurstCapturingLoop() {
         if (!isBurstCapturing || cameraMode != CameraMode.PHOTO) return
+        if (remainingBurstBuffer <= 0) {
+            viewBinding.tvBurstBadge.text = "BUFFER FULL · FLUSHING"
+            return
+        }
 
         burstCount++
-        viewBinding.tvBurstBadge.text = "BURST: $burstCount"
+        remainingBurstBuffer--
+        viewBinding.tvBurstBadge.text = "BURST: $burstCount · REMAINING: ${remainingBurstBuffer}r"
         takePhoto(isBurst = true)
 
-        // Rapid capture every 250ms
+        // Rapid capture every 200ms
         burstHandler.postDelayed({
             startBurstCapturingLoop()
-        }, 250)
+        }, 200)
     }
 
     /**
@@ -1919,6 +1926,57 @@ class MainActivity : AppCompatActivity() {
                     }.start()
                 
                 return true
+            }
+
+            override fun onFling(
+                e1: MotionEvent?,
+                e2: MotionEvent,
+                velocityX: Float,
+                velocityY: Float
+            ): Boolean {
+                if (e1 != null && Math.abs(velocityX) > Math.abs(velocityY) * 1.1f && Math.abs(e2.x - e1.x) > 40) {
+                    val isNext = velocityX < 0
+                    if (viewBinding.proOverlayView.currentGrid != ProOverlayView.GridType.NONE || viewBinding.cardGuidePicker.visibility == View.VISIBLE) {
+                        val grids = listOf(
+                            ProOverlayView.GridType.NONE,
+                            ProOverlayView.GridType.THIRDS,
+                            ProOverlayView.GridType.GOLDEN_SPIRAL,
+                            ProOverlayView.GridType.GOLDEN_PHI,
+                            ProOverlayView.GridType.DIAGONAL,
+                            ProOverlayView.GridType.CINEMATIC
+                        )
+                        val curIdx = grids.indexOf(viewBinding.proOverlayView.currentGrid)
+                        val nextIdx = if (isNext) (curIdx + 1) % grids.size else (curIdx - 1 + grids.size) % grids.size
+                        setFramingGrid(grids[nextIdx])
+                        window.decorView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                        return true
+                    } else if (viewBinding.panelCreativeFilterTray.visibility == View.VISIBLE) {
+                        val filterList = listOf(
+                            GPUImageFilterPreset.NORMAL,
+                            GPUImageFilterPreset.PORTRA_400,
+                            GPUImageFilterPreset.TEAL_ORANGE,
+                            GPUImageFilterPreset.FUJI_400H,
+                            GPUImageFilterPreset.CINEMATIC,
+                            GPUImageFilterPreset.NOIR_CONTRAST,
+                            GPUImageFilterPreset.BLACK_AND_WHITE,
+                            GPUImageFilterPreset.VINTAGE,
+                            GPUImageFilterPreset.SUNSET_WARMTH,
+                            GPUImageFilterPreset.HDR_LOOK,
+                            GPUImageFilterPreset.CYBERPUNK
+                        )
+                        val curIdx = filterList.indexOf(activeFilter)
+                        val nextIdx = if (isNext) (curIdx + 1) % filterList.size else (curIdx - 1 + filterList.size) % filterList.size
+                        applyCreativeFilter(filterList[nextIdx])
+                        window.decorView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                        return true
+                    } else {
+                        val curIdx = allCameraModes.indexOf(cameraMode)
+                        val nextIdx = if (isNext) (curIdx + 1) % allCameraModes.size else (curIdx - 1 + allCameraModes.size) % allCameraModes.size
+                        setMode(allCameraModes[nextIdx], slideDirection = if (isNext) 1 else -1)
+                        return true
+                    }
+                }
+                return false
             }
         })
 

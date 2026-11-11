@@ -61,10 +61,10 @@ fun CameraXScreen(modifier: Modifier = Modifier) {
     var exposureCompensation by remember { mutableStateOf(0f) }
 
     val recorder = remember {
-        Recorder.Builder().setQualitySelector(QualitySelector.from(Quality.HD)).build()
+        Recorder.Builder().setQualitySelector(QualitySelector.from(Quality.FHD)).build()
     }
     val videoCapture = remember { VideoCapture.withOutput(recorder) }
-    val imageCapture = remember { ImageCapture.Builder().setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY).build() }
+    val imageCapture = remember { ImageCapture.Builder().setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY).build() }
 
     Box(modifier = modifier.fillMaxSize().background(Color.Black)) {
         // CameraX Preview
