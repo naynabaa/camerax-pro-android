@@ -514,7 +514,7 @@ class MainActivity : AppCompatActivity() {
 
         // ImageCapture Use Case
         imageCapture = ImageCapture.Builder()
-            .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
+            .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
             .setFlashMode(flashMode)
             .build()
 
@@ -522,8 +522,8 @@ class MainActivity : AppCompatActivity() {
         val recorder = Recorder.Builder()
             .setQualitySelector(
                 QualitySelector.from(
-                    Quality.FHD,
-                    FallbackStrategy.lowerQualityOrHigherThan(Quality.FHD)
+                    Quality.HD,
+                    FallbackStrategy.lowerQualityOrHigherThan(Quality.HD)
                 )
             )
             .build()
