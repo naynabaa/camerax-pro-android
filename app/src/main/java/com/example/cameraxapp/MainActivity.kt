@@ -5,9 +5,20 @@ import android.content.ContentUris
 import android.content.ContentValues
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.ColorMatrix
+import android.graphics.ColorMatrixColorFilter
+import android.graphics.Matrix
+import android.graphics.Paint
+import android.graphics.PointF
 import android.graphics.Rect
+import android.graphics.RenderEffect
 import android.graphics.Typeface
+import android.media.ExifInterface
+import android.media.FaceDetector
 import android.os.Build
 import android.os.Bundle
 import android.os.CountDownTimer
@@ -20,7 +31,9 @@ import android.view.GestureDetector
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
+import android.view.TextureView
 import android.view.View
+import android.view.ViewGroup
 import android.view.animation.DecelerateInterpolator
 import android.widget.Chronometer
 import android.widget.FrameLayout
@@ -195,7 +208,8 @@ class MainActivity : AppCompatActivity() {
         setupBurstMode()
         setupExposureSlider()
         setupFilterAndArControls()
-        selectCreativeCategory(CreativeTarget.FILTERS)
+        selectCreativeCategory(CreativeTarget.FILTERS, fromUser = false)
+        isLastActionCreative = false
         viewBinding.modeScrollView.post { centerModeTab(cameraMode, smooth = false) }
 
         if (allPermissionsGranted()) {
@@ -229,6 +243,8 @@ class MainActivity : AppCompatActivity() {
     private var currentCreativeTarget = CreativeTarget.FILTERS
     private var isLastActionCreative = false
     private var currentTextureEffectIndex = 0
+    private var isUpdatingEffectSwitches = false
+    private var analysisFrameCounter = 0
     private var lastCapturedUri: Uri? = null
     private var lastCapturedMimeType: String? = null
 
@@ -283,18 +299,20 @@ class MainActivity : AppCompatActivity() {
         // Top Toolbar: Creative Filters / Effects Drawer (strictly Filters, Lens, and Effects only)
         viewBinding.btnFilter.setOnClickListener {
             val isVisible = viewBinding.effectsStudioDrawer.visibility == View.VISIBLE
-            viewBinding.effectsStudioDrawer.visibility = if (isVisible) View.GONE else View.VISIBLE
-            if (!isVisible) {
+            if (isVisible) {
+                viewBinding.effectsStudioDrawer.visibility = View.GONE
+                isLastActionCreative = false
+            } else {
                 viewBinding.proStudioDrawer.visibility = View.GONE
-                selectCreativeCategory(currentCreativeTarget)
+                viewBinding.layoutGuideFloatingBar.visibility = View.GONE
+                viewBinding.effectsStudioDrawer.visibility = View.VISIBLE
+                selectCreativeCategory(currentCreativeTarget, fromUser = true)
             }
+            window.decorView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
         }
         viewBinding.btnCloseEffectsDrawer.setOnClickListener {
             viewBinding.effectsStudioDrawer.visibility = View.GONE
-            window.decorView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-        }
-        viewBinding.effectsDrawerBackdrop.setOnClickListener {
-            viewBinding.effectsStudioDrawer.visibility = View.GONE
+            isLastActionCreative = false
             window.decorView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
         }
 
@@ -327,9 +345,9 @@ class MainActivity : AppCompatActivity() {
         viewBinding.btnQuickGridCinematic.setOnClickListener { setGridMode(ProOverlayView.GridType.CINEMATIC_239) }
 
         // Creative Drawer Category Switcher Buttons (FILTERS, LENSES, EFFECTS)
-        viewBinding.btnCategoryFilters.setOnClickListener { selectCreativeCategory(CreativeTarget.FILTERS) }
-        viewBinding.btnCategoryLenses.setOnClickListener { selectCreativeCategory(CreativeTarget.LENSES) }
-        viewBinding.btnCategoryEffects.setOnClickListener { selectCreativeCategory(CreativeTarget.EFFECTS) }
+        viewBinding.btnCategoryFilters.setOnClickListener { selectCreativeCategory(CreativeTarget.FILTERS, fromUser = true) }
+        viewBinding.btnCategoryLenses.setOnClickListener { selectCreativeCategory(CreativeTarget.LENSES, fromUser = true) }
+        viewBinding.btnCategoryEffects.setOnClickListener { selectCreativeCategory(CreativeTarget.EFFECTS, fromUser = true) }
 
         // Top Toolbar: Self-Timer Toggle (Photo Mode)
         viewBinding.btnTimer.setOnClickListener { cycleCountdownTimer() }
@@ -381,16 +399,31 @@ class MainActivity : AppCompatActivity() {
         viewBinding.btnArHud.setOnClickListener { setArLens("scifi_hud") }
 
         viewBinding.switchFilmGrain.setOnCheckedChangeListener { _, isChecked ->
-            currentCreativeTarget = CreativeTarget.EFFECTS
-            isLastActionCreative = true
+            viewBinding.proOverlayView.enableFilmGrain = isChecked
+            if (!isUpdatingEffectSwitches) {
+                currentCreativeTarget = CreativeTarget.EFFECTS
+                isLastActionCreative = true
+                updateCreativeStatusUI()
+                showHudNotice("35mm Film Grain ${if (isChecked) "ON" else "OFF"}")
+            }
         }
         viewBinding.switchDateStamp.setOnCheckedChangeListener { _, isChecked ->
-            currentCreativeTarget = CreativeTarget.EFFECTS
-            isLastActionCreative = true
+            viewBinding.proOverlayView.enableDateStamp = isChecked
+            if (!isUpdatingEffectSwitches) {
+                currentCreativeTarget = CreativeTarget.EFFECTS
+                isLastActionCreative = true
+                updateCreativeStatusUI()
+                showHudNotice("Retro Date Stamp ${if (isChecked) "ON" else "OFF"}")
+            }
         }
         viewBinding.switchCineFlare.setOnCheckedChangeListener { _, isChecked ->
-            currentCreativeTarget = CreativeTarget.EFFECTS
-            isLastActionCreative = true
+            viewBinding.proOverlayView.enableCineFlare = isChecked
+            if (!isUpdatingEffectSwitches) {
+                currentCreativeTarget = CreativeTarget.EFFECTS
+                isLastActionCreative = true
+                updateCreativeStatusUI()
+                showHudNotice("Anamorphic Flare ${if (isChecked) "ON" else "OFF"}")
+            }
         }
 
         // TAB 1: Framing Grids Symmetrical Buttons
@@ -514,7 +547,7 @@ class MainActivity : AppCompatActivity() {
 
         // ImageCapture Use Case
         imageCapture = ImageCapture.Builder()
-            .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+            .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
             .setFlashMode(flashMode)
             .build()
 
@@ -522,8 +555,8 @@ class MainActivity : AppCompatActivity() {
         val recorder = Recorder.Builder()
             .setQualitySelector(
                 QualitySelector.from(
-                    Quality.HD,
-                    FallbackStrategy.lowerQualityOrHigherThan(Quality.HD)
+                    Quality.FHD,
+                    FallbackStrategy.lowerQualityOrHigherThan(Quality.FHD)
                 )
             )
             .build()
@@ -681,6 +714,77 @@ class MainActivity : AppCompatActivity() {
                             Log.e(TAG, "Luma frame analysis error", e)
                         }
                     }
+
+                    // 4. Built-in Real-Time FaceDetector Tracking for AR Lenses (no external asset required)
+                    analysisFrameCounter++
+                    if (viewBinding.arFaceOverlayView.currentLens != ARFaceOverlayView.ArLensMode.NONE &&
+                        analysisFrameCounter % 3 == 0
+                    ) {
+                        try {
+                            val plane = imageProxy.planes[0]
+                            val buffer = plane.buffer
+                            val srcW = imageProxy.width
+                            val srcH = imageProxy.height
+                            val rowStride = plane.rowStride
+                            val pixelStride = plane.pixelStride
+                            val rot = imageProxy.imageInfo.rotationDegrees
+
+                            val step = Math.max(2, Math.min(srcW, srcH) / 140)
+                            val rotSideways = rot == 90 || rot == 270
+                            val rawOutW = if (rotSideways) (srcH / step) else (srcW / step)
+                            val outW = (rawOutW and 1.inv()).coerceAtLeast(16)
+                            val outH = (if (rotSideways) (srcW / step) else (srcH / step)).coerceAtLeast(16)
+
+                            val pixels = IntArray(outW * outH)
+                            for (oy in 0 until outH) {
+                                for (ox in 0 until outW) {
+                                    val sx: Int
+                                    val sy: Int
+                                    when (rot) {
+                                        90 -> {
+                                            sx = (oy * step).coerceIn(0, srcW - 1)
+                                            sy = ((srcH - 1) - (ox * step)).coerceIn(0, srcH - 1)
+                                        }
+                                        180 -> {
+                                            sx = ((srcW - 1) - (ox * step)).coerceIn(0, srcW - 1)
+                                            sy = ((srcH - 1) - (oy * step)).coerceIn(0, srcH - 1)
+                                        }
+                                        270 -> {
+                                            sx = ((srcW - 1) - (oy * step)).coerceIn(0, srcW - 1)
+                                            sy = (ox * step).coerceIn(0, srcH - 1)
+                                        }
+                                        else -> {
+                                            sx = (ox * step).coerceIn(0, srcW - 1)
+                                            sy = (oy * step).coerceIn(0, srcH - 1)
+                                        }
+                                    }
+                                    val idx = sy * rowStride + sx * pixelStride
+                                    val yVal = if (idx in 0 until buffer.limit()) (buffer.get(idx).toInt() and 0xFF) else 128
+                                    pixels[oy * outW + ox] = (0xFF shl 24) or (yVal shl 16) or (yVal shl 8) or yVal
+                                }
+                            }
+
+                            val faceBmp = Bitmap.createBitmap(outW, outH, Bitmap.Config.RGB_565)
+                            faceBmp.setPixels(pixels, 0, outW, 0, 0, outW, outH)
+                            val faces = arrayOfNulls<FaceDetector.Face>(1)
+                            val count = FaceDetector(outW, outH, 1).findFaces(faceBmp, faces)
+                            if (count > 0 && faces[0] != null) {
+                                val mid = PointF()
+                                faces[0]!!.getMidPoint(mid)
+                                val eyeDist = faces[0]!!.eyesDistance()
+                                viewBinding.arFaceOverlayView.updateSimpleFace(
+                                    normEyeBridgeX = (mid.x / outW.toFloat()).coerceIn(0.05f, 0.95f),
+                                    normEyeBridgeY = (mid.y / outH.toFloat()).coerceIn(0.05f, 0.95f),
+                                    normEyeDist = (eyeDist / outW.toFloat()).coerceIn(0.06f, 0.55f),
+                                    isFrontFacing = lensFacing == CameraSelector.DEFAULT_FRONT_CAMERA
+                                )
+                            }
+                            faceBmp.recycle()
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Face tracking error", e)
+                        }
+                    }
+
                     imageProxy.close()
                 }
             }
@@ -700,6 +804,9 @@ class MainActivity : AppCompatActivity() {
             // Initialize Exposure compensation range from CameraInfo
             initExposureRange()
 
+            // Re-apply real-time ColorMatrix / RenderEffect filter onto TextureView preview
+            viewBinding.viewFinder.post { applyLivePreviewColorMatrix() }
+
         } catch (exc: Exception) {
             Log.e(TAG, "Use case binding failed, attempting without analysis", exc)
             try {
@@ -711,6 +818,7 @@ class MainActivity : AppCompatActivity() {
                 }
                 cameraControl = camera?.cameraControl
                 initExposureRange()
+                viewBinding.viewFinder.post { applyLivePreviewColorMatrix() }
             } catch (e: Exception) {
                 Toast.makeText(this, "Camera start error: ${e.message}", Toast.LENGTH_SHORT).show()
             }
@@ -1000,9 +1108,11 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun selectCreativeCategory(target: CreativeTarget) {
+    private fun selectCreativeCategory(target: CreativeTarget, fromUser: Boolean = true) {
         currentCreativeTarget = target
-        isLastActionCreative = true
+        if (fromUser) {
+            isLastActionCreative = true
+        }
 
         val isFilter = target == CreativeTarget.FILTERS
         val isLens = target == CreativeTarget.LENSES
@@ -1028,15 +1138,185 @@ class MainActivity : AppCompatActivity() {
         val statusText = when (currentCreativeTarget) {
             CreativeTarget.FILTERS -> "FILTER: " + currentFilterName.uppercase(Locale.ROOT)
             CreativeTarget.LENSES -> "LENS: " + currentArLensName.replace("_", " ").uppercase(Locale.ROOT)
-            CreativeTarget.EFFECTS -> "TEXTURES: LIVE"
+            CreativeTarget.EFFECTS -> {
+                val g = viewBinding.proOverlayView.enableFilmGrain
+                val d = viewBinding.proOverlayView.enableDateStamp
+                val f = viewBinding.proOverlayView.enableCineFlare
+                when {
+                    g && d && f -> "EFFECT: CINEMA COMBO"
+                    g -> "EFFECT: 35MM GRAIN"
+                    d -> "EFFECT: 90S STAMP"
+                    f -> "EFFECT: CINE FLARE"
+                    else -> "EFFECT: OFF"
+                }
+            }
         }
         viewBinding.tvEffectsActiveStatus.text = statusText
     }
 
-    private fun setFilterPreset(preset: String) {
+    private fun scrollChipIntoView(scrollView: android.widget.HorizontalScrollView, child: View) {
+        scrollView.post {
+            val scrollX = (child.left - (scrollView.width / 2) + (child.width / 2)).coerceAtLeast(0)
+            scrollView.smoothScrollTo(scrollX, 0)
+        }
+    }
+
+    private fun findTextureView(view: View): TextureView? {
+        if (view is TextureView) return view
+        if (view is ViewGroup) {
+            for (i in 0 until view.childCount) {
+                val found = findTextureView(view.getChildAt(i))
+                if (found != null) return found
+            }
+        }
+        return null
+    }
+
+    private fun applyLivePreviewColorMatrix() {
+        val targetView = findTextureView(viewBinding.viewFinder)
+        if (targetView == null) {
+            viewBinding.viewFinder.post { applyLivePreviewColorMatrix() }
+            return
+        }
+
+        val bri = viewBinding.proOverlayView.liveBrightnessPercent
+        val con = viewBinding.proOverlayView.liveContrastPercent
+        val sat = viewBinding.proOverlayView.liveSaturationPercent
+        val isIdentity = currentFilterName == "normal" && bri == 0 && con == 0 && sat == 0
+
+        if (isIdentity) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                targetView.setRenderEffect(null)
+            } else {
+                targetView.setLayerType(View.LAYER_TYPE_NONE, null)
+            }
+            return
+        }
+
+        val combined = ColorMatrix()
+
+        // 1. Base Preset Color Matrix
+        when (currentFilterName.lowercase(Locale.ROOT)) {
+            "bw", "black_and_white", "mono" -> {
+                combined.setSaturation(0f)
+                val contrast = 1.24f
+                val t = (-0.5f * contrast + 0.5f) * 255f
+                combined.postConcat(ColorMatrix(floatArrayOf(
+                    contrast, 0f, 0f, 0f, t,
+                    0f, contrast, 0f, 0f, t,
+                    0f, 0f, contrast, 0f, t,
+                    0f, 0f, 0f, 1f, 0f
+                )))
+            }
+            "vintage" -> {
+                val satMatrix = ColorMatrix().apply { setSaturation(0.65f) }
+                combined.postConcat(satMatrix)
+                combined.postConcat(ColorMatrix(floatArrayOf(
+                    0.95f, 0.22f, 0.08f, 0f, 14f,
+                    0.12f, 0.88f, 0.08f, 0f, 8f,
+                    0.05f, 0.14f, 0.72f, 0f, -10f,
+                    0f, 0f, 0f, 1f, 0f
+                )))
+            }
+            "cinematic" -> {
+                val satMatrix = ColorMatrix().apply { setSaturation(1.12f) }
+                combined.postConcat(satMatrix)
+                combined.postConcat(ColorMatrix(floatArrayOf(
+                    1.14f, -0.03f, 0.0f, 0f, 6f,
+                    -0.02f, 1.05f, 0.02f, 0f, 0f,
+                    -0.06f, 0.04f, 1.18f, 0f, 8f,
+                    0f, 0f, 0f, 1f, 0f
+                )))
+            }
+            "cyberpunk", "cyber" -> {
+                val satMatrix = ColorMatrix().apply { setSaturation(1.45f) }
+                combined.postConcat(satMatrix)
+                combined.postConcat(ColorMatrix(floatArrayOf(
+                    1.18f, -0.08f, 0.14f, 0f, 4f,
+                    -0.06f, 0.96f, 0.16f, 0f, -2f,
+                    0.12f, 0.04f, 1.28f, 0f, 12f,
+                    0f, 0f, 0f, 1f, 0f
+                )))
+            }
+            "hdr" -> {
+                val satMatrix = ColorMatrix().apply { setSaturation(1.38f) }
+                combined.postConcat(satMatrix)
+                val contrast = 1.22f
+                val t = (-0.5f * contrast + 0.5f) * 255f
+                combined.postConcat(ColorMatrix(floatArrayOf(
+                    contrast, 0f, 0f, 0f, t,
+                    0f, contrast, 0f, 0f, t,
+                    0f, 0f, contrast, 0f, t,
+                    0f, 0f, 0f, 1f, 0f
+                )))
+            }
+        }
+
+        // 2. Live Adjustment Sliders (Brightness / Contrast / Saturation)
+        if (sat != 0) {
+            val satVal = (1.0f + (sat / 100f)).coerceIn(0f, 2.5f)
+            combined.postConcat(ColorMatrix().apply { setSaturation(satVal) })
+        }
+        if (con != 0) {
+            val conVal = if (con >= 0) 1.0f + (con / 100f) else 1.0f + (con / 200f)
+            val translate = (-0.5f * conVal + 0.5f) * 255f
+            combined.postConcat(ColorMatrix(floatArrayOf(
+                conVal, 0f, 0f, 0f, translate,
+                0f, conVal, 0f, 0f, translate,
+                0f, 0f, conVal, 0f, translate,
+                0f, 0f, 0f, 1f, 0f
+            )))
+        }
+        if (bri != 0) {
+            val bOff = bri * 1.2f
+            combined.postConcat(ColorMatrix(floatArrayOf(
+                1f, 0f, 0f, 0f, bOff,
+                0f, 1f, 0f, 0f, bOff,
+                0f, 0f, 1f, 0f, bOff,
+                0f, 0f, 0f, 1f, 0f
+            )))
+        }
+
+        val colorFilter = ColorMatrixColorFilter(combined)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            targetView.setRenderEffect(RenderEffect.createColorFilterEffect(colorFilter))
+        } else {
+            val paint = Paint().apply { this.colorFilter = colorFilter }
+            targetView.setLayerType(View.LAYER_TYPE_HARDWARE, paint)
+        }
+    }
+
+    private var hudNoticeRunnable: Runnable? = null
+    private val hudNoticeHandler = Handler(Looper.getMainLooper())
+
+    private fun showHudNotice(text: String, isWarning: Boolean = false) {
+        runOnUiThread {
+            try {
+                hudNoticeRunnable?.let { hudNoticeHandler.removeCallbacks(it) }
+                viewBinding.tvHudNotice.text = text
+                viewBinding.tvHudNotice.setTextColor(if (isWarning) Color.parseColor("#F59E0B") else Color.parseColor("#34D399"))
+                viewBinding.layoutHudNotice.visibility = View.VISIBLE
+                viewBinding.layoutHudNotice.alpha = 1.0f
+                hudNoticeRunnable = Runnable {
+                    viewBinding.layoutHudNotice.animate()
+                        .alpha(0f)
+                        .setDuration(250)
+                        .withEndAction { viewBinding.layoutHudNotice.visibility = View.GONE }
+                        .start()
+                }
+                hudNoticeHandler.postDelayed(hudNoticeRunnable!!, 1700)
+            } catch (e: Exception) {
+                // Ignore view lifecycle edge case
+            }
+        }
+    }
+
+    private fun setFilterPreset(preset: String, showNotice: Boolean = true) {
         currentFilterName = preset
-        currentCreativeTarget = CreativeTarget.FILTERS
-        isLastActionCreative = true
+        if (showNotice) {
+            currentCreativeTarget = CreativeTarget.FILTERS
+            isLastActionCreative = true
+        }
         val filterPreset = when (preset.lowercase(Locale.ROOT)) {
             "cinematic" -> FilterManager.FilterPreset.CINEMATIC
             "vintage" -> FilterManager.FilterPreset.VINTAGE
@@ -1046,6 +1326,9 @@ class MainActivity : AppCompatActivity() {
             else -> FilterManager.FilterPreset.NORMAL
         }
         filterManager.setPreset(filterPreset)
+        viewBinding.proOverlayView.activeFilterPreset = preset
+        applyLivePreviewColorMatrix()
+
         val filterButtons = listOf(
             viewBinding.btnFilterNormal to "normal",
             viewBinding.btnFilterCinematic to "cinematic",
@@ -1059,19 +1342,35 @@ class MainActivity : AppCompatActivity() {
             if (isActive) {
                 btn.setBackgroundResource(R.drawable.bg_cinema_button_active)
                 btn.setTextColor(Color.parseColor("#0F172A"))
+                scrollChipIntoView(viewBinding.scrollFiltersStrip, btn)
             } else {
                 btn.setBackgroundResource(R.drawable.bg_cinema_button_inactive)
                 btn.setTextColor(Color.parseColor("#94A3B8"))
             }
         }
         updateCreativeStatusUI()
-        // silent (no popup)
+        if (showNotice) {
+            showHudNotice("Filter: ${preset.replace('_', ' ').uppercase(Locale.ROOT)}")
+        }
     }
 
-    private fun setArLens(lens: String) {
+    private fun setArLens(lens: String, showNotice: Boolean = true) {
         currentArLensName = lens
-        currentCreativeTarget = CreativeTarget.LENSES
-        isLastActionCreative = true
+        if (showNotice) {
+            currentCreativeTarget = CreativeTarget.LENSES
+            isLastActionCreative = true
+        }
+        val mode = when (lens.lowercase(Locale.ROOT)) {
+            "mesh_contour", "mesh" -> ARFaceOverlayView.ArLensMode.MESH_CONTOUR
+            "cyberpunk_visor", "visor" -> ARFaceOverlayView.ArLensMode.CYBERPUNK_VISOR
+            "golden_crown", "crown" -> ARFaceOverlayView.ArLensMode.GOLDEN_CROWN
+            "scifi_hud", "hud" -> ARFaceOverlayView.ArLensMode.SCIFI_HUD
+            else -> ARFaceOverlayView.ArLensMode.NONE
+        }
+        viewBinding.arFaceOverlayView.currentLens = mode
+        if (mode == ARFaceOverlayView.ArLensMode.NONE) {
+            viewBinding.arFaceOverlayView.clear()
+        }
         val lensButtons = listOf(
             viewBinding.btnArNone to "none",
             viewBinding.btnArMesh to "mesh_contour",
@@ -1084,13 +1383,16 @@ class MainActivity : AppCompatActivity() {
             if (isActive) {
                 btn.setBackgroundResource(R.drawable.bg_cinema_button_active)
                 btn.setTextColor(Color.parseColor("#0F172A"))
+                scrollChipIntoView(viewBinding.scrollLensesStrip, btn)
             } else {
                 btn.setBackgroundResource(R.drawable.bg_cinema_button_inactive)
                 btn.setTextColor(Color.parseColor("#94A3B8"))
             }
         }
         updateCreativeStatusUI()
-        // silent (no popup)
+        if (showNotice) {
+            showHudNotice("AR Lens: ${lens.replace('_', ' ').uppercase(Locale.ROOT)}")
+        }
     }
 
     private fun toggleProDrawer() {
@@ -1545,17 +1847,134 @@ class MainActivity : AppCompatActivity() {
                     if (savedUri != null) {
                         lastCapturedUri = savedUri
                         lastCapturedMimeType = "image/jpeg"
-                        runOnUiThread {
-                            try {
-                                viewBinding.ivGalleryThumbnail.setImageURI(savedUri)
-                            } catch (e: Exception) {
-                                Log.e(TAG, "Failed updating gallery thumbnail", e)
+
+                        val needsPostProcess = currentFilterName != "normal" ||
+                            viewBinding.proOverlayView.liveBrightnessPercent != 0 ||
+                            viewBinding.proOverlayView.liveContrastPercent != 0 ||
+                            viewBinding.proOverlayView.liveSaturationPercent != 0 ||
+                            viewBinding.arFaceOverlayView.currentLens != ARFaceOverlayView.ArLensMode.NONE ||
+                            viewBinding.proOverlayView.enableFilmGrain ||
+                            viewBinding.proOverlayView.enableDateStamp ||
+                            viewBinding.proOverlayView.enableCineFlare
+
+                        if (needsPostProcess) {
+                            cameraExecutor.execute {
+                                applyCreativeLookToSavedPhoto(savedUri)
+                                runOnUiThread {
+                                    try {
+                                        viewBinding.ivGalleryThumbnail.setImageURI(null)
+                                        viewBinding.ivGalleryThumbnail.setImageURI(savedUri)
+                                    } catch (e: Exception) {
+                                        Log.e(TAG, "Failed updating gallery thumbnail", e)
+                                    }
+                                }
+                            }
+                        } else {
+                            runOnUiThread {
+                                try {
+                                    viewBinding.ivGalleryThumbnail.setImageURI(null)
+                                    viewBinding.ivGalleryThumbnail.setImageURI(savedUri)
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "Failed updating gallery thumbnail", e)
+                                }
                             }
                         }
                     }
                 }
             }
         )
+    }
+
+    private fun applyCreativeLookToSavedPhoto(savedUri: Uri) {
+        try {
+            var orientation = ExifInterface.ORIENTATION_NORMAL
+            contentResolver.openInputStream(savedUri)?.use { exifStream ->
+                val exif = ExifInterface(exifStream)
+                orientation = exif.getAttributeInt(
+                    ExifInterface.TAG_ORIENTATION,
+                    ExifInterface.ORIENTATION_NORMAL
+                )
+            }
+
+            val rawBmp = contentResolver.openInputStream(savedUri)?.use { input ->
+                val opts = BitmapFactory.Options().apply { inSampleSize = 1 }
+                BitmapFactory.decodeStream(input, null, opts)
+            } ?: return
+
+            val rotDeg = when (orientation) {
+                ExifInterface.ORIENTATION_ROTATE_90 -> 90f
+                ExifInterface.ORIENTATION_ROTATE_180 -> 180f
+                ExifInterface.ORIENTATION_ROTATE_270 -> 270f
+                else -> 0f
+            }
+            val orientedBmp = if (rotDeg != 0f) {
+                val m = Matrix().apply { postRotate(rotDeg) }
+                Bitmap.createBitmap(rawBmp, 0, 0, rawBmp.width, rawBmp.height, m, true).also {
+                    if (it != rawBmp) rawBmp.recycle()
+                }
+            } else {
+                rawBmp
+            }
+
+            val filtered = filterManager.applyFilterToBitmap(orientedBmp)
+            val finalBmp = filtered.copy(Bitmap.Config.ARGB_8888, true)
+            if (filtered != orientedBmp) filtered.recycle()
+            if (finalBmp != orientedBmp && !orientedBmp.isRecycled) orientedBmp.recycle()
+
+            val canvas = Canvas(finalBmp)
+            val overlayW = viewBinding.proOverlayView.width.toFloat().coerceAtLeast(1f)
+            val overlayH = viewBinding.proOverlayView.height.toFloat().coerceAtLeast(1f)
+            val scaleX = finalBmp.width.toFloat() / overlayW
+            val scaleY = finalBmp.height.toFloat() / overlayH
+            val scale = Math.min(scaleX, scaleY)
+
+            // Bake Retro Date Stamp if enabled
+            if (viewBinding.proOverlayView.enableDateStamp) {
+                val sdf = SimpleDateFormat("''yy MM dd  HH:mm", Locale.US)
+                val dateText = viewBinding.proOverlayView.customDateStampText ?: sdf.format(java.util.Date())
+                val stampPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.parseColor("#FFA500")
+                    textSize = (finalBmp.width * 0.032f).coerceAtLeast(28f)
+                    typeface = Typeface.MONOSPACE
+                    isFakeBoldText = true
+                }
+                val tw = stampPaint.measureText(dateText)
+                canvas.drawText(dateText, finalBmp.width - tw - (finalBmp.width * 0.05f), finalBmp.height - (finalBmp.height * 0.06f), stampPaint)
+            }
+
+            // Bake Anamorphic Cine Flare if enabled
+            if (viewBinding.proOverlayView.enableCineFlare) {
+                val cy = finalBmp.height * 0.48f
+                val streakH = (finalBmp.height * 0.015f).coerceAtLeast(14f)
+                val flarePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    shader = android.graphics.LinearGradient(
+                        0f, cy, finalBmp.width.toFloat(), cy,
+                        intArrayOf(Color.TRANSPARENT, Color.parseColor("#B300D4FF"), Color.parseColor("#E6FFFFFF"), Color.parseColor("#B300D4FF"), Color.TRANSPARENT),
+                        floatArrayOf(0f, 0.35f, 0.5f, 0.65f, 1f),
+                        android.graphics.Shader.TileMode.CLAMP
+                    )
+                }
+                canvas.drawRect(0f, cy - streakH, finalBmp.width.toFloat(), cy + streakH, flarePaint)
+            }
+
+            // Bake AR Face Lens overlay onto captured image
+            if (viewBinding.arFaceOverlayView.currentLens != ARFaceOverlayView.ArLensMode.NONE) {
+                canvas.save()
+                val offsetX = (finalBmp.width - overlayW * scale) / 2f
+                val offsetY = (finalBmp.height - overlayH * scale) / 2f
+                canvas.translate(offsetX, offsetY)
+                canvas.scale(scale, scale)
+                viewBinding.arFaceOverlayView.draw(canvas)
+                canvas.restore()
+            }
+
+            contentResolver.openOutputStream(savedUri, "wt")?.use { out ->
+                finalBmp.compress(Bitmap.CompressFormat.JPEG, 94, out)
+            }
+            finalBmp.recycle()
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed post-processing photo creative look", e)
+        }
     }
 
     private val allCameraModes = listOf(
@@ -1619,6 +2038,7 @@ class MainActivity : AppCompatActivity() {
         if (recording != null) return
         cameraMode = mode
         isLastActionCreative = false
+        showHudNotice("Mode: ${getModeLabel(mode)}")
 
         updateModeCarouselSlots(animated = true, slideDirection = slideDirection)
 
@@ -1822,8 +2242,8 @@ class MainActivity : AppCompatActivity() {
                 setArLens(lensList[nextIdx])
             }
             CreativeTarget.EFFECTS -> {
-                currentTextureEffectIndex = (currentTextureEffectIndex + 1) % 3
-                toggleTextureEffectByIndex(currentTextureEffectIndex)
+                currentTextureEffectIndex = (currentTextureEffectIndex + 1) % 5
+                applyTextureEffectPreset(currentTextureEffectIndex)
             }
             else -> {
                 val filterList = listOf("normal", "cinematic", "vintage", "bw", "cyberpunk", "hdr")
@@ -1833,6 +2253,7 @@ class MainActivity : AppCompatActivity() {
                 setFilterPreset(filterList[nextIdx])
             }
         }
+        window.decorView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
     }
 
     private fun navigatePreviousEffectOrFilter() {
@@ -1845,8 +2266,8 @@ class MainActivity : AppCompatActivity() {
                 setArLens(lensList[prevIdx])
             }
             CreativeTarget.EFFECTS -> {
-                currentTextureEffectIndex = if (currentTextureEffectIndex <= 0) 2 else currentTextureEffectIndex - 1
-                toggleTextureEffectByIndex(currentTextureEffectIndex)
+                currentTextureEffectIndex = if (currentTextureEffectIndex <= 0) 4 else currentTextureEffectIndex - 1
+                applyTextureEffectPreset(currentTextureEffectIndex)
             }
             else -> {
                 val filterList = listOf("normal", "cinematic", "vintage", "bw", "cyberpunk", "hdr")
@@ -1856,14 +2277,50 @@ class MainActivity : AppCompatActivity() {
                 setFilterPreset(filterList[prevIdx])
             }
         }
+        window.decorView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
     }
 
-    private fun toggleTextureEffectByIndex(index: Int) {
-        when (index) {
-            0 -> viewBinding.switchFilmGrain.isChecked = !viewBinding.switchFilmGrain.isChecked
-            1 -> viewBinding.switchDateStamp.isChecked = !viewBinding.switchDateStamp.isChecked
-            2 -> viewBinding.switchCineFlare.isChecked = !viewBinding.switchCineFlare.isChecked
+    private fun applyTextureEffectPreset(index: Int) {
+        currentCreativeTarget = CreativeTarget.EFFECTS
+        isLastActionCreative = true
+        isUpdatingEffectSwitches = true
+        try {
+            when (index) {
+                0 -> {
+                    viewBinding.switchFilmGrain.isChecked = false
+                    viewBinding.switchDateStamp.isChecked = false
+                    viewBinding.switchCineFlare.isChecked = false
+                    showHudNotice("Effect: OFF")
+                }
+                1 -> {
+                    viewBinding.switchFilmGrain.isChecked = true
+                    viewBinding.switchDateStamp.isChecked = false
+                    viewBinding.switchCineFlare.isChecked = false
+                    showHudNotice("Effect: 35mm Film Grain")
+                }
+                2 -> {
+                    viewBinding.switchFilmGrain.isChecked = false
+                    viewBinding.switchDateStamp.isChecked = true
+                    viewBinding.switchCineFlare.isChecked = false
+                    showHudNotice("Effect: Retro Date Stamp")
+                }
+                3 -> {
+                    viewBinding.switchFilmGrain.isChecked = false
+                    viewBinding.switchDateStamp.isChecked = false
+                    viewBinding.switchCineFlare.isChecked = true
+                    showHudNotice("Effect: Anamorphic Flare")
+                }
+                else -> {
+                    viewBinding.switchFilmGrain.isChecked = true
+                    viewBinding.switchDateStamp.isChecked = true
+                    viewBinding.switchCineFlare.isChecked = true
+                    showHudNotice("Effect: Cinema Combo")
+                }
+            }
+        } finally {
+            isUpdatingEffectSwitches = false
         }
+        updateCreativeStatusUI()
     }
 
     private fun switchCamera() {
@@ -1927,23 +2384,6 @@ class MainActivity : AppCompatActivity() {
                 
                 return true
             }
-
-            override fun onFling(
-                e1: MotionEvent?,
-                e2: MotionEvent,
-                velocityX: Float,
-                velocityY: Float
-            ): Boolean {
-                if (e1 != null && Math.abs(velocityX) > Math.abs(velocityY) * 1.1f && Math.abs(e2.x - e1.x) > 40) {
-                    val isNext = velocityX < 0
-                    val curIdx = allCameraModes.indexOf(cameraMode)
-                    val nextIdx = if (isNext) (curIdx + 1) % allCameraModes.size else (curIdx - 1 + allCameraModes.size) % allCameraModes.size
-                    setMode(allCameraModes[nextIdx], slideDirection = if (isNext) 1 else -1)
-                    window.decorView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-                    return true
-                }
-                return false
-            }
         })
 
         viewBinding.proOverlayView.setOnTouchListener { view, event ->
@@ -1970,13 +2410,18 @@ class MainActivity : AppCompatActivity() {
      * 6. Real-Time Filter & Image Adjustment Controls
      */
     private fun setupFilterAndArControls() {
-        setFilterPreset("normal")
-        setArLens("none")
+        setFilterPreset("normal", showNotice = false)
+        setArLens("none", showNotice = false)
 
         // Live Adjustments: Brightness, Contrast, Saturation
         viewBinding.sbBrightness.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
-                if (fromUser) filterManager.setBrightnessPercent(progress - 100)
+                if (fromUser) {
+                    val pct = progress - 100
+                    filterManager.setBrightnessPercent(pct)
+                    viewBinding.proOverlayView.liveBrightnessPercent = pct
+                    applyLivePreviewColorMatrix()
+                }
             }
             override fun onStartTrackingTouch(sb: SeekBar?) {}
             override fun onStopTrackingTouch(sb: SeekBar?) {}
@@ -1984,7 +2429,12 @@ class MainActivity : AppCompatActivity() {
 
         viewBinding.sbContrast.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
-                if (fromUser) filterManager.setContrastPercent(progress - 100)
+                if (fromUser) {
+                    val pct = progress - 100
+                    filterManager.setContrastPercent(pct)
+                    viewBinding.proOverlayView.liveContrastPercent = pct
+                    applyLivePreviewColorMatrix()
+                }
             }
             override fun onStartTrackingTouch(sb: SeekBar?) {}
             override fun onStopTrackingTouch(sb: SeekBar?) {}
@@ -1992,7 +2442,12 @@ class MainActivity : AppCompatActivity() {
 
         viewBinding.sbSaturation.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
-                if (fromUser) filterManager.setSaturationPercent(progress - 100)
+                if (fromUser) {
+                    val pct = progress - 100
+                    filterManager.setSaturationPercent(pct)
+                    viewBinding.proOverlayView.liveSaturationPercent = pct
+                    applyLivePreviewColorMatrix()
+                }
             }
             override fun onStartTrackingTouch(sb: SeekBar?) {}
             override fun onStopTrackingTouch(sb: SeekBar?) {}
@@ -2003,112 +2458,146 @@ class MainActivity : AppCompatActivity() {
     private var touchDownY = 0f
     private var touchDownTime = 0L
     private var isSwipeConsumed = false
+    private var isMultiTouchGesture = false
+    private var downInModeCarousel = false
+    private var downInIgnoredControl = false
+
+    private fun isPointInView(view: View, rawX: Float, rawY: Float): Boolean {
+        if (view.visibility != View.VISIBLE) return false
+        val rect = Rect()
+        view.getGlobalVisibleRect(rect)
+        return rect.contains(rawX.toInt(), rawY.toInt())
+    }
+
+    private fun routeHorizontalSwipe(isNext: Boolean) {
+        if (downInModeCarousel) {
+            if (isNext) navigateNextCameraMode() else navigatePreviousCameraMode()
+            return
+        }
+        if (viewBinding.layoutGuideFloatingBar.visibility == View.VISIBLE) {
+            if (isNext) navigateNextGrid() else navigatePreviousGrid()
+            return
+        }
+        if (viewBinding.effectsStudioDrawer.visibility == View.VISIBLE || isLastActionCreative) {
+            if (isNext) navigateNextEffectOrFilter() else navigatePreviousEffectOrFilter()
+            return
+        }
+        if (isNext) navigateNextCameraMode() else navigatePreviousCameraMode()
+    }
 
     override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
-        when (ev.action) {
+        when (ev.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 touchDownX = ev.rawX
                 touchDownY = ev.rawY
                 touchDownTime = SystemClock.uptimeMillis()
                 isSwipeConsumed = false
+                isMultiTouchGesture = ev.pointerCount > 1
 
-                val x = ev.rawX.toInt()
-                val y = ev.rawY.toInt()
-
-                // 0. Touch outside to dismiss Guide Floating Bar
-                if (viewBinding.layoutGuideFloatingBar.visibility == View.VISIBLE) {
-                    val guideBarRect = Rect()
-                    viewBinding.layoutGuideFloatingBar.getGlobalVisibleRect(guideBarRect)
-                    val guideBtnRect = Rect()
-                    viewBinding.layoutBtnGuide.getGlobalVisibleRect(guideBtnRect)
-                    if (!guideBarRect.contains(x, y) && !guideBtnRect.contains(x, y)) {
-                        viewBinding.layoutGuideFloatingBar.visibility = View.GONE
-                        window.decorView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-                    }
-                }
-
-                // 1. Touch outside to dismiss Effects Studio Drawer
-                if (viewBinding.effectsStudioDrawer.visibility == View.VISIBLE) {
-                    val headerRect = Rect()
-                    viewBinding.layoutEffectsHeader.getGlobalVisibleRect(headerRect)
-                    val subItemsRect = Rect()
-                    viewBinding.layoutEffectsSubItems.getGlobalVisibleRect(subItemsRect)
-
-                    if (!headerRect.contains(x, y) && !subItemsRect.contains(x, y)) {
-                        viewBinding.effectsStudioDrawer.visibility = View.GONE
-                        window.decorView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-                    }
-                }
-
-                // 2. Touch outside to dismiss Pro Studio Drawer
-                if (viewBinding.proStudioDrawer.visibility == View.VISIBLE) {
-                    val proDrawerRect = Rect()
-                    viewBinding.proStudioDrawer.getGlobalVisibleRect(proDrawerRect)
-                    if (!proDrawerRect.contains(x, y)) {
-                        viewBinding.proStudioDrawer.visibility = View.GONE
-                        window.decorView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-                    }
-                }
+                downInModeCarousel = isPointInView(viewBinding.modeScrollView, ev.rawX, ev.rawY)
+                downInIgnoredControl =
+                    isPointInView(viewBinding.proModeBar, ev.rawX, ev.rawY) ||
+                    isPointInView(viewBinding.bottomControls, ev.rawX, ev.rawY) ||
+                    isPointInView(viewBinding.zoomControls, ev.rawX, ev.rawY) ||
+                    isPointInView(viewBinding.proStudioDrawer, ev.rawX, ev.rawY) ||
+                    (viewBinding.effectsStudioDrawer.visibility == View.VISIBLE && (
+                        isPointInView(viewBinding.layoutEffectsHeader, ev.rawX, ev.rawY) ||
+                        isPointInView(viewBinding.layoutEffectsSubItems, ev.rawX, ev.rawY)
+                    )) ||
+                    (viewBinding.layoutGuideFloatingBar.visibility == View.VISIBLE && (
+                        isPointInView(viewBinding.scrollGuideChips, ev.rawX, ev.rawY) ||
+                        isPointInView(viewBinding.btnCloseGuideBar, ev.rawX, ev.rawY)
+                    ))
+            }
+            MotionEvent.ACTION_POINTER_DOWN -> {
+                isMultiTouchGesture = true
             }
             MotionEvent.ACTION_MOVE -> {
-                if (!isSwipeConsumed && recording == null) {
+                if (ev.pointerCount > 1) {
+                    isMultiTouchGesture = true
+                }
+                if (!isSwipeConsumed && !isMultiTouchGesture && !downInIgnoredControl && recording == null) {
                     val dx = ev.rawX - touchDownX
                     val dy = ev.rawY - touchDownY
 
-                    // Responsive swipe detection with curved thumb gesture tolerance
-                    if (Math.abs(dx) > 36 && Math.abs(dx) > Math.abs(dy) * 0.88f) {
+                    if (Math.abs(dx) > 42 && Math.abs(dx) > Math.abs(dy) * 1.25f) {
                         val topToolbarRect = Rect()
                         viewBinding.proModeBar.getGlobalVisibleRect(topToolbarRect)
                         val bottomControlsRect = Rect()
                         viewBinding.bottomControls.getGlobalVisibleRect(bottomControlsRect)
 
-                        // Swipe zone covers the entire active camera screen: viewfinder, overlay, and mode carousel
                         val minSwipeY = if (topToolbarRect.bottom > 0) topToolbarRect.bottom.toFloat() else 0f
-                        val maxSwipeY = if (bottomControlsRect.bottom > 0) bottomControlsRect.bottom.toFloat() else Float.MAX_VALUE
-                        val inSwipeZone = ev.rawY >= minSwipeY && ev.rawY <= maxSwipeY
+                        val maxSwipeY = if (bottomControlsRect.top > 0) bottomControlsRect.top.toFloat() else Float.MAX_VALUE
+                        val inSwipeZone = downInModeCarousel || (ev.rawY >= minSwipeY && ev.rawY <= maxSwipeY)
 
                         if (inSwipeZone) {
                             isSwipeConsumed = true
-                            if (viewBinding.layoutGuideFloatingBar.visibility == View.VISIBLE) {
-                                if (dx < 0) navigateNextGrid() else navigatePreviousGrid()
-                            } else if (viewBinding.effectsStudioDrawer.visibility == View.VISIBLE) {
-                                if (dx < 0) navigateNextEffectOrFilter() else navigatePreviousEffectOrFilter()
-                            } else {
-                                if (dx < 0) navigateNextCameraMode() else navigatePreviousCameraMode()
-                            }
+                            val cancelEv = MotionEvent.obtain(ev)
+                            cancelEv.action = MotionEvent.ACTION_CANCEL
+                            super.dispatchTouchEvent(cancelEv)
+                            cancelEv.recycle()
+
+                            routeHorizontalSwipe(isNext = dx < 0)
                             return true
                         }
                     }
                 }
             }
             MotionEvent.ACTION_UP -> {
-                if (!isSwipeConsumed && recording == null) {
-                    val diffX = ev.rawX - touchDownX
-                    val diffY = ev.rawY - touchDownY
-                    val duration = SystemClock.uptimeMillis() - touchDownTime
+                if (isSwipeConsumed) {
+                    return true
+                }
+                val diffX = ev.rawX - touchDownX
+                val diffY = ev.rawY - touchDownY
+                val duration = SystemClock.uptimeMillis() - touchDownTime
 
-                    // Quick flick gesture support
-                    if (Math.abs(diffX) > 26 && Math.abs(diffX) > Math.abs(diffY) * 0.85f && duration < 900) {
-                        val topToolbarRect = Rect()
-                        viewBinding.proModeBar.getGlobalVisibleRect(topToolbarRect)
-                        val bottomControlsRect = Rect()
-                        viewBinding.bottomControls.getGlobalVisibleRect(bottomControlsRect)
+                if (!isMultiTouchGesture && !downInIgnoredControl && recording == null &&
+                    Math.abs(diffX) > 30 && Math.abs(diffX) > Math.abs(diffY) * 1.2f && duration < 450
+                ) {
+                    val topToolbarRect = Rect()
+                    viewBinding.proModeBar.getGlobalVisibleRect(topToolbarRect)
+                    val bottomControlsRect = Rect()
+                    viewBinding.bottomControls.getGlobalVisibleRect(bottomControlsRect)
 
-                        val minSwipeY = if (topToolbarRect.bottom > 0) topToolbarRect.bottom.toFloat() else 0f
-                        val maxSwipeY = if (bottomControlsRect.bottom > 0) bottomControlsRect.bottom.toFloat() else Float.MAX_VALUE
-                        val inSwipeZone = ev.rawY >= minSwipeY && ev.rawY <= maxSwipeY
+                    val minSwipeY = if (topToolbarRect.bottom > 0) topToolbarRect.bottom.toFloat() else 0f
+                    val maxSwipeY = if (bottomControlsRect.top > 0) bottomControlsRect.top.toFloat() else Float.MAX_VALUE
+                    val inSwipeZone = downInModeCarousel || (ev.rawY >= minSwipeY && ev.rawY <= maxSwipeY)
 
-                        if (inSwipeZone) {
-                            isSwipeConsumed = true
-                            if (viewBinding.layoutGuideFloatingBar.visibility == View.VISIBLE) {
-                                if (diffX < 0) navigateNextGrid() else navigatePreviousGrid()
-                            } else if (viewBinding.effectsStudioDrawer.visibility == View.VISIBLE) {
-                                if (diffX < 0) navigateNextEffectOrFilter() else navigatePreviousEffectOrFilter()
-                            } else {
-                                if (diffX < 0) navigateNextCameraMode() else navigatePreviousCameraMode()
-                            }
-                            return true
-                        }
+                    if (inSwipeZone) {
+                        isSwipeConsumed = true
+                        routeHorizontalSwipe(isNext = diffX < 0)
+                        return true
+                    }
+                }
+
+                // Clean tap outside open drawers -> dismiss drawer without leaking tap
+                if (!isMultiTouchGesture && Math.abs(diffX) < 22 && Math.abs(diffY) < 22) {
+                    var closedDrawer = false
+                    if (viewBinding.proStudioDrawer.visibility == View.VISIBLE &&
+                        !isPointInView(viewBinding.proStudioDrawer, ev.rawX, ev.rawY) &&
+                        !isPointInView(viewBinding.layoutBtnProStudio, ev.rawX, ev.rawY)
+                    ) {
+                        viewBinding.proStudioDrawer.visibility = View.GONE
+                        closedDrawer = true
+                    }
+                    if (viewBinding.layoutGuideFloatingBar.visibility == View.VISIBLE &&
+                        !isPointInView(viewBinding.layoutGuideFloatingBar, ev.rawX, ev.rawY) &&
+                        !isPointInView(viewBinding.layoutBtnGuide, ev.rawX, ev.rawY)
+                    ) {
+                        viewBinding.layoutGuideFloatingBar.visibility = View.GONE
+                        closedDrawer = true
+                    }
+                    if (viewBinding.effectsStudioDrawer.visibility == View.VISIBLE &&
+                        !isPointInView(viewBinding.layoutEffectsHeader, ev.rawX, ev.rawY) &&
+                        !isPointInView(viewBinding.layoutEffectsSubItems, ev.rawX, ev.rawY) &&
+                        !isPointInView(viewBinding.btnFilter, ev.rawX, ev.rawY) &&
+                        !isPointInView(viewBinding.modeScrollView, ev.rawX, ev.rawY)
+                    ) {
+                        viewBinding.effectsStudioDrawer.visibility = View.GONE
+                        closedDrawer = true
+                    }
+                    if (closedDrawer) {
+                        window.decorView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                     }
                 }
             }

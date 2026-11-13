@@ -3,9 +3,13 @@ package com.example.cameraxapp.overlay
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.RadialGradient
 import android.graphics.RectF
+import android.graphics.Shader
+import android.graphics.Typeface
 import android.util.AttributeSet
 import android.view.View
 import kotlin.math.abs
@@ -146,6 +150,62 @@ class ProOverlayView @JvmOverloads constructor(
             invalidate()
         }
 
+    // Live Color Preset & Shaders Grading State
+    var activeFilterPreset: String = "normal"
+        set(value) {
+            field = value
+            invalidate()
+        }
+
+    var liveBrightnessPercent: Int = 0
+        set(value) {
+            field = value
+            invalidate()
+        }
+
+    var liveContrastPercent: Int = 0
+        set(value) {
+            field = value
+            invalidate()
+        }
+
+    var liveSaturationPercent: Int = 0
+        set(value) {
+            field = value
+            invalidate()
+        }
+
+    // Live Texture Effects
+    var enableFilmGrain: Boolean = false
+        set(value) {
+            field = value
+            invalidate()
+        }
+
+    var enableDateStamp: Boolean = false
+        set(value) {
+            field = value
+            invalidate()
+        }
+
+    var enableCineFlare: Boolean = false
+        set(value) {
+            field = value
+            invalidate()
+        }
+
+    var enableVignette: Boolean = false
+        set(value) {
+            field = value
+            invalidate()
+        }
+
+    var customDateStampText: String? = null
+        set(value) {
+            field = value
+            invalidate()
+        }
+
     // 7. Background Executor Asynchronously Calculated Waveform & Vector Scope Data
     private val waveformColumns = FloatArray(36 * 2) { 0f } // Pre-allocated [minIre, maxIre] pairs
     private var waveformPeakIre: Float = 0f
@@ -220,6 +280,28 @@ class ProOverlayView @JvmOverloads constructor(
             field = value
             if (showLevelGauge) invalidate()
         }
+
+    // --- LIVE COLOR PRESET GRADING & TEXTURE EFFECTS PAINTS ---
+    private val filterGradingPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+    }
+    private val filterSecondaryPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+    }
+    private val filmGrainPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+    }
+    private val dateStampPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+        color = Color.parseColor("#FFA500")
+        textSize = dpToPx(13.5f)
+        typeface = Typeface.MONOSPACE
+        isFakeBoldText = true
+        setShadowLayer(dpToPx(2f), 0f, 0f, Color.parseColor("#80FF8C00"))
+    }
+    private val cineFlarePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+    }
 
     // --- PRE-ALLOCATED PAINTS (ZERO ALLOCATIONS IN onDraw) ---
     // Clean, crisp, neutral semi-transparent white camera overlay lines (Never colored)
@@ -630,11 +712,15 @@ class ProOverlayView @JvmOverloads constructor(
     // --- ZERO ALLOCATION 60 FPS RENDER LOOP ---
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
-        if (isCleanScreen) return // 1-Tap Clean Screen: instantly dismiss all graphs & overlays for unobstructed framing
-
         val widthF = width.toFloat()
         val heightF = height.toFloat()
         if (widthF <= 0 || heightF <= 0) return
+
+        // 0. Live Visual Color Preset Grading & Texture Effects over Viewfinder
+        drawLiveFilterGrading(canvas, widthF, heightF)
+        drawLiveTextureEffects(canvas, widthF, heightF)
+
+        if (isCleanScreen) return // 1-Tap Clean Screen: instantly dismiss all graphs & overlays for unobstructed framing
 
         // 1. Draw Active Geometric Grid
         when (currentGrid) {
@@ -1200,6 +1286,147 @@ class ProOverlayView @JvmOverloads constructor(
         }
         canvas.drawRect(barLeft1, barTop + barH * (1f - fillL), barRight1, barTop + barH, levelPaint)
         canvas.drawRect(barLeft2, barTop + barH * (1f - fillR), barRight2, barTop + barH, levelPaint)
+    }
+
+    // --- REAL-TIME LIVE COLOR FILTER GRADING OVER VIEW FINDER ---
+    private fun drawLiveFilterGrading(canvas: Canvas, w: Float, h: Float) {
+        val preset = activeFilterPreset.lowercase()
+        if (preset == "normal" || preset == "none") {
+            if (liveBrightnessPercent != 0) {
+                if (liveBrightnessPercent > 0) {
+                    filterGradingPaint.color = Color.argb((liveBrightnessPercent * 0.7f).toInt().coerceIn(0, 100), 255, 255, 255)
+                    canvas.drawRect(0f, 0f, w, h, filterGradingPaint)
+                } else {
+                    filterGradingPaint.color = Color.argb((-liveBrightnessPercent * 0.7f).toInt().coerceIn(0, 100), 0, 0, 0)
+                    canvas.drawRect(0f, 0f, w, h, filterGradingPaint)
+                }
+            }
+            return
+        }
+
+        when (preset) {
+            "cinematic" -> {
+                // Hollywood Teal & Orange Split Toning: Teal Shadows + Amber Highlights
+                filterGradingPaint.shader = LinearGradient(
+                    0f, 0f, 0f, h,
+                    intArrayOf(Color.parseColor("#26FFAA44"), Color.parseColor("#330A3C4A")),
+                    floatArrayOf(0.2f, 0.85f),
+                    Shader.TileMode.CLAMP
+                )
+                canvas.drawRect(0f, 0f, w, h, filterGradingPaint)
+                filterGradingPaint.shader = null
+            }
+            "vintage" -> {
+                // Warm Sepia Film Curve with Highlight Radial
+                filterGradingPaint.color = Color.parseColor("#38784E28")
+                canvas.drawRect(0f, 0f, w, h, filterGradingPaint)
+                filterSecondaryPaint.shader = RadialGradient(
+                    w * 0.5f, h * 0.45f, w * 0.7f,
+                    intArrayOf(Color.parseColor("#15FFE4B5"), Color.parseColor("#30402010")),
+                    null,
+                    Shader.TileMode.CLAMP
+                )
+                canvas.drawRect(0f, 0f, w, h, filterSecondaryPaint)
+                filterSecondaryPaint.shader = null
+            }
+            "bw", "black_and_white", "mono" -> {
+                // True monochrome handled by ColorMatrix; subtle silver-film contrast wash
+                filterGradingPaint.color = Color.parseColor("#14000000")
+                canvas.drawRect(0f, 0f, w, h, filterGradingPaint)
+            }
+            "hdr" -> {
+                // Dynamic Tone Mapping & Vibrancy Boost
+                filterGradingPaint.shader = LinearGradient(
+                    0f, 0f, w, h,
+                    intArrayOf(Color.parseColor("#18FFCC00"), Color.parseColor("#1800E5FF")),
+                    null,
+                    Shader.TileMode.CLAMP
+                )
+                canvas.drawRect(0f, 0f, w, h, filterGradingPaint)
+                filterGradingPaint.shader = null
+            }
+            "cyberpunk", "cyber" -> {
+                // Neon Cyan Shadows & Electric Magenta Highlights
+                filterGradingPaint.shader = LinearGradient(
+                    0f, 0f, w, h,
+                    intArrayOf(Color.parseColor("#3500E5FF"), Color.parseColor("#35FF007F")),
+                    floatArrayOf(0.15f, 0.85f),
+                    Shader.TileMode.CLAMP
+                )
+                canvas.drawRect(0f, 0f, w, h, filterGradingPaint)
+                filterGradingPaint.shader = null
+            }
+            else -> {
+                // Custom User Filters
+                val customColor = when {
+                    preset.contains("emerald") || preset.contains("green") -> Color.parseColor("#2810B981")
+                    preset.contains("gold") || preset.contains("warm") -> Color.parseColor("#28F59E0B")
+                    preset.contains("rose") || preset.contains("pink") -> Color.parseColor("#28F43F5E")
+                    preset.contains("violet") || preset.contains("purple") -> Color.parseColor("#288B5CF6")
+                    preset.contains("cyan") || preset.contains("blue") -> Color.parseColor("#2806B6D4")
+                    else -> Color.parseColor("#253B82F6")
+                }
+                filterGradingPaint.color = customColor
+                canvas.drawRect(0f, 0f, w, h, filterGradingPaint)
+            }
+        }
+    }
+
+    // --- REAL-TIME LIVE TEXTURE EFFECTS (FILM GRAIN, DATE STAMP, CINE FLARE) ---
+    private fun drawLiveTextureEffects(canvas: Canvas, w: Float, h: Float) {
+        // 1. Film Grain (Animated 35mm emulsion noise + subtle vintage vignette)
+        if (enableFilmGrain) {
+            val random = java.util.Random(System.currentTimeMillis() / 75)
+            val step = dpToPx(22f).toInt().coerceAtLeast(14)
+            for (x in 0 until w.toInt() step step) {
+                for (y in 0 until h.toInt() step step) {
+                    val rx = x + random.nextInt(step)
+                    val ry = y + random.nextInt(step)
+                    val alpha = random.nextInt(70) + 25
+                    val isLight = random.nextBoolean()
+                    filmGrainPaint.color = if (isLight) Color.argb(alpha, 255, 250, 235) else Color.argb(alpha / 2, 15, 15, 15)
+                    canvas.drawCircle(rx.toFloat(), ry.toFloat(), dpToPx(1.3f), filmGrainPaint)
+                }
+            }
+            postInvalidateOnAnimation()
+        }
+
+        // 2. Anamorphic Cine Flare Streak across optical center
+        if (enableCineFlare) {
+            val cy = h * 0.48f
+            val streakH = dpToPx(18f)
+            cineFlarePaint.shader = LinearGradient(
+                0f, cy, w, cy,
+                intArrayOf(Color.TRANSPARENT, Color.parseColor("#B300D4FF"), Color.parseColor("#E6FFFFFF"), Color.parseColor("#B300D4FF"), Color.TRANSPARENT),
+                floatArrayOf(0f, 0.35f, 0.5f, 0.65f, 1f),
+                Shader.TileMode.CLAMP
+            )
+            canvas.drawRect(0f, cy - streakH, w, cy + streakH, cineFlarePaint)
+            cineFlarePaint.shader = null
+        }
+
+        // 3. Retro Orange Date Stamp Watermark ('YY MM dd HH:mm)
+        if (enableDateStamp) {
+            val sdf = java.text.SimpleDateFormat("''yy MM dd  HH:mm", java.util.Locale.US)
+            val dateText = customDateStampText ?: sdf.format(java.util.Date())
+            val marginEnd = dpToPx(24f)
+            val marginBottom = dpToPx(110f) // Positioned above shutter & controls
+            val textW = dateStampPaint.measureText(dateText)
+            canvas.drawText(dateText, w - textW - marginEnd, h - marginBottom, dateStampPaint)
+        }
+
+        // 4. Cinematic Vignette
+        if (enableVignette) {
+            val radius = Math.max(w, h) * 0.75f
+            filterSecondaryPaint.shader = RadialGradient(
+                w * 0.5f, h * 0.5f, radius,
+                intArrayOf(Color.TRANSPARENT, Color.parseColor("#66000000")),
+                floatArrayOf(0.55f, 1.0f),
+                Shader.TileMode.CLAMP
+            )
+            canvas.drawRect(0f, 0f, w, h, filterSecondaryPaint)
+            filterSecondaryPaint.shader = null
+        }
     }
 
     private fun dpToPx(dp: Float): Float {

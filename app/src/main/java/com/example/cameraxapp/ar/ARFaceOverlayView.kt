@@ -119,6 +119,40 @@ class ARFaceOverlayView @JvmOverloads constructor(
         style = Paint.Style.STROKE
     }
 
+    private var simpleFaceCenterX: Float = 0.5f
+    private var simpleFaceCenterY: Float = 0.44f
+    private var simpleFaceEyeDist: Float = 0.22f
+    private var hasSimpleFace: Boolean = false
+    private var lastSimpleFaceTime: Long = 0L
+
+    fun updateSimpleFace(
+        normEyeBridgeX: Float,
+        normEyeBridgeY: Float,
+        normEyeDist: Float,
+        isFrontFacing: Boolean
+    ) {
+        val now = System.currentTimeMillis()
+        val isRecent = hasSimpleFace && (now - lastSimpleFaceTime < 800L)
+        if (isRecent) {
+            simpleFaceCenterX = (simpleFaceCenterX * 0.55f) + (normEyeBridgeX * 0.45f)
+            simpleFaceCenterY = (simpleFaceCenterY * 0.55f) + (normEyeBridgeY * 0.45f)
+            simpleFaceEyeDist = (simpleFaceEyeDist * 0.60f) + (normEyeDist.coerceIn(0.06f, 0.55f) * 0.40f)
+        } else {
+            simpleFaceCenterX = normEyeBridgeX
+            simpleFaceCenterY = normEyeBridgeY
+            simpleFaceEyeDist = normEyeDist.coerceIn(0.06f, 0.55f)
+        }
+        isFrontCamera = isFrontFacing
+        hasSimpleFace = true
+        lastSimpleFaceTime = now
+        postInvalidateOnAnimation()
+    }
+
+    fun clearSimpleFace() {
+        hasSimpleFace = false
+        postInvalidate()
+    }
+
     fun updateResults(
         result: FaceLandmarkerResult,
         inputWidth: Int,
@@ -136,6 +170,7 @@ class ARFaceOverlayView @JvmOverloads constructor(
 
     fun clear() {
         landmarks = null
+        hasSimpleFace = false
         postInvalidate()
     }
 
@@ -143,14 +178,37 @@ class ARFaceOverlayView @JvmOverloads constructor(
         super.onDraw(canvas)
         if (currentLens == ArLensMode.NONE && !showDebugReticle) return
 
-        val marks = landmarks ?: return
-        if (marks.size < 468) return
-
         val viewW = width.toFloat()
         val viewH = height.toFloat()
+        if (viewW <= 0f || viewH <= 0f) return
 
-        val rawCenterX = if (isFrontCamera) (1.0f - marks[1].x()) * viewW else marks[1].x() * viewW
-        val rawCenterY = marks[1].y() * viewH
+        val now = System.currentTimeMillis()
+        val hasReal = landmarks != null && landmarks!!.size >= 468
+        val hasSimple = !hasReal && hasSimpleFace && (now - lastSimpleFaceTime < 1500L)
+
+        // Gentle breathing motion animation tick when using portrait anchor fallback
+        val floatOffset = if (!hasReal && !hasSimple) (Math.sin(now / 550.0) * (viewH * 0.005f)).toFloat() else 0f
+
+        val rawCenterX = when {
+            hasReal -> {
+                val normX = landmarks!![1].x()
+                if (isFrontCamera) (1.0f - normX) * viewW else normX * viewW
+            }
+            hasSimple -> {
+                if (isFrontCamera) (1.0f - simpleFaceCenterX) * viewW else simpleFaceCenterX * viewW
+            }
+            else -> viewW * 0.5f
+        }
+        val rawCenterY = when {
+            hasReal -> landmarks!![1].y() * viewH
+            hasSimple -> (simpleFaceCenterY * viewH) + (simpleFaceEyeDist * viewW * 0.35f)
+            else -> viewH * 0.44f + floatOffset
+        }
+        val trackedEyeDistPx = if (hasSimple) {
+            (simpleFaceEyeDist * viewW).coerceIn(viewW * 0.08f, viewW * 0.48f)
+        } else {
+            viewW * 0.24f
+        }
         val cx = rawCenterX + (calibrationOffsetX * viewW)
         val cy = rawCenterY + (calibrationOffsetY * viewH)
 
@@ -161,21 +219,80 @@ class ARFaceOverlayView @JvmOverloads constructor(
         }
 
         fun getX(idx: Int): Float {
-            val normX = marks[idx].x()
-            val base = if (isFrontCamera) (1.0f - normX) * viewW else normX * viewW
-            val dist = base - rawCenterX
-            val isEye = idx == 33 || idx == 263 || idx == 133 || idx == 362
-            val spacing = if (isEye) eyeSpacingFactor else 1.0f
-            return cx + (dist * calibrationScale * spacing)
+            if (hasReal) {
+                val normX = landmarks!![idx].x()
+                val base = if (isFrontCamera) (1.0f - normX) * viewW else normX * viewW
+                val dist = base - rawCenterX
+                val isEye = idx == 33 || idx == 263 || idx == 133 || idx == 362
+                val spacing = if (isEye) eyeSpacingFactor else 1.0f
+                return cx + (dist * calibrationScale * spacing)
+            } else {
+                val refScale = if (hasSimple) trackedEyeDistPx else viewW * 0.25f
+                val baseDist = when (idx) {
+                    33 -> -refScale * 0.62f * eyeSpacingFactor
+                    133 -> -refScale * 0.28f * eyeSpacingFactor
+                    263 -> refScale * 0.62f * eyeSpacingFactor
+                    362 -> refScale * 0.28f * eyeSpacingFactor
+                    168, 6, 1, 4, 10, 152 -> 0f
+                    234 -> -refScale * 1.15f
+                    454 -> refScale * 1.15f
+                    127 -> -refScale * 0.98f
+                    356 -> refScale * 0.98f
+                    54, 21, 162 -> -refScale * 0.85f
+                    284, 251, 389 -> refScale * 0.85f
+                    67, 103, 109 -> -refScale * 0.45f
+                    297, 332, 338 -> refScale * 0.45f
+                    132, 93, 58, 172 -> -refScale * 0.90f
+                    361, 323, 288, 397 -> refScale * 0.90f
+                    136, 150, 149, 176, 148 -> -refScale * 0.48f
+                    365, 379, 378, 400, 377 -> refScale * 0.48f
+                    else -> ((idx % 33) - 16) / 16f * (refScale * 0.88f)
+                }
+                return cx + (baseDist * calibrationScale)
+            }
         }
 
         fun getY(idx: Int): Float {
-            val base = marks[idx].y() * viewH
-            val dist = base - rawCenterY
-            var extraY = 0f
-            if (idx == 10 || idx == 338 || idx == 297) extraY = foreheadOffset * viewH
-            if (idx == 152 || idx == 148 || idx == 176) extraY = chinOffset * viewH
-            return cy + (dist * calibrationScale) + extraY
+            if (hasReal) {
+                val base = landmarks!![idx].y() * viewH
+                val dist = base - rawCenterY
+                var extraY = 0f
+                if (idx == 10 || idx == 338 || idx == 297) extraY = foreheadOffset * viewH
+                if (idx == 152 || idx == 148 || idx == 176) extraY = chinOffset * viewH
+                return cy + (dist * calibrationScale) + extraY
+            } else {
+                val refScale = if (hasSimple) trackedEyeDistPx else viewW * 0.25f
+                val baseDist = when (idx) {
+                    33, 263, 133, 362, 168 -> -refScale * 0.35f
+                    6 -> -refScale * 0.15f
+                    1, 4 -> refScale * 0.15f
+                    10 -> -refScale * 1.35f + (foreheadOffset * viewH)
+                    338, 109 -> -refScale * 1.25f + (foreheadOffset * viewH)
+                    297, 67 -> -refScale * 1.15f + (foreheadOffset * viewH)
+                    332, 103 -> -refScale * 0.95f + (foreheadOffset * viewH)
+                    284, 54 -> -refScale * 0.72f
+                    251, 21 -> -refScale * 0.55f
+                    389, 162 -> -refScale * 0.38f
+                    127, 356 -> -refScale * 0.20f
+                    234, 454 -> refScale * 0.08f
+                    323, 93 -> refScale * 0.38f
+                    361, 132 -> refScale * 0.65f
+                    288, 58 -> refScale * 0.90f
+                    397, 172 -> refScale * 1.05f
+                    365, 136 -> refScale * 1.18f
+                    379, 150 -> refScale * 1.28f
+                    378, 149 -> refScale * 1.35f
+                    400, 176 -> refScale * 1.42f + (chinOffset * viewH)
+                    377, 148 -> refScale * 1.46f + (chinOffset * viewH)
+                    152 -> refScale * 1.50f + (chinOffset * viewH)
+                    else -> ((idx % 21) - 10) / 10f * (refScale * 1.1f)
+                }
+                return cy + (baseDist * calibrationScale)
+            }
+        }
+
+        if (currentLens != ArLensMode.NONE && !hasReal) {
+            postInvalidateOnAnimation()
         }
 
         if (showDebugReticle) {
@@ -229,6 +346,15 @@ class ARFaceOverlayView @JvmOverloads constructor(
         }
         canvas.drawPath(path, meshLinePaint)
 
+        // Draw cross-face telemetry lines & eye nodes
+        canvas.drawLine(getX(33), getY(33), getX(263), getY(263), meshLinePaint)
+        canvas.drawLine(getX(10), getY(10), getX(152), getY(152), meshLinePaint)
+        canvas.drawLine(getX(234), getY(234), getX(1), getY(1), meshLinePaint)
+        canvas.drawLine(getX(454), getY(454), getX(1), getY(1), meshLinePaint)
+        canvas.drawCircle(getX(33), getY(33), 6f, meshDotPaint)
+        canvas.drawCircle(getX(263), getY(263), 6f, meshDotPaint)
+        canvas.drawCircle(getX(1), getY(1), 7f, meshDotPaint)
+
         // Draw landmark dots
         for (i in 0 until 468 step 4) {
             canvas.drawCircle(getX(i), getY(i), 2.5f, meshDotPaint)
@@ -243,8 +369,8 @@ class ARFaceOverlayView @JvmOverloads constructor(
         val leftX = getX(33)
         val rightX = getX(263)
         val eyeY = (getY(33) + getY(263)) / 2f
-        val visorWidth = Math.abs(rightX - leftX) * 1.5f
-        val visorHeight = visorWidth * 0.32f
+        val visorWidth = (Math.abs(rightX - leftX) * 1.65f).coerceIn(180f, width * 0.72f)
+        val visorHeight = visorWidth * 0.34f
         val centerX = (leftX + rightX) / 2f
 
         val visorPath = Path().apply {
@@ -267,7 +393,7 @@ class ARFaceOverlayView @JvmOverloads constructor(
         canvas.drawPath(visorPath, visorBorderPaint)
 
         // Telemetry HUD text
-        canvas.drawText("CYBER-OPTICS // ACTIVE", centerX - 120f, eyeY - visorHeight / 2f - 16f, textHudPaint)
+        canvas.drawText("CYBER-OPTICS // ACTIVE", centerX - (visorWidth * 0.38f), eyeY - visorHeight / 2f - 16f, textHudPaint)
     }
 
     private fun drawGoldenCrown(
@@ -277,8 +403,9 @@ class ARFaceOverlayView @JvmOverloads constructor(
     ) {
         val foreheadX = getX(10)
         val foreheadY = getY(10)
-        val crownWidth = 240f
-        val crownHeight = 110f
+        val faceW = Math.abs(getX(454) - getX(234))
+        val crownWidth = (faceW * 0.85f).coerceIn(180f, width * 0.65f)
+        val crownHeight = crownWidth * 0.46f
 
         val path = Path().apply {
             moveTo(foreheadX - crownWidth / 2f, foreheadY)
@@ -302,7 +429,8 @@ class ARFaceOverlayView @JvmOverloads constructor(
     ) {
         val noseX = getX(1)
         val noseY = getY(1)
-        val radius = 180f
+        val faceW = Math.abs(getX(454) - getX(234))
+        val radius = (faceW * 0.72f).coerceIn(130f, width * 0.38f)
 
         // Targeting ring
         val ringPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -317,6 +445,6 @@ class ARFaceOverlayView @JvmOverloads constructor(
         canvas.drawLine(noseX, noseY - radius - 20f, noseX, noseY - radius + 20f, ringPaint)
         canvas.drawLine(noseX, noseY + radius - 20f, noseX, noseY + radius + 20f, ringPaint)
 
-        canvas.drawText("LOCK: ACQUIRED [99.4%]", noseX - 100f, noseY + radius + 36f, textHudPaint)
+        canvas.drawText("LOCK: ACQUIRED [99.4%]", noseX - (radius * 0.65f), noseY + radius + 36f, textHudPaint)
     }
 }
