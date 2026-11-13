@@ -1311,6 +1311,81 @@ class ProOverlayView @JvmOverloads constructor(
         }
 
         when (preset) {
+            "lut_rec709", "filter_lut_rec709" -> {
+                // Clean broadcast Rec.709 clarity micro-wash
+                filterGradingPaint.color = Color.parseColor("#0A38BDF8")
+                canvas.drawRect(0f, 0f, w, h, filterGradingPaint)
+            }
+            "lut_flat_log", "filter_lut_flat_log" -> {
+                // Flat Log washed-out shadow-lift grading profile
+                filterGradingPaint.color = Color.parseColor("#2494A3B8")
+                canvas.drawRect(0f, 0f, w, h, filterGradingPaint)
+            }
+            "lut_teal_orange", "filter_lut_blockbuster_teal_orange" -> {
+                // Blockbuster Teal & Orange: warm orange skin highlights + deep teal shadows
+                filterGradingPaint.shader = LinearGradient(
+                    0f, 0f, 0f, h,
+                    intArrayOf(Color.parseColor("#26FB923C"), Color.TRANSPARENT, Color.parseColor("#360D9488")),
+                    floatArrayOf(0f, 0.55f, 1f),
+                    Shader.TileMode.CLAMP
+                )
+                canvas.drawRect(0f, 0f, w, h, filterGradingPaint)
+                filterGradingPaint.shader = null
+            }
+            "lut_bleach_bypass", "filter_lut_bleach_bypass" -> {
+                // Gritty metallic silver contrast edge falloff
+                filterSecondaryPaint.shader = RadialGradient(
+                    w * 0.5f, h * 0.5f, Math.max(w, h) * 0.72f,
+                    intArrayOf(Color.parseColor("#12CBD5E1"), Color.parseColor("#540F172A")),
+                    floatArrayOf(0.32f, 1.0f),
+                    Shader.TileMode.CLAMP
+                )
+                canvas.drawRect(0f, 0f, w, h, filterSecondaryPaint)
+                filterSecondaryPaint.shader = null
+            }
+            "lut_anamorphic_cyan", "filter_lut_anamorphic_cyan" -> {
+                // Sci-fi cool blue-green highlights + deep cinema blacks
+                filterGradingPaint.shader = LinearGradient(
+                    0f, 0f, w, h,
+                    intArrayOf(Color.parseColor("#2C06B6D4"), Color.parseColor("#100E7490"), Color.parseColor("#44020617")),
+                    floatArrayOf(0f, 0.5f, 1f),
+                    Shader.TileMode.CLAMP
+                )
+                canvas.drawRect(0f, 0f, w, h, filterGradingPaint)
+                filterGradingPaint.shader = null
+            }
+            "lut_matte_cinema", "filter_lut_matte_cinema" -> {
+                // Velvety dark-gray lifted blacks vintage matte look
+                filterGradingPaint.color = Color.parseColor("#2E3F3F46")
+                canvas.drawRect(0f, 0f, w, h, filterGradingPaint)
+            }
+            "lut_midnight_neon", "filter_lut_midnight_neon" -> {
+                // Deep cobalt blues, electric violets & glowing night highlights
+                filterSecondaryPaint.shader = RadialGradient(
+                    w * 0.5f, h * 0.40f, Math.max(w, h) * 0.75f,
+                    intArrayOf(Color.parseColor("#2E8B5CF6"), Color.parseColor("#203B82F6"), Color.parseColor("#520F172A")),
+                    floatArrayOf(0f, 0.55f, 1.0f),
+                    Shader.TileMode.CLAMP
+                )
+                canvas.drawRect(0f, 0f, w, h, filterSecondaryPaint)
+                filterSecondaryPaint.shader = null
+            }
+            "lut_warm_documentary", "filter_lut_warm_documentary" -> {
+                // Natural warm documentary tungsten glow
+                filterGradingPaint.color = Color.parseColor("#18F59E0B")
+                canvas.drawRect(0f, 0f, w, h, filterGradingPaint)
+            }
+            "lut_noir_cinema", "filter_lut_noir_cinema" -> {
+                // Dramatic moving-shadow B&W cinema vignette
+                filterSecondaryPaint.shader = RadialGradient(
+                    w * 0.5f, h * 0.5f, Math.max(w, h) * 0.68f,
+                    intArrayOf(Color.TRANSPARENT, Color.parseColor("#80000000")),
+                    floatArrayOf(0.32f, 1.0f),
+                    Shader.TileMode.CLAMP
+                )
+                canvas.drawRect(0f, 0f, w, h, filterSecondaryPaint)
+                filterSecondaryPaint.shader = null
+            }
             "golden_nostalgia", "filter_golden_nostalgia" -> {
                 // Yellow undertones with soft, nostalgic shadows
                 filterGradingPaint.color = Color.parseColor("#1EFACC15")

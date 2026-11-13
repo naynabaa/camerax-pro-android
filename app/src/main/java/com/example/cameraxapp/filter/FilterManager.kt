@@ -35,6 +35,15 @@ class FilterManager(private val context: Context) {
 
     enum class FilterPreset {
         NORMAL,
+        LUT_REC709,
+        LUT_FLAT_LOG,
+        LUT_TEAL_ORANGE,
+        LUT_BLEACH_BYPASS,
+        LUT_ANAMORPHIC_CYAN,
+        LUT_MATTE_CINEMA,
+        LUT_MIDNIGHT_NEON,
+        LUT_WARM_DOCUMENTARY,
+        LUT_NOIR_CINEMA,
         GOLDEN_NOSTALGIA,
         VELVIA_LANDSCAPE,
         NORDIC_SLATE,
@@ -111,6 +120,53 @@ class FilterManager(private val context: Context) {
         when (currentPreset) {
             FilterPreset.NORMAL -> {
                 // Passthrough
+            }
+            FilterPreset.LUT_REC709 -> {
+                filters.add(GPUImageContrastFilter(1.12f))
+                filters.add(GPUImageSaturationFilter(1.08f))
+            }
+            FilterPreset.LUT_FLAT_LOG -> {
+                filters.add(GPUImageContrastFilter(0.68f))
+                filters.add(GPUImageSaturationFilter(0.62f))
+                filters.add(GPUImageBrightnessFilter(0.08f))
+            }
+            FilterPreset.LUT_TEAL_ORANGE -> {
+                filters.add(GPUImageFilter(GPUImageFilter.NO_FILTER_VERTEX_SHADER, CINEMATIC_FRAGMENT_SHADER))
+                filters.add(GPUImageContrastFilter(1.30f))
+                filters.add(GPUImageSaturationFilter(1.34f))
+            }
+            FilterPreset.LUT_BLEACH_BYPASS -> {
+                filters.add(GPUImageSaturationFilter(0.52f))
+                filters.add(GPUImageContrastFilter(1.52f))
+                filters.add(GPUImageBrightnessFilter(-0.04f))
+                filters.add(GPUImageSharpenFilter(0.35f))
+            }
+            FilterPreset.LUT_ANAMORPHIC_CYAN -> {
+                filters.add(GPUImageFilter(GPUImageFilter.NO_FILTER_VERTEX_SHADER, CINEMATIC_FRAGMENT_SHADER))
+                filters.add(GPUImageContrastFilter(1.34f))
+                filters.add(GPUImageSaturationFilter(1.18f))
+            }
+            FilterPreset.LUT_MATTE_CINEMA -> {
+                filters.add(GPUImageContrastFilter(0.84f))
+                filters.add(GPUImageSaturationFilter(0.86f))
+                filters.add(GPUImageBrightnessFilter(0.10f))
+                filters.add(GPUImageSepiaToneFilter(0.20f))
+            }
+            FilterPreset.LUT_MIDNIGHT_NEON -> {
+                filters.add(GPUImageFilter(GPUImageFilter.NO_FILTER_VERTEX_SHADER, CYBERPUNK_FRAGMENT_SHADER))
+                filters.add(GPUImageContrastFilter(1.36f))
+                filters.add(GPUImageSaturationFilter(1.56f))
+            }
+            FilterPreset.LUT_WARM_DOCUMENTARY -> {
+                filters.add(GPUImageSepiaToneFilter(0.22f))
+                filters.add(GPUImageContrastFilter(1.10f))
+                filters.add(GPUImageSaturationFilter(1.14f))
+                filters.add(GPUImageBrightnessFilter(0.03f))
+            }
+            FilterPreset.LUT_NOIR_CINEMA -> {
+                filters.add(GPUImageGrayscaleFilter())
+                filters.add(GPUImageContrastFilter(1.72f))
+                filters.add(GPUImageBrightnessFilter(-0.05f))
             }
             FilterPreset.GOLDEN_NOSTALGIA -> {
                 filters.add(GPUImageSepiaToneFilter(0.42f))
@@ -212,6 +268,15 @@ class FilterManager(private val context: Context) {
 
     fun applyPreset(presetName: String) {
         val preset = when (presetName.lowercase(Locale.ROOT)) {
+            "lut_rec709", "filter_lut_rec709" -> FilterPreset.LUT_REC709
+            "lut_flat_log", "filter_lut_flat_log" -> FilterPreset.LUT_FLAT_LOG
+            "lut_teal_orange", "filter_lut_blockbuster_teal_orange" -> FilterPreset.LUT_TEAL_ORANGE
+            "lut_bleach_bypass", "filter_lut_bleach_bypass" -> FilterPreset.LUT_BLEACH_BYPASS
+            "lut_anamorphic_cyan", "filter_lut_anamorphic_cyan" -> FilterPreset.LUT_ANAMORPHIC_CYAN
+            "lut_matte_cinema", "filter_lut_matte_cinema" -> FilterPreset.LUT_MATTE_CINEMA
+            "lut_midnight_neon", "filter_lut_midnight_neon" -> FilterPreset.LUT_MIDNIGHT_NEON
+            "lut_warm_documentary", "filter_lut_warm_documentary" -> FilterPreset.LUT_WARM_DOCUMENTARY
+            "lut_noir_cinema", "filter_lut_noir_cinema" -> FilterPreset.LUT_NOIR_CINEMA
             "golden_nostalgia", "filter_golden_nostalgia" -> FilterPreset.GOLDEN_NOSTALGIA
             "velvia_landscape", "filter_velvia_landscape" -> FilterPreset.VELVIA_LANDSCAPE
             "nordic_slate", "filter_nordic_slate" -> FilterPreset.NORDIC_SLATE

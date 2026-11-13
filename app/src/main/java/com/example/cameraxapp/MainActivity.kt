@@ -394,8 +394,17 @@ class MainActivity : AppCompatActivity() {
         viewBinding.tabCategoryOptics.setOnClickListener { selectShelfTab(ShelfCategory.OPTICS) }
         viewBinding.tabCategoryAudio.setOnClickListener { selectShelfTab(ShelfCategory.AUDIO) }
 
-        // TAB 0: Looks, Filters, AR Lenses & Effects
+        // TAB 0: Looks, Filters (including Video Cinema LUTs), AR Lenses & Effects
         viewBinding.btnFilterNormal.setOnClickListener { setFilterPreset("normal") }
+        viewBinding.btnFilterLutRec709.setOnClickListener { setFilterPreset("lut_rec709") }
+        viewBinding.btnFilterLutFlatLog.setOnClickListener { setFilterPreset("lut_flat_log") }
+        viewBinding.btnFilterLutTealOrange.setOnClickListener { setFilterPreset("lut_teal_orange") }
+        viewBinding.btnFilterLutBleachBypass.setOnClickListener { setFilterPreset("lut_bleach_bypass") }
+        viewBinding.btnFilterLutAnamorphicCyan.setOnClickListener { setFilterPreset("lut_anamorphic_cyan") }
+        viewBinding.btnFilterLutMatteCinema.setOnClickListener { setFilterPreset("lut_matte_cinema") }
+        viewBinding.btnFilterLutMidnightNeon.setOnClickListener { setFilterPreset("lut_midnight_neon") }
+        viewBinding.btnFilterLutWarmDoc.setOnClickListener { setFilterPreset("lut_warm_documentary") }
+        viewBinding.btnFilterLutNoirCinema.setOnClickListener { setFilterPreset("lut_noir_cinema") }
         viewBinding.btnFilterGoldenNostalgia.setOnClickListener { setFilterPreset("golden_nostalgia") }
         viewBinding.btnFilterVelvia.setOnClickListener { setFilterPreset("velvia_landscape") }
         viewBinding.btnFilterNordicSlate.setOnClickListener { setFilterPreset("nordic_slate") }
@@ -1262,6 +1271,95 @@ class MainActivity : AppCompatActivity() {
 
         // 1. Base Preset Color Matrix
         when (currentFilterName.lowercase(Locale.ROOT)) {
+            "lut_rec709", "filter_lut_rec709" -> {
+                combined.postConcat(ColorMatrix().apply { setSaturation(1.08f) })
+                val c = 1.12f
+                val t = (-0.5f * c + 0.5f) * 255f + 4f
+                combined.postConcat(ColorMatrix(floatArrayOf(
+                    c, 0f, 0f, 0f, t,
+                    0f, c, 0f, 0f, t,
+                    0f, 0f, c, 0f, t,
+                    0f, 0f, 0f, 1f, 0f
+                )))
+            }
+            "lut_flat_log", "filter_lut_flat_log" -> {
+                combined.postConcat(ColorMatrix().apply { setSaturation(0.62f) })
+                val c = 0.68f
+                val t = (-0.5f * c + 0.5f) * 255f + 22f
+                combined.postConcat(ColorMatrix(floatArrayOf(
+                    c, 0f, 0f, 0f, t,
+                    0f, c, 0f, 0f, t,
+                    0f, 0f, c, 0f, t,
+                    0f, 0f, 0f, 1f, 0f
+                )))
+            }
+            "lut_teal_orange", "filter_lut_blockbuster_teal_orange" -> {
+                combined.postConcat(ColorMatrix().apply { setSaturation(1.36f) })
+                combined.postConcat(ColorMatrix(floatArrayOf(
+                    1.20f, 0.04f, -0.06f, 0f, 8f,
+                    0.02f, 1.04f, 0.04f, 0f, 0f,
+                    -0.08f, 0.08f, 1.24f, 0f, 6f,
+                    0f, 0f, 0f, 1f, 0f
+                )))
+            }
+            "lut_bleach_bypass", "filter_lut_bleach_bypass" -> {
+                combined.postConcat(ColorMatrix().apply { setSaturation(0.52f) })
+                val c = 1.52f
+                val t = (-0.5f * c + 0.5f) * 255f - 8f
+                combined.postConcat(ColorMatrix(floatArrayOf(
+                    c, 0f, 0f, 0f, t,
+                    0f, c, 0f, 0f, t,
+                    0f, 0f, c, 0f, t,
+                    0f, 0f, 0f, 1f, 0f
+                )))
+            }
+            "lut_anamorphic_cyan", "filter_lut_anamorphic_cyan" -> {
+                combined.postConcat(ColorMatrix().apply { setSaturation(1.18f) })
+                combined.postConcat(ColorMatrix(floatArrayOf(
+                    0.96f, 0f, 0.02f, 0f, -12f,
+                    0.04f, 1.18f, 0.12f, 0f, -2f,
+                    0.06f, 0.14f, 1.32f, 0f, 6f,
+                    0f, 0f, 0f, 1f, 0f
+                )))
+            }
+            "lut_matte_cinema", "filter_lut_matte_cinema" -> {
+                combined.postConcat(ColorMatrix().apply { setSaturation(0.86f) })
+                combined.postConcat(ColorMatrix(floatArrayOf(
+                    0.86f, 0.04f, 0.0f, 0f, 26f,
+                    0.02f, 0.85f, 0.02f, 0f, 24f,
+                    0.0f, 0.02f, 0.82f, 0f, 22f,
+                    0f, 0f, 0f, 1f, 0f
+                )))
+            }
+            "lut_midnight_neon", "filter_lut_midnight_neon" -> {
+                combined.postConcat(ColorMatrix().apply { setSaturation(1.56f) })
+                combined.postConcat(ColorMatrix(floatArrayOf(
+                    1.14f, -0.06f, 0.16f, 0f, -4f,
+                    -0.04f, 0.94f, 0.14f, 0f, -6f,
+                    0.18f, 0.06f, 1.38f, 0f, 16f,
+                    0f, 0f, 0f, 1f, 0f
+                )))
+            }
+            "lut_warm_documentary", "filter_lut_warm_documentary" -> {
+                combined.postConcat(ColorMatrix().apply { setSaturation(1.14f) })
+                combined.postConcat(ColorMatrix(floatArrayOf(
+                    1.08f, 0.04f, 0.0f, 0f, 10f,
+                    0.02f, 1.04f, 0.0f, 0f, 6f,
+                    0.0f, 0.02f, 0.92f, 0f, -4f,
+                    0f, 0f, 0f, 1f, 0f
+                )))
+            }
+            "lut_noir_cinema", "filter_lut_noir_cinema" -> {
+                combined.setSaturation(0f)
+                val c = 1.72f
+                val t = (-0.5f * c + 0.5f) * 255f - 14f
+                combined.postConcat(ColorMatrix(floatArrayOf(
+                    c, 0f, 0f, 0f, t,
+                    0f, c, 0f, 0f, t,
+                    0f, 0f, c, 0f, t,
+                    0f, 0f, 0f, 1f, 0f
+                )))
+            }
             "golden_nostalgia", "filter_golden_nostalgia" -> {
                 combined.postConcat(ColorMatrix().apply { setSaturation(1.16f) })
                 combined.postConcat(ColorMatrix(floatArrayOf(
@@ -1507,6 +1605,15 @@ class MainActivity : AppCompatActivity() {
             isLastActionCreative = true
         }
         val filterPreset = when (preset.lowercase(Locale.ROOT)) {
+            "lut_rec709", "filter_lut_rec709" -> FilterManager.FilterPreset.LUT_REC709
+            "lut_flat_log", "filter_lut_flat_log" -> FilterManager.FilterPreset.LUT_FLAT_LOG
+            "lut_teal_orange", "filter_lut_blockbuster_teal_orange" -> FilterManager.FilterPreset.LUT_TEAL_ORANGE
+            "lut_bleach_bypass", "filter_lut_bleach_bypass" -> FilterManager.FilterPreset.LUT_BLEACH_BYPASS
+            "lut_anamorphic_cyan", "filter_lut_anamorphic_cyan" -> FilterManager.FilterPreset.LUT_ANAMORPHIC_CYAN
+            "lut_matte_cinema", "filter_lut_matte_cinema" -> FilterManager.FilterPreset.LUT_MATTE_CINEMA
+            "lut_midnight_neon", "filter_lut_midnight_neon" -> FilterManager.FilterPreset.LUT_MIDNIGHT_NEON
+            "lut_warm_documentary", "filter_lut_warm_documentary" -> FilterManager.FilterPreset.LUT_WARM_DOCUMENTARY
+            "lut_noir_cinema", "filter_lut_noir_cinema" -> FilterManager.FilterPreset.LUT_NOIR_CINEMA
             "golden_nostalgia", "filter_golden_nostalgia" -> FilterManager.FilterPreset.GOLDEN_NOSTALGIA
             "velvia_landscape", "filter_velvia_landscape" -> FilterManager.FilterPreset.VELVIA_LANDSCAPE
             "nordic_slate", "filter_nordic_slate" -> FilterManager.FilterPreset.NORDIC_SLATE
@@ -1529,6 +1636,15 @@ class MainActivity : AppCompatActivity() {
 
         val filterButtons = listOf(
             viewBinding.btnFilterNormal to "normal",
+            viewBinding.btnFilterLutRec709 to "lut_rec709",
+            viewBinding.btnFilterLutFlatLog to "lut_flat_log",
+            viewBinding.btnFilterLutTealOrange to "lut_teal_orange",
+            viewBinding.btnFilterLutBleachBypass to "lut_bleach_bypass",
+            viewBinding.btnFilterLutAnamorphicCyan to "lut_anamorphic_cyan",
+            viewBinding.btnFilterLutMatteCinema to "lut_matte_cinema",
+            viewBinding.btnFilterLutMidnightNeon to "lut_midnight_neon",
+            viewBinding.btnFilterLutWarmDoc to "lut_warm_documentary",
+            viewBinding.btnFilterLutNoirCinema to "lut_noir_cinema",
             viewBinding.btnFilterGoldenNostalgia to "golden_nostalgia",
             viewBinding.btnFilterVelvia to "velvia_landscape",
             viewBinding.btnFilterNordicSlate to "nordic_slate",
@@ -2715,6 +2831,15 @@ class MainActivity : AppCompatActivity() {
             else -> {
                 val filterList = listOf(
                     "normal",
+                    "lut_rec709",
+                    "lut_flat_log",
+                    "lut_teal_orange",
+                    "lut_bleach_bypass",
+                    "lut_anamorphic_cyan",
+                    "lut_matte_cinema",
+                    "lut_midnight_neon",
+                    "lut_warm_documentary",
+                    "lut_noir_cinema",
                     "golden_nostalgia",
                     "velvia_landscape",
                     "nordic_slate",
@@ -2757,6 +2882,15 @@ class MainActivity : AppCompatActivity() {
             else -> {
                 val filterList = listOf(
                     "normal",
+                    "lut_rec709",
+                    "lut_flat_log",
+                    "lut_teal_orange",
+                    "lut_bleach_bypass",
+                    "lut_anamorphic_cyan",
+                    "lut_matte_cinema",
+                    "lut_midnight_neon",
+                    "lut_warm_documentary",
+                    "lut_noir_cinema",
                     "golden_nostalgia",
                     "velvia_landscape",
                     "nordic_slate",
