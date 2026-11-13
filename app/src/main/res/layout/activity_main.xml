@@ -2307,6 +2307,132 @@
                         android:background="@drawable/bg_cinema_button_active" />
 
                     <TextView
+                        android:id="@+id/btnFilterGoldenNostalgia"
+                        android:layout_width="wrap_content"
+                        android:minWidth="104dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="6dp"
+                        android:paddingHorizontal="12dp"
+                        android:gravity="center"
+                        android:text="GOLDEN NOSTALGIA"
+                        android:textColor="#94A3B8"
+                        android:textSize="10.5sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+
+                    <TextView
+                        android:id="@+id/btnFilterVelvia"
+                        android:layout_width="wrap_content"
+                        android:minWidth="104dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="6dp"
+                        android:paddingHorizontal="12dp"
+                        android:gravity="center"
+                        android:text="VELVIA LANDSCAPE"
+                        android:textColor="#94A3B8"
+                        android:textSize="10.5sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+
+                    <TextView
+                        android:id="@+id/btnFilterNordicSlate"
+                        android:layout_width="wrap_content"
+                        android:minWidth="92dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="6dp"
+                        android:paddingHorizontal="12dp"
+                        android:gravity="center"
+                        android:text="NORDIC SLATE"
+                        android:textColor="#94A3B8"
+                        android:textSize="10.5sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+
+                    <TextView
+                        android:id="@+id/btnFilterArcticMist"
+                        android:layout_width="wrap_content"
+                        android:minWidth="90dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="6dp"
+                        android:paddingHorizontal="12dp"
+                        android:gravity="center"
+                        android:text="ARCTIC MIST"
+                        android:textColor="#94A3B8"
+                        android:textSize="10.5sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+
+                    <TextView
+                        android:id="@+id/btnFilterClassicMono"
+                        android:layout_width="wrap_content"
+                        android:minWidth="96dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="6dp"
+                        android:paddingHorizontal="12dp"
+                        android:gravity="center"
+                        android:text="CLASSIC MONO"
+                        android:textColor="#94A3B8"
+                        android:textSize="10.5sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+
+                    <TextView
+                        android:id="@+id/btnFilterNoir"
+                        android:layout_width="wrap_content"
+                        android:minWidth="104dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="6dp"
+                        android:paddingHorizontal="12dp"
+                        android:gravity="center"
+                        android:text="HIGH-CONTRAST NOIR"
+                        android:textColor="#94A3B8"
+                        android:textSize="10.5sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+
+                    <TextView
+                        android:id="@+id/btnFilterIlfordGrain"
+                        android:layout_width="wrap_content"
+                        android:minWidth="96dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="6dp"
+                        android:paddingHorizontal="12dp"
+                        android:gravity="center"
+                        android:text="ILFORD GRAIN"
+                        android:textColor="#94A3B8"
+                        android:textSize="10.5sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+
+                    <TextView
+                        android:id="@+id/btnFilterSilverGelatin"
+                        android:layout_width="wrap_content"
+                        android:minWidth="98dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="6dp"
+                        android:paddingHorizontal="12dp"
+                        android:gravity="center"
+                        android:text="SILVER GELATIN"
+                        android:textColor="#94A3B8"
+                        android:textSize="10.5sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+
+                    <TextView
+                        android:id="@+id/btnFilterAntiqueSepia"
+                        android:layout_width="wrap_content"
+                        android:minWidth="98dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="6dp"
+                        android:paddingHorizontal="12dp"
+                        android:gravity="center"
+                        android:text="ANTIQUE SEPIA"
+                        android:textColor="#94A3B8"
+                        android:textSize="10.5sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+
+                    <TextView
                         android:id="@+id/btnFilterCinematic"
                         android:layout_width="wrap_content"
                         android:minWidth="80dp"

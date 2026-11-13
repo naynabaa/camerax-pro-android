@@ -388,6 +388,15 @@ class MainActivity : AppCompatActivity() {
 
         // TAB 0: Looks, Filters, AR Lenses & Effects
         viewBinding.btnFilterNormal.setOnClickListener { setFilterPreset("normal") }
+        viewBinding.btnFilterGoldenNostalgia.setOnClickListener { setFilterPreset("golden_nostalgia") }
+        viewBinding.btnFilterVelvia.setOnClickListener { setFilterPreset("velvia_landscape") }
+        viewBinding.btnFilterNordicSlate.setOnClickListener { setFilterPreset("nordic_slate") }
+        viewBinding.btnFilterArcticMist.setOnClickListener { setFilterPreset("arctic_mist") }
+        viewBinding.btnFilterClassicMono.setOnClickListener { setFilterPreset("classic_mono") }
+        viewBinding.btnFilterNoir.setOnClickListener { setFilterPreset("high_contrast_noir") }
+        viewBinding.btnFilterIlfordGrain.setOnClickListener { setFilterPreset("ilford_grain") }
+        viewBinding.btnFilterSilverGelatin.setOnClickListener { setFilterPreset("silver_gelatin") }
+        viewBinding.btnFilterAntiqueSepia.setOnClickListener { setFilterPreset("antique_sepia") }
         viewBinding.btnFilterCinematic.setOnClickListener { setFilterPreset("cinematic") }
         viewBinding.btnFilterVintage.setOnClickListener { setFilterPreset("vintage") }
         viewBinding.btnFilterBW.setOnClickListener { setFilterPreset("bw") }
@@ -1199,6 +1208,92 @@ class MainActivity : AppCompatActivity() {
 
         // 1. Base Preset Color Matrix
         when (currentFilterName.lowercase(Locale.ROOT)) {
+            "golden_nostalgia", "filter_golden_nostalgia" -> {
+                combined.postConcat(ColorMatrix().apply { setSaturation(1.16f) })
+                combined.postConcat(ColorMatrix(floatArrayOf(
+                    1.06f, 0.08f, 0.0f, 0f, 12f,
+                    0.04f, 1.03f, 0.02f, 0f, 10f,
+                    0.0f, 0.03f, 0.80f, 0f, -6f,
+                    0f, 0f, 0f, 1f, 0f
+                )))
+            }
+            "velvia_landscape", "filter_velvia_landscape" -> {
+                combined.postConcat(ColorMatrix().apply { setSaturation(1.52f) })
+                combined.postConcat(ColorMatrix(floatArrayOf(
+                    1.14f, 0f, 0f, 0f, -14f,
+                    0f, 1.26f, 0f, 0f, -12f,
+                    0f, 0f, 1.24f, 0f, -12f,
+                    0f, 0f, 0f, 1f, 0f
+                )))
+            }
+            "nordic_slate", "filter_nordic_slate" -> {
+                combined.postConcat(ColorMatrix().apply { setSaturation(0.64f) })
+                combined.postConcat(ColorMatrix(floatArrayOf(
+                    1.08f, 0f, 0.04f, 0f, -16f,
+                    0f, 1.12f, 0.06f, 0f, -12f,
+                    0.02f, 0.08f, 1.24f, 0f, -4f,
+                    0f, 0f, 0f, 1f, 0f
+                )))
+            }
+            "arctic_mist", "filter_arctic_mist" -> {
+                combined.postConcat(ColorMatrix().apply { setSaturation(0.58f) })
+                combined.postConcat(ColorMatrix(floatArrayOf(
+                    0.90f, 0f, 0.03f, 0f, 14f,
+                    0f, 0.93f, 0.05f, 0f, 16f,
+                    0.02f, 0.06f, 1.02f, 0f, 22f,
+                    0f, 0f, 0f, 1f, 0f
+                )))
+            }
+            "classic_mono", "filter_classic_mono" -> {
+                combined.setSaturation(0f)
+                val contrast = 1.14f
+                val t = (-0.5f * contrast + 0.5f) * 255f
+                combined.postConcat(ColorMatrix(floatArrayOf(
+                    contrast, 0f, 0f, 0f, t,
+                    0f, contrast, 0f, 0f, t,
+                    0f, 0f, contrast, 0f, t,
+                    0f, 0f, 0f, 1f, 0f
+                )))
+            }
+            "high_contrast_noir", "filter_high_contrast_noir" -> {
+                combined.setSaturation(0f)
+                val contrast = 1.68f
+                val t = (-0.5f * contrast + 0.5f) * 255f - 10f
+                combined.postConcat(ColorMatrix(floatArrayOf(
+                    contrast, 0f, 0f, 0f, t,
+                    0f, contrast, 0f, 0f, t,
+                    0f, 0f, contrast, 0f, t,
+                    0f, 0f, 0f, 1f, 0f
+                )))
+            }
+            "ilford_grain", "filter_ilford_grain" -> {
+                combined.setSaturation(0f)
+                val contrast = 1.32f
+                val t = (-0.5f * contrast + 0.5f) * 255f + 4f
+                combined.postConcat(ColorMatrix(floatArrayOf(
+                    contrast, 0f, 0f, 0f, t,
+                    0f, contrast, 0f, 0f, t,
+                    0f, 0f, contrast, 0f, t,
+                    0f, 0f, 0f, 1f, 0f
+                )))
+            }
+            "silver_gelatin", "filter_silver_gelatin" -> {
+                combined.setSaturation(0f)
+                combined.postConcat(ColorMatrix(floatArrayOf(
+                    1.22f, 0f, 0f, 0f, -18f,
+                    0f, 1.19f, 0f, 0f, -20f,
+                    0f, 0f, 1.12f, 0f, -24f,
+                    0f, 0f, 0f, 1f, 0f
+                )))
+            }
+            "antique_sepia", "filter_antique_sepia" -> {
+                combined.postConcat(ColorMatrix(floatArrayOf(
+                    0.44f, 0.84f, 0.21f, 0f, -12f,
+                    0.38f, 0.74f, 0.18f, 0f, -14f,
+                    0.27f, 0.53f, 0.13f, 0f, -16f,
+                    0f, 0f, 0f, 1f, 0f
+                )))
+            }
             "bw", "black_and_white", "mono" -> {
                 combined.setSaturation(0f)
                 val contrast = 1.24f
@@ -1320,6 +1415,15 @@ class MainActivity : AppCompatActivity() {
             isLastActionCreative = true
         }
         val filterPreset = when (preset.lowercase(Locale.ROOT)) {
+            "golden_nostalgia", "filter_golden_nostalgia" -> FilterManager.FilterPreset.GOLDEN_NOSTALGIA
+            "velvia_landscape", "filter_velvia_landscape" -> FilterManager.FilterPreset.VELVIA_LANDSCAPE
+            "nordic_slate", "filter_nordic_slate" -> FilterManager.FilterPreset.NORDIC_SLATE
+            "arctic_mist", "filter_arctic_mist" -> FilterManager.FilterPreset.ARCTIC_MIST
+            "classic_mono", "filter_classic_mono" -> FilterManager.FilterPreset.CLASSIC_MONO
+            "high_contrast_noir", "filter_high_contrast_noir" -> FilterManager.FilterPreset.HIGH_CONTRAST_NOIR
+            "ilford_grain", "filter_ilford_grain" -> FilterManager.FilterPreset.ILFORD_GRAIN
+            "silver_gelatin", "filter_silver_gelatin" -> FilterManager.FilterPreset.SILVER_GELATIN
+            "antique_sepia", "filter_antique_sepia" -> FilterManager.FilterPreset.ANTIQUE_SEPIA
             "cinematic" -> FilterManager.FilterPreset.CINEMATIC
             "vintage" -> FilterManager.FilterPreset.VINTAGE
             "bw", "black_and_white", "mono" -> FilterManager.FilterPreset.BLACK_AND_WHITE
@@ -1333,6 +1437,15 @@ class MainActivity : AppCompatActivity() {
 
         val filterButtons = listOf(
             viewBinding.btnFilterNormal to "normal",
+            viewBinding.btnFilterGoldenNostalgia to "golden_nostalgia",
+            viewBinding.btnFilterVelvia to "velvia_landscape",
+            viewBinding.btnFilterNordicSlate to "nordic_slate",
+            viewBinding.btnFilterArcticMist to "arctic_mist",
+            viewBinding.btnFilterClassicMono to "classic_mono",
+            viewBinding.btnFilterNoir to "high_contrast_noir",
+            viewBinding.btnFilterIlfordGrain to "ilford_grain",
+            viewBinding.btnFilterSilverGelatin to "silver_gelatin",
+            viewBinding.btnFilterAntiqueSepia to "antique_sepia",
             viewBinding.btnFilterCinematic to "cinematic",
             viewBinding.btnFilterVintage to "vintage",
             viewBinding.btnFilterBW to "bw",
@@ -1931,6 +2044,22 @@ class MainActivity : AppCompatActivity() {
             val scaleY = finalBmp.height.toFloat() / overlayH
             val scale = Math.min(scaleX, scaleY)
 
+            // Bake Film Grain if Film Grain toggle OR Ilford Grain filter is active
+            if (viewBinding.proOverlayView.enableFilmGrain || currentFilterName == "ilford_grain") {
+                val grainPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+                val rng = java.util.Random(System.currentTimeMillis())
+                val step = (finalBmp.width / 80).coerceIn(12, 32)
+                for (gx in 0 until finalBmp.width step step) {
+                    for (gy in 0 until finalBmp.height step step) {
+                        val px = gx + rng.nextInt(step)
+                        val py = gy + rng.nextInt(step)
+                        val alpha = rng.nextInt(48) + 18
+                        grainPaint.color = if (rng.nextBoolean()) Color.argb(alpha, 250, 248, 240) else Color.argb(alpha, 15, 15, 15)
+                        canvas.drawCircle(px.toFloat(), py.toFloat(), (finalBmp.width * 0.0012f).coerceAtLeast(1.2f), grainPaint)
+                    }
+                }
+            }
+
             // Bake Retro Date Stamp if enabled
             if (viewBinding.proOverlayView.enableDateStamp) {
                 val sdf = SimpleDateFormat("''yy MM dd  HH:mm", Locale.US)
@@ -2249,7 +2378,23 @@ class MainActivity : AppCompatActivity() {
                 applyTextureEffectPreset(currentTextureEffectIndex)
             }
             else -> {
-                val filterList = listOf("normal", "cinematic", "vintage", "bw", "cyberpunk", "hdr")
+                val filterList = listOf(
+                    "normal",
+                    "golden_nostalgia",
+                    "velvia_landscape",
+                    "nordic_slate",
+                    "arctic_mist",
+                    "classic_mono",
+                    "high_contrast_noir",
+                    "ilford_grain",
+                    "silver_gelatin",
+                    "antique_sepia",
+                    "cinematic",
+                    "vintage",
+                    "bw",
+                    "cyberpunk",
+                    "hdr"
+                )
                 val currentIdx = filterList.indexOf(currentFilterName)
                 val safeIdx = if (currentIdx >= 0) currentIdx else 0
                 val nextIdx = (safeIdx + 1) % filterList.size
@@ -2273,7 +2418,23 @@ class MainActivity : AppCompatActivity() {
                 applyTextureEffectPreset(currentTextureEffectIndex)
             }
             else -> {
-                val filterList = listOf("normal", "cinematic", "vintage", "bw", "cyberpunk", "hdr")
+                val filterList = listOf(
+                    "normal",
+                    "golden_nostalgia",
+                    "velvia_landscape",
+                    "nordic_slate",
+                    "arctic_mist",
+                    "classic_mono",
+                    "high_contrast_noir",
+                    "ilford_grain",
+                    "silver_gelatin",
+                    "antique_sepia",
+                    "cinematic",
+                    "vintage",
+                    "bw",
+                    "cyberpunk",
+                    "hdr"
+                )
                 val currentIdx = filterList.indexOf(currentFilterName)
                 val safeIdx = if (currentIdx >= 0) currentIdx else 0
                 val prevIdx = if (safeIdx <= 0) filterList.size - 1 else safeIdx - 1

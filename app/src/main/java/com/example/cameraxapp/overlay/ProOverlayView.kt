@@ -1305,6 +1305,77 @@ class ProOverlayView @JvmOverloads constructor(
         }
 
         when (preset) {
+            "golden_nostalgia", "filter_golden_nostalgia" -> {
+                // Yellow undertones with soft, nostalgic shadows
+                filterGradingPaint.color = Color.parseColor("#1EFACC15")
+                canvas.drawRect(0f, 0f, w, h, filterGradingPaint)
+                filterSecondaryPaint.shader = RadialGradient(
+                    w * 0.5f, h * 0.45f, Math.max(w, h) * 0.72f,
+                    intArrayOf(Color.TRANSPARENT, Color.parseColor("#2A422006")),
+                    floatArrayOf(0.45f, 1.0f),
+                    Shader.TileMode.CLAMP
+                )
+                canvas.drawRect(0f, 0f, w, h, filterSecondaryPaint)
+                filterSecondaryPaint.shader = null
+            }
+            "velvia_landscape", "filter_velvia_landscape" -> {
+                // Lush greens and deep sky blues accent
+                filterGradingPaint.shader = LinearGradient(
+                    0f, 0f, 0f, h,
+                    intArrayOf(Color.parseColor("#1A0284C7"), Color.parseColor("#18059669")),
+                    floatArrayOf(0.15f, 0.85f),
+                    Shader.TileMode.CLAMP
+                )
+                canvas.drawRect(0f, 0f, w, h, filterGradingPaint)
+                filterGradingPaint.shader = null
+            }
+            "nordic_slate", "filter_nordic_slate" -> {
+                // Cool steel-blues and crisp shadow depth
+                filterGradingPaint.color = Color.parseColor("#221E3A5F")
+                canvas.drawRect(0f, 0f, w, h, filterGradingPaint)
+            }
+            "arctic_mist", "filter_arctic_mist" -> {
+                // Soft, airy blue-gray overcast veil
+                filterGradingPaint.color = Color.parseColor("#26CBD5E1")
+                canvas.drawRect(0f, 0f, w, h, filterGradingPaint)
+            }
+            "classic_mono", "filter_classic_mono" -> {
+                // Pure balanced silver-gray midtones
+                filterGradingPaint.color = Color.parseColor("#0C000000")
+                canvas.drawRect(0f, 0f, w, h, filterGradingPaint)
+            }
+            "high_contrast_noir", "filter_high_contrast_noir" -> {
+                // Dramatic Noir crushed shadow vignette
+                filterSecondaryPaint.shader = RadialGradient(
+                    w * 0.5f, h * 0.5f, Math.max(w, h) * 0.70f,
+                    intArrayOf(Color.TRANSPARENT, Color.parseColor("#6B000000")),
+                    floatArrayOf(0.40f, 1.0f),
+                    Shader.TileMode.CLAMP
+                )
+                canvas.drawRect(0f, 0f, w, h, filterSecondaryPaint)
+                filterSecondaryPaint.shader = null
+            }
+            "ilford_grain", "filter_ilford_grain" -> {
+                // Classic B&W subtle darkroom border tone (grain drawn below)
+                filterGradingPaint.color = Color.parseColor("#12000000")
+                canvas.drawRect(0f, 0f, w, h, filterGradingPaint)
+            }
+            "silver_gelatin", "filter_silver_gelatin" -> {
+                // Subtle warm-silver gallery print tint
+                filterGradingPaint.color = Color.parseColor("#1CD6D3D1")
+                canvas.drawRect(0f, 0f, w, h, filterGradingPaint)
+            }
+            "antique_sepia", "filter_antique_sepia" -> {
+                // Rich warm archival brown vignette
+                filterSecondaryPaint.shader = RadialGradient(
+                    w * 0.5f, h * 0.5f, Math.max(w, h) * 0.75f,
+                    intArrayOf(Color.parseColor("#1292400E"), Color.parseColor("#48451A03")),
+                    floatArrayOf(0.35f, 1.0f),
+                    Shader.TileMode.CLAMP
+                )
+                canvas.drawRect(0f, 0f, w, h, filterSecondaryPaint)
+                filterSecondaryPaint.shader = null
+            }
             "cinematic" -> {
                 // Hollywood Teal & Orange Split Toning: Teal Shadows + Amber Highlights
                 filterGradingPaint.shader = LinearGradient(
@@ -1374,18 +1445,19 @@ class ProOverlayView @JvmOverloads constructor(
 
     // --- REAL-TIME LIVE TEXTURE EFFECTS (FILM GRAIN, DATE STAMP, CINE FLARE) ---
     private fun drawLiveTextureEffects(canvas: Canvas, w: Float, h: Float) {
-        // 1. Film Grain (Animated 35mm emulsion noise + subtle vintage vignette)
-        if (enableFilmGrain) {
+        // 1. Film Grain (Animated 35mm emulsion noise + fine Ilford B&W grain)
+        val isIlfordGrain = activeFilterPreset.lowercase() == "ilford_grain" || activeFilterPreset.lowercase() == "filter_ilford_grain"
+        if (enableFilmGrain || isIlfordGrain) {
             val random = java.util.Random(System.currentTimeMillis() / 75)
-            val step = dpToPx(22f).toInt().coerceAtLeast(14)
+            val step = dpToPx(if (isIlfordGrain && !enableFilmGrain) 16f else 22f).toInt().coerceAtLeast(12)
             for (x in 0 until w.toInt() step step) {
                 for (y in 0 until h.toInt() step step) {
                     val rx = x + random.nextInt(step)
                     val ry = y + random.nextInt(step)
-                    val alpha = random.nextInt(70) + 25
+                    val alpha = random.nextInt(65) + 28
                     val isLight = random.nextBoolean()
-                    filmGrainPaint.color = if (isLight) Color.argb(alpha, 255, 250, 235) else Color.argb(alpha / 2, 15, 15, 15)
-                    canvas.drawCircle(rx.toFloat(), ry.toFloat(), dpToPx(1.3f), filmGrainPaint)
+                    filmGrainPaint.color = if (isLight) Color.argb(alpha, 250, 248, 242) else Color.argb(alpha / 2, 12, 12, 12)
+                    canvas.drawCircle(rx.toFloat(), ry.toFloat(), dpToPx(if (isIlfordGrain && !enableFilmGrain) 1.0f else 1.3f), filmGrainPaint)
                 }
             }
             postInvalidateOnAnimation()

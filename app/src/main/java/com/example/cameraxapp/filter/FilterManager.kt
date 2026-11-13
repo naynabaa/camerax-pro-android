@@ -35,6 +35,15 @@ class FilterManager(private val context: Context) {
 
     enum class FilterPreset {
         NORMAL,
+        GOLDEN_NOSTALGIA,
+        VELVIA_LANDSCAPE,
+        NORDIC_SLATE,
+        ARCTIC_MIST,
+        CLASSIC_MONO,
+        HIGH_CONTRAST_NOIR,
+        ILFORD_GRAIN,
+        SILVER_GELATIN,
+        ANTIQUE_SEPIA,
         CINEMATIC,
         VINTAGE,
         BLACK_AND_WHITE,
@@ -103,6 +112,50 @@ class FilterManager(private val context: Context) {
             FilterPreset.NORMAL -> {
                 // Passthrough
             }
+            FilterPreset.GOLDEN_NOSTALGIA -> {
+                filters.add(GPUImageSepiaToneFilter(0.42f))
+                filters.add(GPUImageBrightnessFilter(0.05f))
+                filters.add(GPUImageContrastFilter(0.94f))
+                filters.add(GPUImageSaturationFilter(1.16f))
+            }
+            FilterPreset.VELVIA_LANDSCAPE -> {
+                filters.add(GPUImageSaturationFilter(1.52f))
+                filters.add(GPUImageContrastFilter(1.24f))
+                filters.add(GPUImageSharpenFilter(0.45f))
+            }
+            FilterPreset.NORDIC_SLATE -> {
+                filters.add(GPUImageSaturationFilter(0.64f))
+                filters.add(GPUImageContrastFilter(1.24f))
+                filters.add(GPUImageBrightnessFilter(-0.03f))
+            }
+            FilterPreset.ARCTIC_MIST -> {
+                filters.add(GPUImageSaturationFilter(0.60f))
+                filters.add(GPUImageContrastFilter(0.90f))
+                filters.add(GPUImageBrightnessFilter(0.08f))
+            }
+            FilterPreset.CLASSIC_MONO -> {
+                filters.add(GPUImageGrayscaleFilter())
+                filters.add(GPUImageContrastFilter(1.14f))
+            }
+            FilterPreset.HIGH_CONTRAST_NOIR -> {
+                filters.add(GPUImageGrayscaleFilter())
+                filters.add(GPUImageContrastFilter(1.68f))
+                filters.add(GPUImageBrightnessFilter(-0.04f))
+            }
+            FilterPreset.ILFORD_GRAIN -> {
+                filters.add(GPUImageGrayscaleFilter())
+                filters.add(GPUImageContrastFilter(1.30f))
+            }
+            FilterPreset.SILVER_GELATIN -> {
+                filters.add(GPUImageGrayscaleFilter())
+                filters.add(GPUImageSepiaToneFilter(0.18f))
+                filters.add(GPUImageContrastFilter(1.22f))
+            }
+            FilterPreset.ANTIQUE_SEPIA -> {
+                filters.add(GPUImageSepiaToneFilter(0.88f))
+                filters.add(GPUImageContrastFilter(1.18f))
+                filters.add(GPUImageSaturationFilter(0.75f))
+            }
             FilterPreset.CINEMATIC -> {
                 filters.add(GPUImageFilter(GPUImageFilter.NO_FILTER_VERTEX_SHADER, CINEMATIC_FRAGMENT_SHADER))
                 filters.add(GPUImageContrastFilter(1.22f))
@@ -159,6 +212,15 @@ class FilterManager(private val context: Context) {
 
     fun applyPreset(presetName: String) {
         val preset = when (presetName.lowercase(Locale.ROOT)) {
+            "golden_nostalgia", "filter_golden_nostalgia" -> FilterPreset.GOLDEN_NOSTALGIA
+            "velvia_landscape", "filter_velvia_landscape" -> FilterPreset.VELVIA_LANDSCAPE
+            "nordic_slate", "filter_nordic_slate" -> FilterPreset.NORDIC_SLATE
+            "arctic_mist", "filter_arctic_mist" -> FilterPreset.ARCTIC_MIST
+            "classic_mono", "filter_classic_mono" -> FilterPreset.CLASSIC_MONO
+            "high_contrast_noir", "filter_high_contrast_noir" -> FilterPreset.HIGH_CONTRAST_NOIR
+            "ilford_grain", "filter_ilford_grain" -> FilterPreset.ILFORD_GRAIN
+            "silver_gelatin", "filter_silver_gelatin" -> FilterPreset.SILVER_GELATIN
+            "antique_sepia", "filter_antique_sepia" -> FilterPreset.ANTIQUE_SEPIA
             "cinematic" -> FilterPreset.CINEMATIC
             "vintage" -> FilterPreset.VINTAGE
             "bw", "black_and_white", "mono" -> FilterPreset.BLACK_AND_WHITE
