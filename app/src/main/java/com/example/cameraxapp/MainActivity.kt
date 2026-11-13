@@ -322,6 +322,7 @@ class MainActivity : AppCompatActivity() {
             viewBinding.layoutGuideFloatingBar.visibility = if (isVisible) View.GONE else View.VISIBLE
             if (!isVisible) {
                 viewBinding.effectsStudioDrawer.visibility = View.GONE
+                isLastActionCreative = false
                 viewBinding.proStudioDrawer.visibility = View.GONE
             }
             window.decorView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
@@ -364,6 +365,7 @@ class MainActivity : AppCompatActivity() {
             toggleCleanScreen()
             viewBinding.proStudioDrawer.visibility = View.GONE
             viewBinding.effectsStudioDrawer.visibility = View.GONE
+            isLastActionCreative = false
             viewBinding.layoutGuideFloatingBar.visibility = View.GONE
         }
 
@@ -547,7 +549,7 @@ class MainActivity : AppCompatActivity() {
 
         // ImageCapture Use Case
         imageCapture = ImageCapture.Builder()
-            .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
+            .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
             .setFlashMode(flashMode)
             .build()
 
@@ -555,8 +557,8 @@ class MainActivity : AppCompatActivity() {
         val recorder = Recorder.Builder()
             .setQualitySelector(
                 QualitySelector.from(
-                    Quality.FHD,
-                    FallbackStrategy.lowerQualityOrHigherThan(Quality.FHD)
+                    Quality.HD,
+                    FallbackStrategy.lowerQualityOrHigherThan(Quality.HD)
                 )
             )
             .build()
@@ -1400,6 +1402,7 @@ class MainActivity : AppCompatActivity() {
         viewBinding.proStudioDrawer.visibility = if (isVisible) View.GONE else View.VISIBLE
         if (!isVisible) {
             viewBinding.effectsStudioDrawer.visibility = View.GONE
+            isLastActionCreative = false
             selectShelfTab(currentShelfTab)
         }
     }
@@ -2478,7 +2481,7 @@ class MainActivity : AppCompatActivity() {
             if (isNext) navigateNextGrid() else navigatePreviousGrid()
             return
         }
-        if (viewBinding.effectsStudioDrawer.visibility == View.VISIBLE || isLastActionCreative) {
+        if (viewBinding.effectsStudioDrawer.visibility == View.VISIBLE) {
             if (isNext) navigateNextEffectOrFilter() else navigatePreviousEffectOrFilter()
             return
         }
@@ -2594,6 +2597,7 @@ class MainActivity : AppCompatActivity() {
                         !isPointInView(viewBinding.modeScrollView, ev.rawX, ev.rawY)
                     ) {
                         viewBinding.effectsStudioDrawer.visibility = View.GONE
+                        isLastActionCreative = false
                         closedDrawer = true
                     }
                     if (closedDrawer) {
