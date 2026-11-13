@@ -1749,11 +1749,242 @@ class ProOverlayView @JvmOverloads constructor(
                 canvas.drawRect(0f, 0f, w, h, filterSecondaryPaint)
                 filterSecondaryPaint.shader = null
             }
+            "video_bokeh" -> {
+                // Real-time moving-subject tracking cinema bokeh falloff + aperture orbs
+                val trackX = w * (0.5f + 0.06f * Math.sin(timeSec * 0.85).toFloat())
+                val trackY = h * 0.45f
+                filterSecondaryPaint.shader = RadialGradient(
+                    trackX, trackY, Math.max(w, h) * 0.62f,
+                    intArrayOf(Color.TRANSPARENT, Color.parseColor("#240F172A"), Color.parseColor("#58020617")),
+                    floatArrayOf(0.24f, 0.56f, 1.0f),
+                    Shader.TileMode.CLAMP
+                )
+                canvas.drawRect(0f, 0f, w, h, filterSecondaryPaint)
+                filterSecondaryPaint.shader = null
+
+                val orbPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+                for (i in 0..7) {
+                    val ang = (i / 8.0) * Math.PI * 2.0 + timeSec * 0.14
+                    val dist = Math.min(w, h) * (0.36f + (i % 3) * 0.07f)
+                    val ox = trackX + (Math.cos(ang) * dist).toFloat()
+                    val oy = trackY + (Math.sin(ang) * dist).toFloat()
+                    val r = dpToPx(20f + (i % 4) * 5f)
+                    orbPaint.shader = RadialGradient(
+                        ox, oy, r,
+                        intArrayOf(Color.parseColor("#3838BDF8"), Color.parseColor("#22FBBF24"), Color.TRANSPARENT),
+                        floatArrayOf(0f, 0.65f, 1f),
+                        Shader.TileMode.CLAMP
+                    )
+                    canvas.drawCircle(ox, oy, r, orbPaint)
+                }
+                orbPaint.shader = null
+
+                val bw = Math.min(w, h) * 0.18f
+                val cLen = dpToPx(14f)
+                val trackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    style = Paint.Style.STROKE
+                    strokeWidth = dpToPx(2f)
+                    color = Color.parseColor("#DDFACC15")
+                }
+                canvas.drawLine(trackX - bw, trackY - bw, trackX - bw + cLen, trackY - bw, trackPaint)
+                canvas.drawLine(trackX - bw, trackY - bw, trackX - bw, trackY - bw + cLen, trackPaint)
+                canvas.drawLine(trackX + bw, trackY - bw, trackX + bw - cLen, trackY - bw, trackPaint)
+                canvas.drawLine(trackX + bw, trackY - bw, trackX + bw, trackY - bw + cLen, trackPaint)
+                canvas.drawLine(trackX - bw, trackY + bw, trackX - bw + cLen, trackY + bw, trackPaint)
+                canvas.drawLine(trackX - bw, trackY + bw, trackX - bw, trackY + bw - cLen, trackPaint)
+                canvas.drawLine(trackX + bw, trackY + bw, trackX + bw - cLen, trackY + bw, trackPaint)
+                canvas.drawLine(trackX + bw, trackY + bw, trackX + bw, trackY + bw - cLen, trackPaint)
+                needsAnim = true
+            }
+            "slow_motion_120_240" -> {
+                // High-speed 120/240fps shutter sweep arc & speed HUD
+                val cx = w * 0.5f
+                val cy = h * 0.5f
+                val r = Math.min(w, h) * 0.34f
+                val ringPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    style = Paint.Style.STROKE
+                    strokeWidth = dpToPx(2f)
+                    color = Color.parseColor("#55F59E0B")
+                }
+                canvas.drawCircle(cx, cy, r, ringPaint)
+                ringPaint.color = Color.parseColor("#E6FBBF24")
+                ringPaint.strokeWidth = dpToPx(3f)
+                val sweepStart = ((timeSec * 36.0) % 360.0).toFloat()
+                canvas.drawArc(RectF(cx - r, cy - r, cx + r, cy + r), sweepStart, 48f, false, ringPaint)
+
+                val badgePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.parseColor("#E6F59E0B")
+                    textSize = dpToPx(11f)
+                    typeface = Typeface.MONOSPACE
+                    isFakeBoldText = true
+                }
+                canvas.drawText("240 FPS · 0.25x SLOW MOTION", dpToPx(20f), h - dpToPx(125f), badgePaint)
+                needsAnim = true
+            }
+            "time_lapse" -> {
+                // Accelerated intervalometer arc & speed HUD
+                val cx = w * 0.5f
+                val cy = h * 0.5f
+                val r = Math.min(w, h) * 0.28f
+                val ringPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    style = Paint.Style.STROKE
+                    strokeWidth = dpToPx(2f)
+                    color = Color.parseColor("#5538BDF8")
+                }
+                canvas.drawCircle(cx, cy, r, ringPaint)
+                ringPaint.color = Color.parseColor("#E638BDF8")
+                ringPaint.strokeWidth = dpToPx(3f)
+                val fastSweep = ((timeSec * 280.0) % 360.0).toFloat()
+                canvas.drawArc(RectF(cx - r, cy - r, cx + r, cy + r), fastSweep, 75f, false, ringPaint)
+
+                val badgePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.parseColor("#E638BDF8")
+                    textSize = dpToPx(11f)
+                    typeface = Typeface.MONOSPACE
+                    isFakeBoldText = true
+                }
+                canvas.drawText("TIME-LAPSE · 8x INTERVAL", dpToPx(20f), h - dpToPx(125f), badgePaint)
+                needsAnim = true
+            }
+            "hyperlapse" -> {
+                // Stabilized moving time-lapse crop brackets & motion chevrons
+                val padX = w * 0.08f
+                val padY = h * 0.08f
+                val framePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    style = Paint.Style.STROKE
+                    strokeWidth = dpToPx(1.8f)
+                    color = Color.parseColor("#9922D3EE")
+                }
+                canvas.drawRect(padX, padY, w - padX, h - padY, framePaint)
+                val shift = ((timeSec * 2.5) % 1.0).toFloat() * dpToPx(20f)
+                for (i in 0..2) {
+                    val cx = w * 0.5f + (i - 1) * dpToPx(18f) + shift * 0.5f
+                    val cy = h * 0.78f
+                    canvas.drawLine(cx - dpToPx(5f), cy - dpToPx(5f), cx + dpToPx(3f), cy, framePaint)
+                    canvas.drawLine(cx + dpToPx(3f), cy, cx - dpToPx(5f), cy + dpToPx(5f), framePaint)
+                }
+                val badgePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.parseColor("#E622D3EE")
+                    textSize = dpToPx(11f)
+                    typeface = Typeface.MONOSPACE
+                    isFakeBoldText = true
+                }
+                canvas.drawText("HYPERLAPSE · 4x STABILIZED", dpToPx(20f), h - dpToPx(125f), badgePaint)
+                needsAnim = true
+            }
+            "dolly_zoom" -> {
+                // Vertigo dynamic depth-warp perspective rectangles
+                val pulse = ((Math.sin(timeSec * 2.1) + 1.0) * 0.5).toFloat()
+                val warpPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    style = Paint.Style.STROKE
+                    strokeWidth = dpToPx(1.6f)
+                }
+                val cx = w * 0.5f
+                val cy = h * 0.5f
+                for (i in 0..2) {
+                    val r = Math.min(w, h) * (0.16f + i * 0.11f + pulse * 0.06f)
+                    warpPaint.color = Color.argb((140 - i * 35), 192, 132, 252)
+                    canvas.drawRect(cx - r, cy - r * 0.75f, cx + r, cy + r * 0.75f, warpPaint)
+                }
+                val badgePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.parseColor("#E6D8B4FE")
+                    textSize = dpToPx(11f)
+                    typeface = Typeface.MONOSPACE
+                    isFakeBoldText = true
+                }
+                val factor = String.format(java.util.Locale.US, "%.2fx", 1.0f + pulse * 0.36f)
+                canvas.drawText("DOLLY ZOOM · " + factor, dpToPx(20f), h - dpToPx(125f), badgePaint)
+                needsAnim = true
+            }
+            "motion_blur" -> {
+                // Horizontal shutter-drag directional motion streaks
+                val streakPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    style = Paint.Style.STROKE
+                    strokeCap = Paint.Cap.ROUND
+                }
+                for (i in 0..6) {
+                    val my = h * (0.20f + i * 0.09f)
+                    val mx = (((timeSec * (0.65 + (i % 3) * 0.22)) + i * 0.17) % 1.0).toFloat() * w
+                    val len = w * 0.38f
+                    streakPaint.strokeWidth = dpToPx(3f + (i % 3))
+                    streakPaint.shader = LinearGradient(
+                        mx - len * 0.5f, my, mx + len * 0.5f, my,
+                        intArrayOf(Color.TRANSPARENT, Color.parseColor("#44E2E8F0"), Color.TRANSPARENT),
+                        null, Shader.TileMode.CLAMP
+                    )
+                    canvas.drawLine(mx - len * 0.5f, my, mx + len * 0.5f, my, streakPaint)
+                }
+                streakPaint.shader = null
+                needsAnim = true
+            }
+            "action_stabilization" -> {
+                // Horizon Lock active gimbal safety frame & counter-rotated horizontal lock line
+                val padX = w * 0.09f
+                val padY = h * 0.09f
+                val lockPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    style = Paint.Style.STROKE
+                    strokeWidth = dpToPx(2f)
+                    color = Color.parseColor("#CC10B981")
+                }
+                canvas.drawRect(padX, padY, w - padX, h - padY, lockPaint)
+
+                canvas.save()
+                canvas.rotate(-tiltRollDegrees.coerceIn(-45f, 45f), w * 0.5f, h * 0.5f)
+                lockPaint.strokeWidth = dpToPx(2.2f)
+                lockPaint.color = Color.parseColor("#E634D399")
+                canvas.drawLine(w * 0.5f - dpToPx(56f), h * 0.5f, w * 0.5f - dpToPx(14f), h * 0.5f, lockPaint)
+                canvas.drawLine(w * 0.5f + dpToPx(14f), h * 0.5f, w * 0.5f + dpToPx(56f), h * 0.5f, lockPaint)
+                canvas.restore()
+
+                val badgePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.parseColor("#E634D399")
+                    textSize = dpToPx(11f)
+                    typeface = Typeface.MONOSPACE
+                    isFakeBoldText = true
+                }
+                canvas.drawText("HORIZON LOCK · 0.0° STABILIZED", dpToPx(20f), h - dpToPx(125f), badgePaint)
+                needsAnim = true
+            }
+            "vintage_super8" -> {
+                // Classic 8mm film gate, left sprocket perforations, jitter & warm edge light leak
+                val flicker = (0.72 + 0.28 * Math.sin(timeSec * 9.5)).toFloat()
+                filterSecondaryPaint.shader = RadialGradient(
+                    w * 0.92f, h * 0.16f, w * 0.48f,
+                    intArrayOf(
+                        Color.argb((115 * flicker).toInt(), 251, 146, 60),
+                        Color.argb((55 * flicker).toInt(), 239, 68, 68),
+                        Color.TRANSPARENT
+                    ),
+                    floatArrayOf(0f, 0.5f, 1f),
+                    Shader.TileMode.CLAMP
+                )
+                canvas.drawRect(0f, 0f, w, h, filterSecondaryPaint)
+                filterSecondaryPaint.shader = null
+
+                val gatePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#DF060608") }
+                val railW = dpToPx(22f)
+                canvas.drawRect(0f, 0f, railW, h, gatePaint)
+                canvas.drawRect(w - dpToPx(8f), 0f, w, h, gatePaint)
+
+                val sprocketPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#CCF5F0E1") }
+                val spacing = dpToPx(54f)
+                val scroll = ((timeSec * 36.0) % spacing).toFloat() + (Math.sin(timeSec * 27.0) * dpToPx(2f)).toFloat()
+                var sy = -spacing
+                while (sy < h + spacing) {
+                    val yPos = sy + scroll
+                    canvas.drawRoundRect(
+                        RectF(dpToPx(5f), yPos, railW - dpToPx(5f), yPos + dpToPx(16f)),
+                        dpToPx(2f), dpToPx(2f), sprocketPaint
+                    )
+                    sy += spacing
+                }
+                needsAnim = true
+            }
         }
 
-        // 1. Film Grain (Animated 35mm emulsion noise + fine Ilford B&W grain)
+        // 1. Film Grain (Animated 35mm emulsion noise + fine Ilford B&W grain + Vintage Super 8)
         val isIlfordGrain = activeFilterPreset.lowercase() == "ilford_grain" || activeFilterPreset.lowercase() == "filter_ilford_grain"
-        val isFilmGrainEffect = effect == "film_grain"
+        val isFilmGrainEffect = effect == "film_grain" || effect == "vintage_super8"
         if (enableFilmGrain || isIlfordGrain || isFilmGrainEffect) {
             val random = java.util.Random(System.currentTimeMillis() / 75)
             val step = dpToPx(if (isIlfordGrain && !enableFilmGrain && !isFilmGrainEffect) 16f else 22f).toInt().coerceAtLeast(12)
@@ -1770,9 +2001,9 @@ class ProOverlayView @JvmOverloads constructor(
             needsAnim = true
         }
 
-        // 2. Anamorphic Cine Flare Streak across optical center
-        if (enableCineFlare) {
-            val cy = h * 0.48f
+        // 2. Anamorphic Flare Streak (Cyan-blue & warm amber horizontal sci-fi streaks)
+        if (enableCineFlare || effect == "anamorphic_flare") {
+            val cy = h * 0.44f
             val streakH = dpToPx(18f)
             cineFlarePaint.shader = LinearGradient(
                 0f, cy, w, cy,
@@ -1781,6 +2012,16 @@ class ProOverlayView @JvmOverloads constructor(
                 Shader.TileMode.CLAMP
             )
             canvas.drawRect(0f, cy - streakH, w, cy + streakH, cineFlarePaint)
+
+            val cy2 = h * 0.56f
+            val streakH2 = dpToPx(10f)
+            cineFlarePaint.shader = LinearGradient(
+                0f, cy2, w, cy2,
+                intArrayOf(Color.TRANSPARENT, Color.parseColor("#88F59E0B"), Color.parseColor("#CCFFFFFF"), Color.parseColor("#88F59E0B"), Color.TRANSPARENT),
+                floatArrayOf(0f, 0.38f, 0.58f, 0.72f, 1f),
+                Shader.TileMode.CLAMP
+            )
+            canvas.drawRect(0f, cy2 - streakH2, w, cy2 + streakH2, cineFlarePaint)
             cineFlarePaint.shader = null
         }
 

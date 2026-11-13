@@ -2912,6 +2912,132 @@
                         android:fontFamily="monospace"
                         android:background="@drawable/bg_cinema_button_inactive" />
 
+                    <TextView
+                        android:id="@+id/btnEffectVideoBokeh"
+                        android:layout_width="wrap_content"
+                        android:minWidth="88dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="6dp"
+                        android:paddingHorizontal="12dp"
+                        android:gravity="center"
+                        android:text="VIDEO BOKEH"
+                        android:textColor="#94A3B8"
+                        android:textSize="10sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+
+                    <TextView
+                        android:id="@+id/btnEffectSlowMotion"
+                        android:layout_width="wrap_content"
+                        android:minWidth="88dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="6dp"
+                        android:paddingHorizontal="12dp"
+                        android:gravity="center"
+                        android:text="SLOW-MO 240FPS"
+                        android:textColor="#94A3B8"
+                        android:textSize="10sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+
+                    <TextView
+                        android:id="@+id/btnEffectTimeLapse"
+                        android:layout_width="wrap_content"
+                        android:minWidth="84dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="6dp"
+                        android:paddingHorizontal="12dp"
+                        android:gravity="center"
+                        android:text="TIME-LAPSE"
+                        android:textColor="#94A3B8"
+                        android:textSize="10sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+
+                    <TextView
+                        android:id="@+id/btnEffectHyperlapse"
+                        android:layout_width="wrap_content"
+                        android:minWidth="84dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="6dp"
+                        android:paddingHorizontal="12dp"
+                        android:gravity="center"
+                        android:text="HYPERLAPSE"
+                        android:textColor="#94A3B8"
+                        android:textSize="10sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+
+                    <TextView
+                        android:id="@+id/btnEffectAnamorphicFlare"
+                        android:layout_width="wrap_content"
+                        android:minWidth="94dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="6dp"
+                        android:paddingHorizontal="12dp"
+                        android:gravity="center"
+                        android:text="ANAMORPHIC FLARE"
+                        android:textColor="#94A3B8"
+                        android:textSize="10sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+
+                    <TextView
+                        android:id="@+id/btnEffectDollyZoom"
+                        android:layout_width="wrap_content"
+                        android:minWidth="84dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="6dp"
+                        android:paddingHorizontal="12dp"
+                        android:gravity="center"
+                        android:text="DOLLY ZOOM"
+                        android:textColor="#94A3B8"
+                        android:textSize="10sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+
+                    <TextView
+                        android:id="@+id/btnEffectMotionBlur"
+                        android:layout_width="wrap_content"
+                        android:minWidth="84dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="6dp"
+                        android:paddingHorizontal="12dp"
+                        android:gravity="center"
+                        android:text="MOTION BLUR"
+                        android:textColor="#94A3B8"
+                        android:textSize="10sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+
+                    <TextView
+                        android:id="@+id/btnEffectHorizonLock"
+                        android:layout_width="wrap_content"
+                        android:minWidth="88dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="6dp"
+                        android:paddingHorizontal="12dp"
+                        android:gravity="center"
+                        android:text="HORIZON LOCK"
+                        android:textColor="#94A3B8"
+                        android:textSize="10sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+
+                    <TextView
+                        android:id="@+id/btnEffectSuper8"
+                        android:layout_width="wrap_content"
+                        android:minWidth="92dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="6dp"
+                        android:paddingHorizontal="12dp"
+                        android:gravity="center"
+                        android:text="VINTAGE SUPER 8"
+                        android:textColor="#94A3B8"
+                        android:textSize="10sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+
                     <LinearLayout
                         android:layout_width="wrap_content"
                         android:layout_height="36dp"
