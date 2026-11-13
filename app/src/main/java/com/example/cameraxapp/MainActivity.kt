@@ -11,11 +11,18 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.ColorMatrix
 import android.graphics.ColorMatrixColorFilter
+import android.graphics.LinearGradient
 import android.graphics.Matrix
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.PointF
+import android.graphics.PorterDuff
+import android.graphics.PorterDuffXfermode
+import android.graphics.RadialGradient
 import android.graphics.Rect
+import android.graphics.RectF
 import android.graphics.RenderEffect
+import android.graphics.Shader
 import android.graphics.Typeface
 import android.media.ExifInterface
 import android.media.FaceDetector
@@ -238,6 +245,7 @@ class MainActivity : AppCompatActivity() {
     private var currentDeSqueeze = "OFF"
     private var currentFilterName = "normal"
     private var currentArLensName = "none"
+    private var currentShootingEffect = "none"
 
     enum class CreativeTarget { FILTERS, LENSES, EFFECTS }
     private var currentCreativeTarget = CreativeTarget.FILTERS
@@ -409,11 +417,33 @@ class MainActivity : AppCompatActivity() {
         viewBinding.btnArCrown.setOnClickListener { setArLens("golden_crown") }
         viewBinding.btnArHud.setOnClickListener { setArLens("scifi_hud") }
 
+        viewBinding.btnEffectOff.setOnClickListener { setShootingEffect("none") }
+        viewBinding.btnEffectBokeh.setOnClickListener { setShootingEffect("portrait_bokeh") }
+        viewBinding.btnEffectLongExp.setOnClickListener { setShootingEffect("long_exposure") }
+        viewBinding.btnEffectLightPaint.setOnClickListener { setShootingEffect("light_painting") }
+        viewBinding.btnEffectStarTrails.setOnClickListener { setShootingEffect("star_trails") }
+        viewBinding.btnEffectNightSight.setOnClickListener { setShootingEffect("night_sight") }
+        viewBinding.btnEffectMacro.setOnClickListener { setShootingEffect("macro_focus") }
+        viewBinding.btnEffectTiltShift.setOnClickListener { setShootingEffect("tilt_shift") }
+        viewBinding.btnEffectDoubleExp.setOnClickListener { setShootingEffect("double_exposure") }
+        viewBinding.btnEffectPanorama.setOnClickListener { setShootingEffect("panorama") }
+        viewBinding.btnEffectFilmGrain.setOnClickListener { setShootingEffect("film_grain") }
+        viewBinding.btnEffectHalation.setOnClickListener { setShootingEffect("soft_halation") }
+        viewBinding.btnEffectVignette.setOnClickListener { setShootingEffect("vignette") }
+
         viewBinding.switchFilmGrain.setOnCheckedChangeListener { _, isChecked ->
             viewBinding.proOverlayView.enableFilmGrain = isChecked
             if (!isUpdatingEffectSwitches) {
                 currentCreativeTarget = CreativeTarget.EFFECTS
                 isLastActionCreative = true
+                if (isChecked) {
+                    currentShootingEffect = "film_grain"
+                    viewBinding.proOverlayView.activeShootingEffect = "film_grain"
+                } else if (currentShootingEffect == "film_grain") {
+                    currentShootingEffect = "none"
+                    viewBinding.proOverlayView.activeShootingEffect = "none"
+                }
+                updateShootingEffectButtons()
                 updateCreativeStatusUI()
                 showHudNotice("35mm Film Grain ${if (isChecked) "ON" else "OFF"}")
             }
@@ -558,7 +588,7 @@ class MainActivity : AppCompatActivity() {
 
         // ImageCapture Use Case
         imageCapture = ImageCapture.Builder()
-            .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+            .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
             .setFlashMode(flashMode)
             .build()
 
@@ -566,8 +596,8 @@ class MainActivity : AppCompatActivity() {
         val recorder = Recorder.Builder()
             .setQualitySelector(
                 QualitySelector.from(
-                    Quality.HD,
-                    FallbackStrategy.lowerQualityOrHigherThan(Quality.HD)
+                    Quality.FHD,
+                    FallbackStrategy.lowerQualityOrHigherThan(Quality.FHD)
                 )
             )
             .build()
@@ -1145,20 +1175,40 @@ class MainActivity : AppCompatActivity() {
         updateCreativeStatusUI()
     }
 
+    private fun getShootingEffectLabel(effectId: String): String = when (effectId) {
+        "portrait_bokeh" -> "PORTRAIT BOKEH"
+        "long_exposure" -> "LONG EXPOSURE"
+        "light_painting" -> "LIGHT PAINTING"
+        "star_trails" -> "STAR TRAILS"
+        "night_sight" -> "NIGHT SIGHT"
+        "macro_focus" -> "MACRO FOCUS"
+        "tilt_shift" -> "TILT-SHIFT"
+        "double_exposure" -> "DOUBLE EXPOSURE"
+        "panorama" -> "PANORAMA"
+        "film_grain" -> "35MM FILM GRAIN"
+        "soft_halation" -> "SOFT HALATION"
+        "vignette" -> "VIGNETTE"
+        else -> "OFF"
+    }
+
     private fun updateCreativeStatusUI() {
         val statusText = when (currentCreativeTarget) {
-            CreativeTarget.FILTERS -> "FILTER: " + currentFilterName.uppercase(Locale.ROOT)
+            CreativeTarget.FILTERS -> "FILTER: " + currentFilterName.replace("_", " ").uppercase(Locale.ROOT)
             CreativeTarget.LENSES -> "LENS: " + currentArLensName.replace("_", " ").uppercase(Locale.ROOT)
             CreativeTarget.EFFECTS -> {
-                val g = viewBinding.proOverlayView.enableFilmGrain
-                val d = viewBinding.proOverlayView.enableDateStamp
-                val f = viewBinding.proOverlayView.enableCineFlare
-                when {
-                    g && d && f -> "EFFECT: CINEMA COMBO"
-                    g -> "EFFECT: 35MM GRAIN"
-                    d -> "EFFECT: 90S STAMP"
-                    f -> "EFFECT: CINE FLARE"
-                    else -> "EFFECT: OFF"
+                if (currentShootingEffect != "none") {
+                    "EFFECT: " + getShootingEffectLabel(currentShootingEffect)
+                } else {
+                    val g = viewBinding.proOverlayView.enableFilmGrain
+                    val d = viewBinding.proOverlayView.enableDateStamp
+                    val f = viewBinding.proOverlayView.enableCineFlare
+                    when {
+                        g && d && f -> "EFFECT: CINEMA COMBO"
+                        g -> "EFFECT: 35MM GRAIN"
+                        d -> "EFFECT: 90S STAMP"
+                        f -> "EFFECT: CINE FLARE"
+                        else -> "EFFECT: OFF"
+                    }
                 }
             }
         }
@@ -1193,7 +1243,11 @@ class MainActivity : AppCompatActivity() {
         val bri = viewBinding.proOverlayView.liveBrightnessPercent
         val con = viewBinding.proOverlayView.liveContrastPercent
         val sat = viewBinding.proOverlayView.liveSaturationPercent
-        val isIdentity = currentFilterName == "normal" && bri == 0 && con == 0 && sat == 0
+        val isIdentity = currentFilterName == "normal" && bri == 0 && con == 0 && sat == 0 &&
+            currentShootingEffect != "night_sight" &&
+            currentShootingEffect != "tilt_shift" &&
+            currentShootingEffect != "macro_focus" &&
+            currentShootingEffect != "double_exposure"
 
         if (isIdentity) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -1346,6 +1400,44 @@ class MainActivity : AppCompatActivity() {
                     0f, 0f, contrast, 0f, t,
                     0f, 0f, 0f, 1f, 0f
                 )))
+            }
+        }
+
+        // 1b. Optical Shooting Effects live luminance & miniature tone boosts
+        when (currentShootingEffect) {
+            "night_sight" -> {
+                combined.postConcat(ColorMatrix().apply { setSaturation(1.08f) })
+                combined.postConcat(ColorMatrix(floatArrayOf(
+                    1.24f, 0f, 0f, 0f, 22f,
+                    0f, 1.26f, 0f, 0f, 24f,
+                    0f, 0f, 1.24f, 0f, 22f,
+                    0f, 0f, 0f, 1f, 0f
+                )))
+            }
+            "tilt_shift" -> {
+                combined.postConcat(ColorMatrix().apply { setSaturation(1.32f) })
+                val c = 1.12f
+                val t = (-0.5f * c + 0.5f) * 255f
+                combined.postConcat(ColorMatrix(floatArrayOf(
+                    c, 0f, 0f, 0f, t,
+                    0f, c, 0f, 0f, t,
+                    0f, 0f, c, 0f, t,
+                    0f, 0f, 0f, 1f, 0f
+                )))
+            }
+            "macro_focus" -> {
+                combined.postConcat(ColorMatrix().apply { setSaturation(1.08f) })
+                val c = 1.12f
+                val t = (-0.5f * c + 0.5f) * 255f
+                combined.postConcat(ColorMatrix(floatArrayOf(
+                    c, 0f, 0f, 0f, t,
+                    0f, c, 0f, 0f, t,
+                    0f, 0f, c, 0f, t,
+                    0f, 0f, 0f, 1f, 0f
+                )))
+            }
+            "double_exposure" -> {
+                combined.postConcat(ColorMatrix().apply { setSaturation(1.18f) })
             }
         }
 
@@ -1507,6 +1599,81 @@ class MainActivity : AppCompatActivity() {
         updateCreativeStatusUI()
         if (showNotice) {
             showHudNotice("AR Lens: ${lens.replace('_', ' ').uppercase(Locale.ROOT)}")
+        }
+    }
+
+    private val allShootingEffects = listOf(
+        "none",
+        "portrait_bokeh",
+        "long_exposure",
+        "light_painting",
+        "star_trails",
+        "night_sight",
+        "macro_focus",
+        "tilt_shift",
+        "double_exposure",
+        "panorama",
+        "film_grain",
+        "soft_halation",
+        "vignette"
+    )
+
+    private fun updateShootingEffectButtons() {
+        val effectButtons = listOf(
+            viewBinding.btnEffectOff to "none",
+            viewBinding.btnEffectBokeh to "portrait_bokeh",
+            viewBinding.btnEffectLongExp to "long_exposure",
+            viewBinding.btnEffectLightPaint to "light_painting",
+            viewBinding.btnEffectStarTrails to "star_trails",
+            viewBinding.btnEffectNightSight to "night_sight",
+            viewBinding.btnEffectMacro to "macro_focus",
+            viewBinding.btnEffectTiltShift to "tilt_shift",
+            viewBinding.btnEffectDoubleExp to "double_exposure",
+            viewBinding.btnEffectPanorama to "panorama",
+            viewBinding.btnEffectFilmGrain to "film_grain",
+            viewBinding.btnEffectHalation to "soft_halation",
+            viewBinding.btnEffectVignette to "vignette"
+        )
+        for ((btn, id) in effectButtons) {
+            val isActive = id == currentShootingEffect
+            if (isActive) {
+                btn.setBackgroundResource(R.drawable.bg_cinema_button_active)
+                btn.setTextColor(Color.parseColor("#0F172A"))
+                scrollChipIntoView(viewBinding.scrollEffectsStrip, btn)
+            } else {
+                btn.setBackgroundResource(R.drawable.bg_cinema_button_inactive)
+                btn.setTextColor(Color.parseColor("#94A3B8"))
+            }
+        }
+    }
+
+    private fun setShootingEffect(effectId: String, showNotice: Boolean = true) {
+        currentShootingEffect = effectId
+        currentTextureEffectIndex = allShootingEffects.indexOf(effectId).coerceAtLeast(0)
+        if (showNotice) {
+            currentCreativeTarget = CreativeTarget.EFFECTS
+            isLastActionCreative = true
+        }
+        viewBinding.proOverlayView.activeShootingEffect = effectId
+        viewBinding.proOverlayView.enableVignette = (effectId == "vignette")
+
+        isUpdatingEffectSwitches = true
+        try {
+            val isGrain = (effectId == "film_grain")
+            viewBinding.switchFilmGrain.isChecked = isGrain
+            viewBinding.proOverlayView.enableFilmGrain = isGrain
+        } finally {
+            isUpdatingEffectSwitches = false
+        }
+
+        val macroScale = if (effectId == "macro_focus") 1.26f else 1.0f
+        viewBinding.viewFinder.animate().scaleX(macroScale).scaleY(macroScale).setDuration(180).start()
+
+        applyLivePreviewColorMatrix()
+        updateShootingEffectButtons()
+        updateCreativeStatusUI()
+        if (showNotice) {
+            showHudNotice("Effect: ${getShootingEffectLabel(effectId)}")
         }
     }
 
@@ -1965,13 +2132,15 @@ class MainActivity : AppCompatActivity() {
                         lastCapturedMimeType = "image/jpeg"
 
                         val needsPostProcess = currentFilterName != "normal" ||
+                            currentShootingEffect != "none" ||
                             viewBinding.proOverlayView.liveBrightnessPercent != 0 ||
                             viewBinding.proOverlayView.liveContrastPercent != 0 ||
                             viewBinding.proOverlayView.liveSaturationPercent != 0 ||
                             viewBinding.arFaceOverlayView.currentLens != ARFaceOverlayView.ArLensMode.NONE ||
                             viewBinding.proOverlayView.enableFilmGrain ||
                             viewBinding.proOverlayView.enableDateStamp ||
-                            viewBinding.proOverlayView.enableCineFlare
+                            viewBinding.proOverlayView.enableCineFlare ||
+                            viewBinding.proOverlayView.enableVignette
 
                         if (needsPostProcess) {
                             cameraExecutor.execute {
@@ -2033,19 +2202,170 @@ class MainActivity : AppCompatActivity() {
             }
 
             val filtered = filterManager.applyFilterToBitmap(orientedBmp)
-            val finalBmp = filtered.copy(Bitmap.Config.ARGB_8888, true)
+            var finalBmp = filtered.copy(Bitmap.Config.ARGB_8888, true)
             if (filtered != orientedBmp) filtered.recycle()
             if (finalBmp != orientedBmp && !orientedBmp.isRecycled) orientedBmp.recycle()
 
+            // Bake Macro Focus 1.28x optical center magnification before drawing overlays
+            if (currentShootingEffect == "macro_focus") {
+                val cropW = (finalBmp.width * 0.76f).toInt().coerceAtLeast(16)
+                val cropH = (finalBmp.height * 0.76f).toInt().coerceAtLeast(16)
+                val sx = ((finalBmp.width - cropW) / 2).coerceAtLeast(0)
+                val sy = ((finalBmp.height - cropH) / 2).coerceAtLeast(0)
+                val cropped = Bitmap.createBitmap(finalBmp, sx, sy, cropW, cropH)
+                val scaled = Bitmap.createScaledBitmap(cropped, finalBmp.width, finalBmp.height, true)
+                if (cropped != scaled) cropped.recycle()
+                val writable = scaled.copy(Bitmap.Config.ARGB_8888, true)
+                if (scaled != writable) scaled.recycle()
+                finalBmp.recycle()
+                finalBmp = writable
+            }
+
             val canvas = Canvas(finalBmp)
+            val fw = finalBmp.width.toFloat()
+            val fh = finalBmp.height.toFloat()
             val overlayW = viewBinding.proOverlayView.width.toFloat().coerceAtLeast(1f)
             val overlayH = viewBinding.proOverlayView.height.toFloat().coerceAtLeast(1f)
-            val scaleX = finalBmp.width.toFloat() / overlayW
-            val scaleY = finalBmp.height.toFloat() / overlayH
+            val scaleX = fw / overlayW
+            val scaleY = fh / overlayH
             val scale = Math.min(scaleX, scaleY)
 
-            // Bake Film Grain if Film Grain toggle OR Ilford Grain filter is active
-            if (viewBinding.proOverlayView.enableFilmGrain || currentFilterName == "ilford_grain") {
+            // Bake Optical & Shutter Shooting Effects into saved JPEG
+            when (currentShootingEffect) {
+                "night_sight" -> {
+                    val nightCm = ColorMatrix().apply {
+                        setSaturation(1.10f)
+                        postConcat(ColorMatrix(floatArrayOf(
+                            1.25f, 0f, 0f, 0f, 22f,
+                            0f, 1.27f, 0f, 0f, 24f,
+                            0f, 0f, 1.25f, 0f, 22f,
+                            0f, 0f, 0f, 1f, 0f
+                        )))
+                    }
+                    val copy = finalBmp.copy(Bitmap.Config.ARGB_8888, false)
+                    val p = Paint(Paint.ANTI_ALIAS_FLAG).apply { colorFilter = ColorMatrixColorFilter(nightCm) }
+                    canvas.drawBitmap(copy, 0f, 0f, p)
+                    copy.recycle()
+                }
+                "double_exposure" -> {
+                    val ghost = finalBmp.copy(Bitmap.Config.ARGB_8888, false)
+                    val m = Matrix().apply {
+                        postTranslate(-fw * 0.5f, -fh * 0.5f)
+                        postScale(1.12f, 1.12f)
+                        postRotate(3.2f)
+                        postTranslate(fw * 0.54f, fh * 0.48f)
+                    }
+                    val p = Paint(Paint.ANTI_ALIAS_FLAG).apply { alpha = 92 }
+                    canvas.drawBitmap(ghost, m, p)
+                    ghost.recycle()
+                }
+                "long_exposure" -> {
+                    val streakSrc = finalBmp.copy(Bitmap.Config.ARGB_8888, false)
+                    val p = Paint(Paint.ANTI_ALIAS_FLAG).apply { alpha = 48 }
+                    canvas.drawBitmap(streakSrc, -fw * 0.012f, 0f, p)
+                    canvas.drawBitmap(streakSrc, fw * 0.012f, 0f, p)
+                    streakSrc.recycle()
+                    val trailP = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                        style = Paint.Style.STROKE
+                        strokeCap = Paint.Cap.ROUND
+                        strokeWidth = (fw * 0.008f).coerceAtLeast(6f)
+                        shader = LinearGradient(
+                            0f, fh * 0.65f, fw, fh * 0.65f,
+                            intArrayOf(Color.TRANSPARENT, Color.parseColor("#99F59E0B"), Color.TRANSPARENT),
+                            null, Shader.TileMode.CLAMP
+                        )
+                    }
+                    canvas.drawLine(0f, fh * 0.65f, fw, fh * 0.64f, trailP)
+                }
+                "light_painting" -> {
+                    val glowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                        style = Paint.Style.STROKE
+                        strokeCap = Paint.Cap.ROUND
+                    }
+                    val path = Path()
+                    for (step in 0..64) {
+                        val t = 1.2 + step * 0.08
+                        val px = fw * (0.5f + 0.30f * Math.sin(t * 1.3).toFloat())
+                        val py = fh * (0.48f + 0.22f * Math.cos(t * 2.1).toFloat())
+                        if (step == 0) path.moveTo(px, py) else path.lineTo(px, py)
+                    }
+                    glowPaint.strokeWidth = (fw * 0.022f).coerceAtLeast(16f)
+                    glowPaint.color = Color.parseColor("#44EC4899")
+                    canvas.drawPath(path, glowPaint)
+                    glowPaint.strokeWidth = (fw * 0.007f).coerceAtLeast(6f)
+                    glowPaint.color = Color.parseColor("#E638BDF8")
+                    canvas.drawPath(path, glowPaint)
+                }
+                "star_trails" -> {
+                    val starPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                        style = Paint.Style.STROKE
+                        strokeCap = Paint.Cap.ROUND
+                        strokeWidth = (fw * 0.0035f).coerceAtLeast(3f)
+                    }
+                    val cx = fw * 0.5f
+                    val cy = fh * 0.22f
+                    for (i in 1..9) {
+                        val r = Math.min(fw, fh) * (0.10f + i * 0.065f)
+                        val oval = RectF(cx - r, cy - r, cx + r, cy + r)
+                        starPaint.color = if (i % 2 == 0) Color.parseColor("#AAFFFFFF") else Color.parseColor("#AAFEF08A")
+                        canvas.drawArc(oval, i * 33f, 54f + (i % 3) * 18f, false, starPaint)
+                    }
+                }
+                "portrait_bokeh", "tilt_shift" -> {
+                    val smallW = (finalBmp.width / 14).coerceAtLeast(32)
+                    val smallH = (finalBmp.height / 14).coerceAtLeast(32)
+                    val down = Bitmap.createScaledBitmap(finalBmp, smallW, smallH, true)
+                    val blurred = Bitmap.createScaledBitmap(down, finalBmp.width, finalBmp.height, true)
+                    down.recycle()
+
+                    val maskLayer = Bitmap.createBitmap(finalBmp.width, finalBmp.height, Bitmap.Config.ARGB_8888)
+                    val mCanvas = Canvas(maskLayer)
+                    mCanvas.drawBitmap(blurred, 0f, 0f, null)
+                    blurred.recycle()
+
+                    val maskPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                        xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_IN)
+                        shader = if (currentShootingEffect == "portrait_bokeh") {
+                            val r = Math.max(fw, fh) * 0.58f
+                            RadialGradient(
+                                fw * 0.5f, fh * 0.45f, r,
+                                intArrayOf(Color.TRANSPARENT, Color.argb(120, 0, 0, 0), Color.BLACK),
+                                floatArrayOf(0.28f, 0.50f, 1.0f),
+                                Shader.TileMode.CLAMP
+                            )
+                        } else {
+                            LinearGradient(
+                                0f, 0f, 0f, fh,
+                                intArrayOf(Color.BLACK, Color.argb(140, 0, 0, 0), Color.TRANSPARENT, Color.TRANSPARENT, Color.argb(140, 0, 0, 0), Color.BLACK),
+                                floatArrayOf(0f, 0.24f, 0.36f, 0.64f, 0.76f, 1.0f),
+                                Shader.TileMode.CLAMP
+                            )
+                        }
+                    }
+                    mCanvas.drawRect(0f, 0f, fw, fh, maskPaint)
+                    canvas.drawBitmap(maskLayer, 0f, 0f, null)
+                    maskLayer.recycle()
+                }
+                "panorama" -> {
+                    val bandH = fh * 0.18f
+                    val barPaint = Paint().apply { color = Color.BLACK }
+                    canvas.drawRect(0f, 0f, fw, bandH, barPaint)
+                    canvas.drawRect(0f, fh - bandH, fw, fh, barPaint)
+                }
+                "soft_halation" -> {
+                    val haloPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+                    haloPaint.shader = RadialGradient(
+                        fw * 0.28f, fh * 0.24f, fw * 0.44f,
+                        intArrayOf(Color.parseColor("#55FF4D1A"), Color.parseColor("#20FF7043"), Color.TRANSPARENT),
+                        floatArrayOf(0f, 0.45f, 1f),
+                        Shader.TileMode.CLAMP
+                    )
+                    canvas.drawRect(0f, 0f, fw, fh, haloPaint)
+                }
+            }
+
+            // Bake Film Grain if Film Grain toggle, Shooting Effect, OR Ilford Grain filter is active
+            if (viewBinding.proOverlayView.enableFilmGrain || currentShootingEffect == "film_grain" || currentFilterName == "ilford_grain") {
                 val grainPaint = Paint(Paint.ANTI_ALIAS_FLAG)
                 val rng = java.util.Random(System.currentTimeMillis())
                 val step = (finalBmp.width / 80).coerceIn(12, 32)
@@ -2058,6 +2378,19 @@ class MainActivity : AppCompatActivity() {
                         canvas.drawCircle(px.toFloat(), py.toFloat(), (finalBmp.width * 0.0012f).coerceAtLeast(1.2f), grainPaint)
                     }
                 }
+            }
+
+            // Bake Vignette if enabled
+            if (viewBinding.proOverlayView.enableVignette || currentShootingEffect == "vignette") {
+                val vigPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    shader = RadialGradient(
+                        fw * 0.5f, fh * 0.5f, Math.max(fw, fh) * 0.72f,
+                        intArrayOf(Color.TRANSPARENT, Color.parseColor("#A6000000")),
+                        floatArrayOf(0.42f, 1.0f),
+                        Shader.TileMode.CLAMP
+                    )
+                }
+                canvas.drawRect(0f, 0f, fw, fh, vigPaint)
             }
 
             // Bake Retro Date Stamp if enabled
@@ -2374,8 +2707,10 @@ class MainActivity : AppCompatActivity() {
                 setArLens(lensList[nextIdx])
             }
             CreativeTarget.EFFECTS -> {
-                currentTextureEffectIndex = (currentTextureEffectIndex + 1) % 5
-                applyTextureEffectPreset(currentTextureEffectIndex)
+                val currentIdx = allShootingEffects.indexOf(currentShootingEffect)
+                val safeIdx = if (currentIdx >= 0) currentIdx else 0
+                val nextIdx = (safeIdx + 1) % allShootingEffects.size
+                setShootingEffect(allShootingEffects[nextIdx])
             }
             else -> {
                 val filterList = listOf(
@@ -2414,8 +2749,10 @@ class MainActivity : AppCompatActivity() {
                 setArLens(lensList[prevIdx])
             }
             CreativeTarget.EFFECTS -> {
-                currentTextureEffectIndex = if (currentTextureEffectIndex <= 0) 4 else currentTextureEffectIndex - 1
-                applyTextureEffectPreset(currentTextureEffectIndex)
+                val currentIdx = allShootingEffects.indexOf(currentShootingEffect)
+                val safeIdx = if (currentIdx >= 0) currentIdx else 0
+                val prevIdx = if (safeIdx <= 0) allShootingEffects.size - 1 else safeIdx - 1
+                setShootingEffect(allShootingEffects[prevIdx])
             }
             else -> {
                 val filterList = listOf(
@@ -2445,46 +2782,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun applyTextureEffectPreset(index: Int) {
-        currentCreativeTarget = CreativeTarget.EFFECTS
-        isLastActionCreative = true
-        isUpdatingEffectSwitches = true
-        try {
-            when (index) {
-                0 -> {
-                    viewBinding.switchFilmGrain.isChecked = false
-                    viewBinding.switchDateStamp.isChecked = false
-                    viewBinding.switchCineFlare.isChecked = false
-                    showHudNotice("Effect: OFF")
-                }
-                1 -> {
-                    viewBinding.switchFilmGrain.isChecked = true
-                    viewBinding.switchDateStamp.isChecked = false
-                    viewBinding.switchCineFlare.isChecked = false
-                    showHudNotice("Effect: 35mm Film Grain")
-                }
-                2 -> {
-                    viewBinding.switchFilmGrain.isChecked = false
-                    viewBinding.switchDateStamp.isChecked = true
-                    viewBinding.switchCineFlare.isChecked = false
-                    showHudNotice("Effect: Retro Date Stamp")
-                }
-                3 -> {
-                    viewBinding.switchFilmGrain.isChecked = false
-                    viewBinding.switchDateStamp.isChecked = false
-                    viewBinding.switchCineFlare.isChecked = true
-                    showHudNotice("Effect: Anamorphic Flare")
-                }
-                else -> {
-                    viewBinding.switchFilmGrain.isChecked = true
-                    viewBinding.switchDateStamp.isChecked = true
-                    viewBinding.switchCineFlare.isChecked = true
-                    showHudNotice("Effect: Cinema Combo")
-                }
-            }
-        } finally {
-            isUpdatingEffectSwitches = false
-        }
-        updateCreativeStatusUI()
+        val safeIdx = ((index % allShootingEffects.size) + allShootingEffects.size) % allShootingEffects.size
+        setShootingEffect(allShootingEffects[safeIdx])
     }
 
     private fun switchCamera() {
@@ -2576,6 +2875,7 @@ class MainActivity : AppCompatActivity() {
     private fun setupFilterAndArControls() {
         setFilterPreset("normal", showNotice = false)
         setArLens("none", showNotice = false)
+        setShootingEffect("none", showNotice = false)
 
         // Live Adjustments: Brightness, Contrast, Saturation
         viewBinding.sbBrightness.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {

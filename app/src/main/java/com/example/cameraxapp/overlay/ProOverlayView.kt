@@ -200,6 +200,12 @@ class ProOverlayView @JvmOverloads constructor(
             invalidate()
         }
 
+    var activeShootingEffect: String = "none"
+        set(value) {
+            field = value
+            invalidate()
+        }
+
     var customDateStampText: String? = null
         set(value) {
             field = value
@@ -1443,13 +1449,239 @@ class ProOverlayView @JvmOverloads constructor(
         }
     }
 
-    // --- REAL-TIME LIVE TEXTURE EFFECTS (FILM GRAIN, DATE STAMP, CINE FLARE) ---
+    // --- REAL-TIME LIVE TEXTURE & SHOOTING EFFECTS (OPTICAL & SHUTTER) ---
     private fun drawLiveTextureEffects(canvas: Canvas, w: Float, h: Float) {
+        val effect = activeShootingEffect.lowercase()
+        val timeSec = System.currentTimeMillis() / 1000.0
+        var needsAnim = false
+
+        // 0. Picture Shooting Effects (Optical & Shutter)
+        when (effect) {
+            "portrait_bokeh" -> {
+                // Creamy radial optical depth falloff + glowing out-of-focus bokeh orbs
+                filterSecondaryPaint.shader = RadialGradient(
+                    w * 0.5f, h * 0.45f, Math.max(w, h) * 0.62f,
+                    intArrayOf(Color.TRANSPARENT, Color.parseColor("#1EFDF2F8"), Color.parseColor("#520F172A")),
+                    floatArrayOf(0.28f, 0.55f, 1.0f),
+                    Shader.TileMode.CLAMP
+                )
+                canvas.drawRect(0f, 0f, w, h, filterSecondaryPaint)
+                filterSecondaryPaint.shader = null
+
+                val orbPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+                val orbs = arrayOf(
+                    floatArrayOf(0.14f, 0.20f, 22f),
+                    floatArrayOf(0.84f, 0.22f, 28f),
+                    floatArrayOf(0.12f, 0.72f, 25f),
+                    floatArrayOf(0.87f, 0.68f, 20f),
+                    floatArrayOf(0.76f, 0.84f, 18f)
+                )
+                for (o in orbs) {
+                    val ox = w * o[0]
+                    val oy = h * o[1]
+                    val r = dpToPx(o[2])
+                    orbPaint.shader = RadialGradient(
+                        ox, oy, r,
+                        intArrayOf(Color.parseColor("#44FFFBEB"), Color.parseColor("#18FDE68A"), Color.TRANSPARENT),
+                        floatArrayOf(0f, 0.65f, 1f),
+                        Shader.TileMode.CLAMP
+                    )
+                    canvas.drawCircle(ox, oy, r, orbPaint)
+                }
+                orbPaint.shader = null
+
+                val reticlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    style = Paint.Style.STROKE
+                    strokeWidth = dpToPx(1.5f)
+                    color = Color.parseColor("#99FDE68A")
+                }
+                canvas.drawCircle(w * 0.5f, h * 0.44f, Math.min(w, h) * 0.16f, reticlePaint)
+            }
+            "long_exposure" -> {
+                // Silky horizontal light trails & atmospheric wash
+                filterGradingPaint.color = Color.parseColor("#1A0F172A")
+                canvas.drawRect(0f, 0f, w, h, filterGradingPaint)
+
+                val trailPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    style = Paint.Style.STROKE
+                    strokeCap = Paint.Cap.ROUND
+                }
+                val shift = ((timeSec * 0.35) % 1.0).toFloat()
+                for (i in 0..3) {
+                    val y = h * (0.58f + i * 0.065f)
+                    val xStart = ((shift + i * 0.22f) % 1.0f) * w * 1.2f - w * 0.3f
+                    val xEnd = xStart + w * 0.42f
+                    trailPaint.strokeWidth = dpToPx(4.5f - i * 0.5f)
+                    trailPaint.shader = LinearGradient(
+                        xStart, y, xEnd, y,
+                        intArrayOf(
+                            Color.TRANSPARENT,
+                            if (i % 2 == 0) Color.parseColor("#99F59E0B") else Color.parseColor("#88EF4444"),
+                            Color.TRANSPARENT
+                        ),
+                        floatArrayOf(0f, 0.5f, 1f),
+                        Shader.TileMode.CLAMP
+                    )
+                    canvas.drawLine(xStart, y, xEnd, y, trailPaint)
+                }
+                trailPaint.shader = LinearGradient(
+                    0f, h * 0.42f, w, h * 0.46f,
+                    intArrayOf(Color.TRANSPARENT, Color.parseColor("#5538BDF8"), Color.TRANSPARENT),
+                    null, Shader.TileMode.CLAMP
+                )
+                trailPaint.strokeWidth = dpToPx(3f)
+                canvas.drawLine(0f, h * 0.44f, w, h * 0.42f, trailPaint)
+                trailPaint.shader = null
+                needsAnim = true
+            }
+            "light_painting" -> {
+                // Luminous neon light-trail curves in low light
+                filterGradingPaint.color = Color.parseColor("#24020617")
+                canvas.drawRect(0f, 0f, w, h, filterGradingPaint)
+
+                val glowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    style = Paint.Style.STROKE
+                    strokeCap = Paint.Cap.ROUND
+                }
+                val path = Path()
+                for (step in 0..64) {
+                    val t = timeSec * 1.4 + step * 0.08
+                    val px = w * (0.5f + 0.32f * Math.sin(t * 1.3).toFloat())
+                    val py = h * (0.48f + 0.22f * Math.cos(t * 2.1).toFloat())
+                    if (step == 0) path.moveTo(px, py) else path.lineTo(px, py)
+                }
+                glowPaint.strokeWidth = dpToPx(10f)
+                glowPaint.color = Color.parseColor("#44EC4899")
+                canvas.drawPath(path, glowPaint)
+                glowPaint.strokeWidth = dpToPx(3.5f)
+                glowPaint.color = Color.parseColor("#E638BDF8")
+                canvas.drawPath(path, glowPaint)
+                needsAnim = true
+            }
+            "star_trails" -> {
+                // Concentric celestial rotation arcs in upper frame
+                val starPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    style = Paint.Style.STROKE
+                    strokeCap = Paint.Cap.ROUND
+                    strokeWidth = dpToPx(1.8f)
+                }
+                val cx = w * 0.5f
+                val cy = h * 0.22f
+                val phase = ((timeSec * 18.0) % 360.0).toFloat()
+                for (i in 1..9) {
+                    val r = Math.min(w, h) * (0.10f + i * 0.065f)
+                    val oval = RectF(cx - r, cy - r, cx + r, cy + r)
+                    starPaint.color = if (i % 2 == 0) Color.parseColor("#99BAE6FD") else Color.parseColor("#99FEF08A")
+                    canvas.drawArc(oval, phase + i * 33f, 52f + (i % 3) * 18f, false, starPaint)
+                }
+                needsAnim = true
+            }
+            "night_sight" -> {
+                // Multi-exposure shadow lift + subtle optical clarity border
+                filterGradingPaint.color = Color.parseColor("#18E0F2FE")
+                canvas.drawRect(0f, 0f, w, h, filterGradingPaint)
+            }
+            "macro_focus" -> {
+                // 2cm Macro Lock optical reticle
+                val macroPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    style = Paint.Style.STROKE
+                    strokeWidth = dpToPx(1.8f)
+                    color = Color.parseColor("#CC34D399")
+                }
+                val rx = w * 0.5f
+                val ry = h * 0.5f
+                val r = Math.min(w, h) * 0.19f
+                canvas.drawCircle(rx, ry, r, macroPaint)
+                val len = dpToPx(12f)
+                canvas.drawLine(rx - r - len, ry, rx - r + dpToPx(4f), ry, macroPaint)
+                canvas.drawLine(rx + r - dpToPx(4f), ry, rx + r + len, ry, macroPaint)
+                canvas.drawLine(rx, ry - r - len, rx, ry - r + dpToPx(4f), macroPaint)
+                canvas.drawLine(rx, ry + r - dpToPx(4f), rx, ry + r + len, macroPaint)
+            }
+            "tilt_shift" -> {
+                // Miniature top & bottom soft blur bands + focal plane guide
+                filterSecondaryPaint.shader = LinearGradient(
+                    0f, 0f, 0f, h,
+                    intArrayOf(
+                        Color.parseColor("#7A0F172A"),
+                        Color.parseColor("#2E0F172A"),
+                        Color.TRANSPARENT,
+                        Color.TRANSPARENT,
+                        Color.parseColor("#2E0F172A"),
+                        Color.parseColor("#7A0F172A")
+                    ),
+                    floatArrayOf(0f, 0.24f, 0.36f, 0.64f, 0.76f, 1.0f),
+                    Shader.TileMode.CLAMP
+                )
+                canvas.drawRect(0f, 0f, w, h, filterSecondaryPaint)
+                filterSecondaryPaint.shader = null
+                val bandPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    style = Paint.Style.STROKE
+                    strokeWidth = dpToPx(1f)
+                    color = Color.parseColor("#55FACC15")
+                }
+                canvas.drawLine(0f, h * 0.35f, w, h * 0.35f, bandPaint)
+                canvas.drawLine(0f, h * 0.65f, w, h * 0.65f, bandPaint)
+            }
+            "double_exposure" -> {
+                // Layered dual-exposure dreamlike wash
+                filterSecondaryPaint.shader = LinearGradient(
+                    0f, 0f, w, h,
+                    intArrayOf(Color.parseColor("#2EF472B6"), Color.parseColor("#1CFACC15"), Color.parseColor("#3038BDF8")),
+                    floatArrayOf(0f, 0.5f, 1f),
+                    Shader.TileMode.CLAMP
+                )
+                canvas.drawRect(0f, 0f, w, h, filterSecondaryPaint)
+                filterSecondaryPaint.shader = null
+            }
+            "panorama" -> {
+                // Smooth panorama stitch rail + animated sweep reticle
+                val bandH = h * 0.22f
+                filterGradingPaint.color = Color.parseColor("#70000000")
+                canvas.drawRect(0f, 0f, w, bandH, filterGradingPaint)
+                canvas.drawRect(0f, h - bandH, w, h, filterGradingPaint)
+
+                val railPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    style = Paint.Style.STROKE
+                    strokeWidth = dpToPx(1.5f)
+                    color = Color.parseColor("#AA38BDF8")
+                }
+                canvas.drawRect(w * 0.08f, h * 0.45f, w * 0.92f, h * 0.55f, railPaint)
+                canvas.drawLine(w * 0.12f, h * 0.5f, w * 0.88f, h * 0.5f, railPaint)
+                val sweepX = w * (0.16f + 0.68f * ((Math.sin(timeSec * 0.9).toFloat() + 1f) * 0.5f))
+                val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.parseColor("#FACC15")
+                    style = Paint.Style.FILL
+                }
+                canvas.drawCircle(sweepX, h * 0.5f, dpToPx(5.5f), dotPaint)
+                needsAnim = true
+            }
+            "soft_halation" -> {
+                // Vintage red-orange halation highlight bloom
+                filterSecondaryPaint.shader = RadialGradient(
+                    w * 0.28f, h * 0.24f, w * 0.44f,
+                    intArrayOf(Color.parseColor("#4DFF4D1A"), Color.parseColor("#1EFF7043"), Color.TRANSPARENT),
+                    floatArrayOf(0f, 0.45f, 1f),
+                    Shader.TileMode.CLAMP
+                )
+                canvas.drawRect(0f, 0f, w, h, filterSecondaryPaint)
+                filterSecondaryPaint.shader = RadialGradient(
+                    w * 0.74f, h * 0.30f, w * 0.36f,
+                    intArrayOf(Color.parseColor("#3DFF5722"), Color.TRANSPARENT),
+                    floatArrayOf(0f, 1f),
+                    Shader.TileMode.CLAMP
+                )
+                canvas.drawRect(0f, 0f, w, h, filterSecondaryPaint)
+                filterSecondaryPaint.shader = null
+            }
+        }
+
         // 1. Film Grain (Animated 35mm emulsion noise + fine Ilford B&W grain)
         val isIlfordGrain = activeFilterPreset.lowercase() == "ilford_grain" || activeFilterPreset.lowercase() == "filter_ilford_grain"
-        if (enableFilmGrain || isIlfordGrain) {
+        val isFilmGrainEffect = effect == "film_grain"
+        if (enableFilmGrain || isIlfordGrain || isFilmGrainEffect) {
             val random = java.util.Random(System.currentTimeMillis() / 75)
-            val step = dpToPx(if (isIlfordGrain && !enableFilmGrain) 16f else 22f).toInt().coerceAtLeast(12)
+            val step = dpToPx(if (isIlfordGrain && !enableFilmGrain && !isFilmGrainEffect) 16f else 22f).toInt().coerceAtLeast(12)
             for (x in 0 until w.toInt() step step) {
                 for (y in 0 until h.toInt() step step) {
                     val rx = x + random.nextInt(step)
@@ -1457,10 +1689,10 @@ class ProOverlayView @JvmOverloads constructor(
                     val alpha = random.nextInt(65) + 28
                     val isLight = random.nextBoolean()
                     filmGrainPaint.color = if (isLight) Color.argb(alpha, 250, 248, 242) else Color.argb(alpha / 2, 12, 12, 12)
-                    canvas.drawCircle(rx.toFloat(), ry.toFloat(), dpToPx(if (isIlfordGrain && !enableFilmGrain) 1.0f else 1.3f), filmGrainPaint)
+                    canvas.drawCircle(rx.toFloat(), ry.toFloat(), dpToPx(if (isIlfordGrain && !enableFilmGrain && !isFilmGrainEffect) 1.0f else 1.3f), filmGrainPaint)
                 }
             }
-            postInvalidateOnAnimation()
+            needsAnim = true
         }
 
         // 2. Anamorphic Cine Flare Streak across optical center
@@ -1487,17 +1719,21 @@ class ProOverlayView @JvmOverloads constructor(
             canvas.drawText(dateText, w - textW - marginEnd, h - marginBottom, dateStampPaint)
         }
 
-        // 4. Cinematic Vignette
-        if (enableVignette) {
-            val radius = Math.max(w, h) * 0.75f
+        // 4. Cinematic Vignette (explicit toggle OR Picture Shooting Vignette effect)
+        if (enableVignette || effect == "vignette") {
+            val radius = Math.max(w, h) * 0.72f
             filterSecondaryPaint.shader = RadialGradient(
                 w * 0.5f, h * 0.5f, radius,
-                intArrayOf(Color.TRANSPARENT, Color.parseColor("#66000000")),
-                floatArrayOf(0.55f, 1.0f),
+                intArrayOf(Color.TRANSPARENT, Color.parseColor("#99000000")),
+                floatArrayOf(0.42f, 1.0f),
                 Shader.TileMode.CLAMP
             )
             canvas.drawRect(0f, 0f, w, h, filterSecondaryPaint)
             filterSecondaryPaint.shader = null
+        }
+
+        if (needsAnim) {
+            postInvalidateOnAnimation()
         }
     }
 

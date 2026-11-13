@@ -2590,7 +2590,7 @@
                 </LinearLayout>
             </HorizontalScrollView>
 
-            <!-- Category 3: Cinema Texture Effects Strip -->
+            <!-- Category 3: Picture Shooting Effects (Optical & Shutter) + Cinema Toggles -->
             <HorizontalScrollView
                 android:id="@+id/scrollEffectsStrip"
                 android:layout_width="match_parent"
@@ -2604,9 +2604,192 @@
                     android:orientation="horizontal"
                     android:gravity="center_vertical">
 
+                    <TextView
+                        android:id="@+id/btnEffectOff"
+                        android:layout_width="wrap_content"
+                        android:minWidth="64dp"
+                        android:layout_height="36dp"
+                        android:paddingHorizontal="12dp"
+                        android:gravity="center"
+                        android:text="OFF"
+                        android:textColor="#0F172A"
+                        android:textStyle="bold"
+                        android:textSize="10sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_active" />
+
+                    <TextView
+                        android:id="@+id/btnEffectBokeh"
+                        android:layout_width="wrap_content"
+                        android:minWidth="88dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="6dp"
+                        android:paddingHorizontal="12dp"
+                        android:gravity="center"
+                        android:text="PORTRAIT BOKEH"
+                        android:textColor="#94A3B8"
+                        android:textSize="10sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+
+                    <TextView
+                        android:id="@+id/btnEffectLongExp"
+                        android:layout_width="wrap_content"
+                        android:minWidth="88dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="6dp"
+                        android:paddingHorizontal="12dp"
+                        android:gravity="center"
+                        android:text="LONG EXPOSURE"
+                        android:textColor="#94A3B8"
+                        android:textSize="10sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+
+                    <TextView
+                        android:id="@+id/btnEffectLightPaint"
+                        android:layout_width="wrap_content"
+                        android:minWidth="88dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="6dp"
+                        android:paddingHorizontal="12dp"
+                        android:gravity="center"
+                        android:text="LIGHT PAINTING"
+                        android:textColor="#94A3B8"
+                        android:textSize="10sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+
+                    <TextView
+                        android:id="@+id/btnEffectStarTrails"
+                        android:layout_width="wrap_content"
+                        android:minWidth="84dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="6dp"
+                        android:paddingHorizontal="12dp"
+                        android:gravity="center"
+                        android:text="STAR TRAILS"
+                        android:textColor="#94A3B8"
+                        android:textSize="10sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+
+                    <TextView
+                        android:id="@+id/btnEffectNightSight"
+                        android:layout_width="wrap_content"
+                        android:minWidth="84dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="6dp"
+                        android:paddingHorizontal="12dp"
+                        android:gravity="center"
+                        android:text="NIGHT SIGHT"
+                        android:textColor="#94A3B8"
+                        android:textSize="10sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+
+                    <TextView
+                        android:id="@+id/btnEffectMacro"
+                        android:layout_width="wrap_content"
+                        android:minWidth="84dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="6dp"
+                        android:paddingHorizontal="12dp"
+                        android:gravity="center"
+                        android:text="MACRO FOCUS"
+                        android:textColor="#94A3B8"
+                        android:textSize="10sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+
+                    <TextView
+                        android:id="@+id/btnEffectTiltShift"
+                        android:layout_width="wrap_content"
+                        android:minWidth="80dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="6dp"
+                        android:paddingHorizontal="12dp"
+                        android:gravity="center"
+                        android:text="TILT-SHIFT"
+                        android:textColor="#94A3B8"
+                        android:textSize="10sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+
+                    <TextView
+                        android:id="@+id/btnEffectDoubleExp"
+                        android:layout_width="wrap_content"
+                        android:minWidth="88dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="6dp"
+                        android:paddingHorizontal="12dp"
+                        android:gravity="center"
+                        android:text="DOUBLE EXPOSURE"
+                        android:textColor="#94A3B8"
+                        android:textSize="10sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+
+                    <TextView
+                        android:id="@+id/btnEffectPanorama"
+                        android:layout_width="wrap_content"
+                        android:minWidth="78dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="6dp"
+                        android:paddingHorizontal="12dp"
+                        android:gravity="center"
+                        android:text="PANORAMA"
+                        android:textColor="#94A3B8"
+                        android:textSize="10sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+
+                    <TextView
+                        android:id="@+id/btnEffectFilmGrain"
+                        android:layout_width="wrap_content"
+                        android:minWidth="88dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="6dp"
+                        android:paddingHorizontal="12dp"
+                        android:gravity="center"
+                        android:text="35MM FILM GRAIN"
+                        android:textColor="#94A3B8"
+                        android:textSize="10sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+
+                    <TextView
+                        android:id="@+id/btnEffectHalation"
+                        android:layout_width="wrap_content"
+                        android:minWidth="88dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="6dp"
+                        android:paddingHorizontal="12dp"
+                        android:gravity="center"
+                        android:text="SOFT HALATION"
+                        android:textColor="#94A3B8"
+                        android:textSize="10sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+
+                    <TextView
+                        android:id="@+id/btnEffectVignette"
+                        android:layout_width="wrap_content"
+                        android:minWidth="76dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="6dp"
+                        android:paddingHorizontal="12dp"
+                        android:gravity="center"
+                        android:text="VIGNETTE"
+                        android:textColor="#94A3B8"
+                        android:textSize="10sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+
                     <LinearLayout
                         android:layout_width="wrap_content"
                         android:layout_height="36dp"
+                        android:layout_marginStart="8dp"
                         android:background="@drawable/bg_card_cinema"
                         android:orientation="horizontal"
                         android:gravity="center_vertical"
