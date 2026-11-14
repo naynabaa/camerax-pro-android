@@ -2213,11 +2213,223 @@ class ProOverlayView @JvmOverloads constructor(
                 canvas.drawRect(0f, 0f, w, h, filterSecondaryPaint)
                 filterSecondaryPaint.shader = null
             }
+            "super8_film" -> {
+                // Super 8 Vintage: warm projector bulb flicker, vertical scratches & rounded projector borders
+                val flicker = (0.5 + 0.5 * Math.sin(timeSec * 19.7 + Math.sin(timeSec * 7.3))).toFloat()
+                filterGradingPaint.color = Color.argb((22 + (24 * flicker).toInt()), 245, 158, 11)
+                canvas.drawRect(0f, 0f, w, h, filterGradingPaint)
+
+                val scratchPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    style = Paint.Style.STROKE
+                    strokeWidth = dpToPx(1.1f)
+                }
+                val rng = java.util.Random((System.currentTimeMillis() / 90))
+                for (i in 0..4) {
+                    val sx = rng.nextFloat() * w
+                    scratchPaint.color = if (i % 2 == 0) Color.parseColor("#66FFFBEB") else Color.parseColor("#5518120E")
+                    canvas.drawLine(sx, 0f, sx + (rng.nextFloat() - 0.5f) * dpToPx(3f), h, scratchPaint)
+                }
+
+                // Rounded projector gate bezel (even-odd outer matte)
+                val gatePath = Path().apply {
+                    fillType = Path.FillType.EVEN_ODD
+                    addRect(0f, 0f, w, h, Path.Direction.CW)
+                    val ix = w * 0.045f
+                    val iy = h * 0.04f
+                    val cr = Math.min(w, h) * 0.085f
+                    addRoundRect(RectF(ix, iy, w - ix, h - iy), cr, cr, Path.Direction.CCW)
+                }
+                val bezelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    style = Paint.Style.FILL
+                    color = Color.parseColor("#F0070709")
+                }
+                canvas.drawPath(gatePath, bezelPaint)
+                needsAnim = true
+            }
+            "film_16mm" -> {
+                // 16mm Documentary: subtle weaving gate margin + organic Kodak documentary tag
+                val weaveX = (Math.sin(timeSec * 11.3) * dpToPx(2.2f)).toFloat()
+                val weaveY = (Math.cos(timeSec * 15.1) * dpToPx(1.8f)).toFloat()
+                val framePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    style = Paint.Style.STROKE
+                    strokeWidth = dpToPx(9f)
+                    color = Color.parseColor("#D90A0A0C")
+                }
+                canvas.drawRect(dpToPx(4f) + weaveX, dpToPx(4f) + weaveY, w - dpToPx(4f) + weaveX, h - dpToPx(4f) + weaveY, framePaint)
+                val badgePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.parseColor("#99E2E8F0")
+                    textSize = dpToPx(9.5f)
+                    typeface = Typeface.MONOSPACE
+                    isFakeBoldText = true
+                }
+                canvas.drawText("16MM DOCU · 24FPS", dpToPx(16f) + weaveX, h - dpToPx(125f) + weaveY, badgePaint)
+                needsAnim = true
+            }
+            "vhs_tape" -> {
+                // VHS Tape (1990s): rolling magnetic tape tracking noise bar, RGB bleed hints & PLAY OSD
+                val scanPaint = Paint().apply { color = Color.parseColor("#14FFFFFF") }
+                val step = dpToPx(5f).toInt().coerceAtLeast(5)
+                for (y in 0 until h.toInt() step step) {
+                    canvas.drawRect(0f, y.toFloat(), w, y + 1.5f, scanPaint)
+                }
+
+                val trackY = (((timeSec * 0.28) % 1.0).toFloat()) * h
+                val trackH = dpToPx(24f)
+                filterSecondaryPaint.shader = LinearGradient(
+                    0f, trackY, 0f, trackY + trackH,
+                    intArrayOf(Color.TRANSPARENT, Color.parseColor("#55E2E8F0"), Color.TRANSPARENT),
+                    null, Shader.TileMode.CLAMP
+                )
+                canvas.drawRect(0f, trackY, w, trackY + trackH, filterSecondaryPaint)
+                filterSecondaryPaint.shader = null
+
+                val snowPaint = Paint().apply { color = Color.parseColor("#99FFFFFF") }
+                val rng = java.util.Random(System.currentTimeMillis() / 55)
+                for (i in 0..24) {
+                    val sx = rng.nextFloat() * w
+                    val sy = trackY + rng.nextFloat() * trackH
+                    canvas.drawRect(sx, sy, sx + dpToPx(8f + (i % 4) * 5f), sy + dpToPx(1.5f), snowPaint)
+                }
+
+                // Bottom head-switching strip + RGB bleed edge glow
+                canvas.drawRect(0f, h - dpToPx(8f), w, h - dpToPx(4f), snowPaint)
+                filterGradingPaint.color = Color.parseColor("#22EF4444")
+                canvas.drawRect(0f, 0f, dpToPx(6f), h, filterGradingPaint)
+                filterGradingPaint.color = Color.parseColor("#2206B6D4")
+                canvas.drawRect(w - dpToPx(6f), 0f, w, h, filterGradingPaint)
+
+                val vhsPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.parseColor("#E6F8FAFC")
+                    textSize = dpToPx(13f)
+                    typeface = Typeface.MONOSPACE
+                    isFakeBoldText = true
+                    setShadowLayer(dpToPx(2f), 0f, 0f, Color.BLACK)
+                }
+                canvas.drawText("PLAY ▶   SP", dpToPx(20f), dpToPx(86f), vhsPaint)
+                needsAnim = true
+            }
+            "crt_monitor" -> {
+                // CRT Monitor: crisp TV phosphor scanlines + curved cathode glow bezel
+                val scanPaint = Paint().apply { color = Color.parseColor("#4D020612") }
+                val step = dpToPx(3.5f).toInt().coerceAtLeast(3)
+                for (y in 0 until h.toInt() step step) {
+                    canvas.drawRect(0f, y.toFloat(), w, y + dpToPx(1.4f), scanPaint)
+                }
+                filterSecondaryPaint.shader = RadialGradient(
+                    w * 0.5f, h * 0.5f, Math.max(w, h) * 0.72f,
+                    intArrayOf(
+                        Color.parseColor("#1EB8E6FD"),
+                        Color.TRANSPARENT,
+                        Color.parseColor("#88020617")
+                    ),
+                    floatArrayOf(0f, 0.62f, 1f),
+                    Shader.TileMode.CLAMP
+                )
+                canvas.drawRect(0f, 0f, w, h, filterSecondaryPaint)
+                filterSecondaryPaint.shader = null
+                val tubeBorder = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    style = Paint.Style.STROKE
+                    strokeWidth = dpToPx(4f)
+                    color = Color.parseColor("#5594A3B8")
+                }
+                canvas.drawRoundRect(RectF(dpToPx(4f), dpToPx(4f), w - dpToPx(4f), h - dpToPx(4f)), dpToPx(26f), dpToPx(26f), tubeBorder)
+            }
+            "stop_motion" -> {
+                // Stop-Motion Frame: discrete stepped 8fps animation cadence indicator
+                val stepIdx = ((System.currentTimeMillis() / 125) % 24 + 1).toInt()
+                val boxPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    style = Paint.Style.STROKE
+                    strokeWidth = dpToPx(2f)
+                    color = Color.parseColor("#88FACC15")
+                }
+                canvas.drawRect(dpToPx(14f), dpToPx(14f), w - dpToPx(14f), h - dpToPx(14f), boxPaint)
+                val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.parseColor("#E6FACC15")
+                    textSize = dpToPx(11f)
+                    typeface = Typeface.MONOSPACE
+                    isFakeBoldText = true
+                }
+                canvas.drawText(String.format(java.util.Locale.US, "STOP-MOTION · 8FPS · FR#%02d", stepIdx), dpToPx(20f), h - dpToPx(125f), labelPaint)
+                needsAnim = true
+            }
+            "neon_edge" -> {
+                // Neon Edge: darkened backdrop glow + electric cyan/magenta luminous edge accents
+                filterSecondaryPaint.shader = LinearGradient(
+                    0f, 0f, w, h,
+                    intArrayOf(
+                        Color.parseColor("#3806B6D4"),
+                        Color.parseColor("#24020617"),
+                        Color.parseColor("#38EC4899")
+                    ),
+                    floatArrayOf(0f, 0.5f, 1f),
+                    Shader.TileMode.CLAMP
+                )
+                canvas.drawRect(0f, 0f, w, h, filterSecondaryPaint)
+                filterSecondaryPaint.shader = null
+                val neonFrame = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    style = Paint.Style.STROKE
+                    strokeWidth = dpToPx(2.2f)
+                    color = Color.parseColor("#AA22D3EE")
+                }
+                canvas.drawRect(dpToPx(12f), dpToPx(12f), w - dpToPx(12f), h - dpToPx(12f), neonFrame)
+            }
+            "noir_graphic_novel" -> {
+                // Noir Graphic Novel: stark comic ink panel border + white comic gutter
+                val gutter = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    style = Paint.Style.STROKE
+                    strokeWidth = dpToPx(9f)
+                    color = Color.WHITE
+                }
+                canvas.drawRect(dpToPx(4.5f), dpToPx(4.5f), w - dpToPx(4.5f), h - dpToPx(4.5f), gutter)
+                gutter.strokeWidth = dpToPx(3.5f)
+                gutter.color = Color.parseColor("#FF09090B")
+                canvas.drawRect(dpToPx(10f), dpToPx(10f), w - dpToPx(10f), h - dpToPx(10f), gutter)
+            }
+            "thermal_vision" -> {
+                // Thermal Vision: FLIR infrared palette scale bar + spot temperature reticle
+                val cx = w * 0.5f
+                val cy = h * 0.5f
+                val retPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    style = Paint.Style.STROKE
+                    strokeWidth = dpToPx(1.5f)
+                    color = Color.parseColor("#CCFFFFFF")
+                }
+                canvas.drawLine(cx - dpToPx(14f), cy, cx + dpToPx(14f), cy, retPaint)
+                canvas.drawLine(cx, cy - dpToPx(14f), cx, cy + dpToPx(14f), retPaint)
+
+                val barW = dpToPx(10f)
+                val barH = dpToPx(105f)
+                val barX = w - dpToPx(22f)
+                val barY = cy - barH * 0.5f
+                val barPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    shader = LinearGradient(
+                        barX, barY, barX, barY + barH,
+                        intArrayOf(
+                            Color.parseColor("#FEF9C3"),
+                            Color.parseColor("#F97316"),
+                            Color.parseColor("#BE185D"),
+                            Color.parseColor("#1E1B4B")
+                        ),
+                        floatArrayOf(0f, 0.35f, 0.7f, 1f),
+                        Shader.TileMode.CLAMP
+                    )
+                }
+                canvas.drawRect(barX, barY, barX + barW, barY + barH, barPaint)
+                canvas.drawRect(barX, barY, barX + barW, barY + barH, retPaint)
+
+                val badgePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.parseColor("#E6FEF9C3")
+                    textSize = dpToPx(10.5f)
+                    typeface = Typeface.MONOSPACE
+                    isFakeBoldText = true
+                }
+                canvas.drawText("FLIR IR · 36.8°C", dpToPx(18f), h - dpToPx(125f), badgePaint)
+            }
         }
 
-        // 1. Film Grain (Animated 35mm emulsion noise + fine Ilford B&W grain + Vintage Super 8)
+        // 1. Film Grain (Animated 35mm emulsion noise + fine Ilford B&W grain + Vintage Super 8 + 16mm Docu)
         val isIlfordGrain = activeFilterPreset.lowercase() == "ilford_grain" || activeFilterPreset.lowercase() == "filter_ilford_grain"
-        val isFilmGrainEffect = effect == "film_grain" || effect == "vintage_super8"
+        val isFilmGrainEffect = effect == "film_grain" || effect == "vintage_super8" || effect == "film_16mm"
         if (enableFilmGrain || isIlfordGrain || isFilmGrainEffect) {
             val random = java.util.Random(System.currentTimeMillis() / 75)
             val step = dpToPx(if (isIlfordGrain && !enableFilmGrain && !isFilmGrainEffect) 16f else 22f).toInt().coerceAtLeast(12)

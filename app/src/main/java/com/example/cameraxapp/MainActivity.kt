@@ -470,6 +470,14 @@ class MainActivity : AppCompatActivity() {
         viewBinding.btnEffectPrism.setOnClickListener { setShootingEffect("prism_refraction") }
         viewBinding.btnEffectKaleidoscope.setOnClickListener { setShootingEffect("kaleidoscope") }
         viewBinding.btnEffectSolarize.setOnClickListener { setShootingEffect("solarize") }
+        viewBinding.btnEffectSuper8Film.setOnClickListener { setShootingEffect("super8_film") }
+        viewBinding.btnEffectFilm16mm.setOnClickListener { setShootingEffect("film_16mm") }
+        viewBinding.btnEffectVhsTape.setOnClickListener { setShootingEffect("vhs_tape") }
+        viewBinding.btnEffectCrtMonitor.setOnClickListener { setShootingEffect("crt_monitor") }
+        viewBinding.btnEffectStopMotion.setOnClickListener { setShootingEffect("stop_motion") }
+        viewBinding.btnEffectNeonEdge.setOnClickListener { setShootingEffect("neon_edge") }
+        viewBinding.btnEffectNoirNovel.setOnClickListener { setShootingEffect("noir_graphic_novel") }
+        viewBinding.btnEffectThermalVision.setOnClickListener { setShootingEffect("thermal_vision") }
 
         viewBinding.switchFilmGrain.setOnCheckedChangeListener { _, isChecked ->
             viewBinding.proOverlayView.enableFilmGrain = isChecked
@@ -1257,6 +1265,14 @@ class MainActivity : AppCompatActivity() {
         "prism_refraction" -> "PRISM REFRACTION"
         "kaleidoscope" -> "KALEIDOSCOPE"
         "solarize" -> "SOLARIZE (SABATTIER)"
+        "super8_film" -> "SUPER 8 VINTAGE"
+        "film_16mm" -> "16MM DOCUMENTARY"
+        "vhs_tape" -> "VHS TAPE (1990S)"
+        "crt_monitor" -> "CRT MONITOR"
+        "stop_motion" -> "STOP-MOTION FRAME"
+        "neon_edge" -> "NEON EDGE"
+        "noir_graphic_novel" -> "NOIR GRAPHIC NOVEL"
+        "thermal_vision" -> "THERMAL VISION"
         else -> "OFF"
     }
 
@@ -1315,7 +1331,9 @@ class MainActivity : AppCompatActivity() {
         val artColorEffects = setOf(
             "oil_canvas", "charcoal_sketch", "watercolor_wash", "ink_and_line",
             "pastel_chalk", "halftone_print", "cyanotype", "woodcut_engraving",
-            "lithograph", "prism_refraction", "kaleidoscope", "solarize"
+            "lithograph", "prism_refraction", "kaleidoscope", "solarize",
+            "super8_film", "film_16mm", "vhs_tape", "crt_monitor",
+            "stop_motion", "neon_edge", "noir_graphic_novel", "thermal_vision"
         )
         val isIdentity = currentFilterName == "normal" && bri == 0 && con == 0 && sat == 0 &&
             currentShootingEffect != "night_sight" &&
@@ -1723,6 +1741,79 @@ class MainActivity : AppCompatActivity() {
                     0f, 0f, 0f, 1f, 0f
                 )))
             }
+            "super8_film" -> {
+                combined.postConcat(ColorMatrix().apply { setSaturation(0.92f) })
+                combined.postConcat(ColorMatrix(floatArrayOf(
+                    1.14f, 0.08f, 0f, 0f, 10f,
+                    0.04f, 1.04f, 0f, 0f, 4f,
+                    0f, 0.02f, 0.80f, 0f, -8f,
+                    0f, 0f, 0f, 1f, 0f
+                )))
+            }
+            "film_16mm" -> {
+                combined.postConcat(ColorMatrix().apply { setSaturation(0.88f) })
+                val c = 1.14f
+                val t = (-0.5f * c + 0.5f) * 255f
+                combined.postConcat(ColorMatrix(floatArrayOf(
+                    c, 0.02f, 0f, 0f, t + 4f,
+                    0f, c, 0f, 0f, t + 2f,
+                    0f, 0f, c * 0.94f, 0f, t - 2f,
+                    0f, 0f, 0f, 1f, 0f
+                )))
+            }
+            "vhs_tape" -> {
+                combined.postConcat(ColorMatrix().apply { setSaturation(1.26f) })
+                val c = 1.08f
+                val t = (-0.5f * c + 0.5f) * 255f + 6f
+                combined.postConcat(ColorMatrix(floatArrayOf(
+                    c, 0f, 0f, 0f, t,
+                    0f, c, 0f, 0f, t,
+                    0f, 0f, c, 0f, t + 4f,
+                    0f, 0f, 0f, 1f, 0f
+                )))
+            }
+            "crt_monitor", "stop_motion" -> {
+                combined.postConcat(ColorMatrix().apply { setSaturation(1.18f) })
+                val c = 1.18f
+                val t = (-0.5f * c + 0.5f) * 255f + 4f
+                combined.postConcat(ColorMatrix(floatArrayOf(
+                    c, 0f, 0f, 0f, t,
+                    0f, c, 0f, 0f, t,
+                    0f, 0f, c, 0f, t,
+                    0f, 0f, 0f, 1f, 0f
+                )))
+            }
+            "neon_edge" -> {
+                combined.postConcat(ColorMatrix().apply { setSaturation(1.75f) })
+                val c = 1.65f
+                val t = (-0.5f * c + 0.5f) * 255f - 48f
+                combined.postConcat(ColorMatrix(floatArrayOf(
+                    c * 0.85f, 0f, 0.2f, 0f, t,
+                    0f, c * 1.05f, 0.1f, 0f, t,
+                    0.15f, 0.1f, c * 1.15f, 0f, t + 18f,
+                    0f, 0f, 0f, 1f, 0f
+                )))
+            }
+            "noir_graphic_novel" -> {
+                combined.postConcat(ColorMatrix().apply { setSaturation(0f) })
+                val c = 2.40f
+                val t = (-0.5f * c + 0.5f) * 255f
+                combined.postConcat(ColorMatrix(floatArrayOf(
+                    c, 0f, 0f, 0f, t,
+                    0f, c, 0f, 0f, t,
+                    0f, 0f, c, 0f, t,
+                    0f, 0f, 0f, 1f, 0f
+                )))
+            }
+            "thermal_vision" -> {
+                // False-color infrared FLIR live preview matrix
+                combined.postConcat(ColorMatrix(floatArrayOf(
+                    1.65f, 0.55f, -0.95f, 0f, 18f,
+                    -0.35f, 1.15f, -0.45f, 0f, -12f,
+                    -0.85f, -0.25f, 1.85f, 0f, 38f,
+                    0f, 0f, 0f, 1f, 0f
+                )))
+            }
         }
 
         // 2. Live Adjustment Sliders (Brightness / Contrast / Saturation)
@@ -1938,7 +2029,15 @@ class MainActivity : AppCompatActivity() {
         "lithograph",
         "prism_refraction",
         "kaleidoscope",
-        "solarize"
+        "solarize",
+        "super8_film",
+        "film_16mm",
+        "vhs_tape",
+        "crt_monitor",
+        "stop_motion",
+        "neon_edge",
+        "noir_graphic_novel",
+        "thermal_vision"
     )
 
     private fun updateShootingEffectButtons() {
@@ -1976,7 +2075,15 @@ class MainActivity : AppCompatActivity() {
             viewBinding.btnEffectLithograph to "lithograph",
             viewBinding.btnEffectPrism to "prism_refraction",
             viewBinding.btnEffectKaleidoscope to "kaleidoscope",
-            viewBinding.btnEffectSolarize to "solarize"
+            viewBinding.btnEffectSolarize to "solarize",
+            viewBinding.btnEffectSuper8Film to "super8_film",
+            viewBinding.btnEffectFilm16mm to "film_16mm",
+            viewBinding.btnEffectVhsTape to "vhs_tape",
+            viewBinding.btnEffectCrtMonitor to "crt_monitor",
+            viewBinding.btnEffectStopMotion to "stop_motion",
+            viewBinding.btnEffectNeonEdge to "neon_edge",
+            viewBinding.btnEffectNoirNovel to "noir_graphic_novel",
+            viewBinding.btnEffectThermalVision to "thermal_vision"
         )
         for ((btn, id) in effectButtons) {
             val isActive = id == currentShootingEffect
@@ -3012,6 +3119,183 @@ class MainActivity : AppCompatActivity() {
                     canvas.drawBitmap(up, 0f, 0f, null)
                     artBmp.recycle(); up.recycle(); small.recycle()
                 }
+                "super8_film" -> {
+                    val s8Cm = ColorMatrix().apply {
+                        setSaturation(0.92f)
+                        postConcat(ColorMatrix(floatArrayOf(
+                            1.14f, 0.08f, 0f, 0f, 10f,
+                            0.04f, 1.04f, 0f, 0f, 4f,
+                            0f, 0.02f, 0.80f, 0f, -8f,
+                            0f, 0f, 0f, 1f, 0f
+                        )))
+                    }
+                    val copy = finalBmp.copy(Bitmap.Config.ARGB_8888, false)
+                    val p = Paint(Paint.ANTI_ALIAS_FLAG).apply { colorFilter = ColorMatrixColorFilter(s8Cm) }
+                    canvas.drawBitmap(copy, 0f, 0f, p)
+                    copy.recycle()
+                    val scrP = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                        style = Paint.Style.STROKE
+                        strokeWidth = (fw * 0.002f).coerceAtLeast(2f)
+                        color = Color.parseColor("#66FFFBEB")
+                    }
+                    canvas.drawLine(fw * 0.24f, 0f, fw * 0.245f, fh, scrP)
+                    canvas.drawLine(fw * 0.72f, 0f, fw * 0.715f, fh, scrP)
+                    val gatePath = Path().apply {
+                        fillType = Path.FillType.EVEN_ODD
+                        addRect(0f, 0f, fw, fh, Path.Direction.CW)
+                        val ix = fw * 0.045f
+                        val iy = fh * 0.04f
+                        val cr = Math.min(fw, fh) * 0.085f
+                        addRoundRect(RectF(ix, iy, fw - ix, fh - iy), cr, cr, Path.Direction.CCW)
+                    }
+                    canvas.drawPath(gatePath, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#F0070709") })
+                }
+                "film_16mm" -> {
+                    val docCm = ColorMatrix().apply {
+                        setSaturation(0.88f)
+                        val c = 1.14f
+                        val t = (-0.5f * c + 0.5f) * 255f
+                        postConcat(ColorMatrix(floatArrayOf(
+                            c, 0.02f, 0f, 0f, t + 4f,
+                            0f, c, 0f, 0f, t + 2f,
+                            0f, 0f, c * 0.94f, 0f, t - 2f,
+                            0f, 0f, 0f, 1f, 0f
+                        )))
+                    }
+                    val copy = finalBmp.copy(Bitmap.Config.ARGB_8888, false)
+                    val p = Paint(Paint.ANTI_ALIAS_FLAG).apply { colorFilter = ColorMatrixColorFilter(docCm) }
+                    canvas.drawBitmap(copy, 0f, 0f, p)
+                    copy.recycle()
+                }
+                "vhs_tape" -> {
+                    val smallW = (finalBmp.width / 4).coerceAtLeast(120)
+                    val smallH = (finalBmp.height / 4).coerceAtLeast(160)
+                    val down = Bitmap.createScaledBitmap(finalBmp, smallW, smallH, true)
+                    val soft = Bitmap.createScaledBitmap(down, finalBmp.width, finalBmp.height, true)
+                    down.recycle()
+                    canvas.drawBitmap(soft, 0f, 0f, null)
+                    val bleedP = Paint(Paint.ANTI_ALIAS_FLAG).apply { alpha = 58 }
+                    canvas.drawBitmap(soft, -fw * 0.008f, 0f, bleedP)
+                    canvas.drawBitmap(soft, fw * 0.008f, 0f, bleedP)
+                    soft.recycle()
+                    val trackY = fh * 0.68f
+                    val trackP = Paint().apply { color = Color.parseColor("#55FFFFFF") }
+                    canvas.drawRect(0f, trackY, fw, trackY + fh * 0.015f, trackP)
+                    canvas.drawRect(0f, fh - fh * 0.012f, fw, fh, trackP)
+                }
+                "crt_monitor" -> {
+                    val scanP = Paint().apply { color = Color.parseColor("#52020612") }
+                    val step = (fh / 160f).toInt().coerceAtLeast(4)
+                    for (y in 0 until finalBmp.height step step) {
+                        canvas.drawRect(0f, y.toFloat(), fw, y + step * 0.45f, scanP)
+                    }
+                    val vigP = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                        shader = RadialGradient(
+                            fw * 0.5f, fh * 0.5f, Math.max(fw, fh) * 0.72f,
+                            intArrayOf(Color.parseColor("#1EB8E6FD"), Color.TRANSPARENT, Color.parseColor("#99020617")),
+                            floatArrayOf(0f, 0.62f, 1f),
+                            Shader.TileMode.CLAMP
+                        )
+                    }
+                    canvas.drawRect(0f, 0f, fw, fh, vigP)
+                }
+                "stop_motion" -> {
+                    val smCm = ColorMatrix().apply { setSaturation(1.18f) }
+                    val copy = finalBmp.copy(Bitmap.Config.ARGB_8888, false)
+                    canvas.drawBitmap(copy, 0f, 0f, Paint(Paint.ANTI_ALIAS_FLAG).apply { colorFilter = ColorMatrixColorFilter(smCm) })
+                    copy.recycle()
+                }
+                "neon_edge" -> {
+                    val sw = 260
+                    val sh = (260f * (fh / fw)).toInt().coerceIn(140, 460)
+                    val small = Bitmap.createScaledBitmap(finalBmp, sw, sh, true)
+                    val pxArr = IntArray(sw * sh)
+                    small.getPixels(pxArr, 0, sw, 0, 0, sw, sh)
+                    val outArr = IntArray(sw * sh)
+                    fun edgeLum(px: Int, py: Int): Float {
+                        val cx = px.coerceIn(0, sw - 1)
+                        val cy = py.coerceIn(0, sh - 1)
+                        val c = pxArr[cy * sw + cx]
+                        return 0.299f * Color.red(c) + 0.587f * Color.green(c) + 0.114f * Color.blue(c)
+                    }
+                    for (y in 0 until sh) {
+                        val vy = y.toFloat() / sh
+                        for (x in 0 until sw) {
+                            val vx = x.toFloat() / sw
+                            val gx = -edgeLum(x - 1, y - 1) + edgeLum(x + 1, y - 1) - 2f * edgeLum(x - 1, y) + 2f * edgeLum(x + 1, y) - edgeLum(x - 1, y + 1) + edgeLum(x + 1, y + 1)
+                            val gy = -edgeLum(x - 1, y - 1) - 2f * edgeLum(x, y - 1) - edgeLum(x + 1, y - 1) + edgeLum(x - 1, y + 1) + 2f * edgeLum(x, y + 1) + edgeLum(x + 1, y + 1)
+                            val edge = (((Math.sqrt((gx * gx + gy * gy).toDouble()).toFloat()) - 22f) / 110f).coerceIn(0f, 1f)
+                            val nr = (6f + edge * (24f + vx * 225f)).toInt().coerceIn(0, 255)
+                            val ng = (8f + edge * (240f - vy * 145f)).toInt().coerceIn(0, 255)
+                            val nb = (18f + edge * 237f).toInt().coerceIn(0, 255)
+                            outArr[y * sw + x] = Color.rgb(nr, ng, nb)
+                        }
+                    }
+                    val artBmp = Bitmap.createBitmap(outArr, sw, sh, Bitmap.Config.ARGB_8888)
+                    val up = Bitmap.createScaledBitmap(artBmp, finalBmp.width, finalBmp.height, true)
+                    canvas.drawBitmap(up, 0f, 0f, null)
+                    artBmp.recycle(); up.recycle(); small.recycle()
+                }
+                "noir_graphic_novel" -> {
+                    val sw = 260
+                    val sh = (260f * (fh / fw)).toInt().coerceIn(140, 460)
+                    val small = Bitmap.createScaledBitmap(finalBmp, sw, sh, true)
+                    val pxArr = IntArray(sw * sh)
+                    small.getPixels(pxArr, 0, sw, 0, 0, sw, sh)
+                    val outArr = IntArray(sw * sh)
+                    fun comicLum(px: Int, py: Int): Float {
+                        val cx = px.coerceIn(0, sw - 1)
+                        val cy = py.coerceIn(0, sh - 1)
+                        val c = pxArr[cy * sw + cx]
+                        return 0.299f * Color.red(c) + 0.587f * Color.green(c) + 0.114f * Color.blue(c)
+                    }
+                    for (y in 0 until sh) {
+                        for (x in 0 until sw) {
+                            val gx = -comicLum(x - 1, y - 1) + comicLum(x + 1, y - 1) - 2f * comicLum(x - 1, y) + 2f * comicLum(x + 1, y) - comicLum(x - 1, y + 1) + comicLum(x + 1, y + 1)
+                            val gy = -comicLum(x - 1, y - 1) - 2f * comicLum(x, y - 1) - comicLum(x + 1, y - 1) + comicLum(x - 1, y + 1) + 2f * comicLum(x, y + 1) + comicLum(x + 1, y + 1)
+                            val edge = Math.sqrt((gx * gx + gy * gy).toDouble()).toFloat()
+                            val l = comicLum(x, y)
+                            val v = if (edge > 64f || l < 76f) 10 else if (l < 138f) 112 else 246
+                            outArr[y * sw + x] = Color.rgb(v, v, v)
+                        }
+                    }
+                    val artBmp = Bitmap.createBitmap(outArr, sw, sh, Bitmap.Config.ARGB_8888)
+                    val up = Bitmap.createScaledBitmap(artBmp, finalBmp.width, finalBmp.height, true)
+                    canvas.drawBitmap(up, 0f, 0f, null)
+                    artBmp.recycle(); up.recycle(); small.recycle()
+                }
+                "thermal_vision" -> {
+                    val sw = 320
+                    val sh = (320f * (fh / fw)).toInt().coerceIn(180, 560)
+                    val small = Bitmap.createScaledBitmap(finalBmp, sw, sh, true)
+                    val pxArr = IntArray(sw * sh)
+                    small.getPixels(pxArr, 0, sw, 0, 0, sw, sh)
+                    for (i in pxArr.indices) {
+                        val c = pxArr[i]
+                        val t = (0.299f * Color.red(c) + 0.587f * Color.green(c) + 0.114f * Color.blue(c)) / 255f
+                        val r: Int
+                        val g: Int
+                        val b: Int
+                        if (t < 0.25f) {
+                            val k = t / 0.25f
+                            r = (14f + k * 78f).toInt(); g = (8f + k * 14f).toInt(); b = (68f + k * 130f).toInt()
+                        } else if (t < 0.5f) {
+                            val k = (t - 0.25f) / 0.25f
+                            r = (92f + k * 148f).toInt(); g = (22f + k * 18f).toInt(); b = (198f - k * 110f).toInt()
+                        } else if (t < 0.78f) {
+                            val k = (t - 0.5f) / 0.28f
+                            r = (240f + k * 15f).toInt(); g = (40f + k * 165f).toInt(); b = (88f - k * 78f).toInt()
+                        } else {
+                            val k = (t - 0.78f) / 0.22f
+                            r = 255; g = (205f + k * 50f).toInt(); b = (10f + k * 235f).toInt()
+                        }
+                        pxArr[i] = Color.rgb(r.coerceIn(0, 255), g.coerceIn(0, 255), b.coerceIn(0, 255))
+                    }
+                    val artBmp = Bitmap.createBitmap(pxArr, sw, sh, Bitmap.Config.ARGB_8888)
+                    val up = Bitmap.createScaledBitmap(artBmp, finalBmp.width, finalBmp.height, true)
+                    canvas.drawBitmap(up, 0f, 0f, null)
+                    artBmp.recycle(); up.recycle(); small.recycle()
+                }
             }
 
             // Bake Anamorphic Flare streaks if Cine Flare toggle OR anamorphic_flare effect is active
@@ -3037,8 +3321,8 @@ class MainActivity : AppCompatActivity() {
                 canvas.drawRect(0f, cy2 - streakH2, fw, cy2 + streakH2, flarePaint)
             }
 
-            // Bake Film Grain if Film Grain toggle, Shooting Effect, Vintage Super 8, OR Ilford Grain filter is active
-            if (viewBinding.proOverlayView.enableFilmGrain || currentShootingEffect == "film_grain" || currentShootingEffect == "vintage_super8" || currentFilterName == "ilford_grain") {
+            // Bake Film Grain if Film Grain toggle, Shooting Effect, Vintage Super 8, 16mm Docu, OR Ilford Grain filter is active
+            if (viewBinding.proOverlayView.enableFilmGrain || currentShootingEffect == "film_grain" || currentShootingEffect == "vintage_super8" || currentShootingEffect == "film_16mm" || currentFilterName == "ilford_grain") {
                 val grainPaint = Paint(Paint.ANTI_ALIAS_FLAG)
                 val rng = java.util.Random(System.currentTimeMillis())
                 val step = (finalBmp.width / 80).coerceIn(12, 32)
