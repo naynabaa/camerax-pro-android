@@ -257,8 +257,32 @@ class MainActivity : AppCompatActivity() {
     private var dollyZoomAnimator: android.animation.ValueAnimator? = null
     private var smoothRollDeg: Float = 0f
 
-    enum class CreativeTarget { FILTERS, LENSES, EFFECTS }
+    enum class CreativeTarget { FILTERS, LENSES, EFFECTS, ART, TOON }
     private var currentCreativeTarget = CreativeTarget.FILTERS
+    private val artEffectIds = setOf(
+        "oil_canvas", "charcoal_sketch", "watercolor_wash", "ink_and_line",
+        "pastel_chalk", "halftone_print", "cyanotype", "woodcut_engraving",
+        "lithograph", "prism_refraction", "kaleidoscope", "solarize",
+        "super8_film", "film_16mm", "vhs_tape", "crt_monitor",
+        "stop_motion", "neon_edge", "noir_graphic_novel", "thermal_vision"
+    )
+    private val toonEffectIds = setOf(
+        "cel_shaded_studio", "graphic_novel_noir", "manga_ink", "pop_art_print",
+        "line_art_minimalist", "ligne_claire", "clay_vinyl_3d"
+    )
+    private val toonStyleOrder = listOf(
+        "none", "cel_shaded_studio", "graphic_novel_noir", "manga_ink", "pop_art_print",
+        "line_art_minimalist", "ligne_claire", "clay_vinyl_3d"
+    )
+    private val pictureArtOrder = listOf(
+        "oil_canvas", "charcoal_sketch", "watercolor_wash", "ink_and_line",
+        "pastel_chalk", "halftone_print", "cyanotype", "woodcut_engraving",
+        "lithograph", "prism_refraction", "kaleidoscope", "solarize"
+    )
+    private val videoArtOrder = listOf(
+        "super8_film", "film_16mm", "vhs_tape", "crt_monitor",
+        "stop_motion", "neon_edge", "noir_graphic_novel", "thermal_vision"
+    )
     private var isLastActionCreative = false
     private var currentTextureEffectIndex = 0
     private var isUpdatingEffectSwitches = false
@@ -363,10 +387,12 @@ class MainActivity : AppCompatActivity() {
         viewBinding.btnQuickGridDiagonal.setOnClickListener { setGridMode(ProOverlayView.GridType.DIAGONAL_SYMMETRY) }
         viewBinding.btnQuickGridCinematic.setOnClickListener { setGridMode(ProOverlayView.GridType.CINEMATIC_239) }
 
-        // Creative Drawer Category Switcher Buttons (FILTERS, LENSES, EFFECTS)
+        // Creative Drawer Category Switcher Buttons (FILTERS, LENSES, EFFECTS, ART, TOON)
         viewBinding.btnCategoryFilters.setOnClickListener { selectCreativeCategory(CreativeTarget.FILTERS, fromUser = true) }
         viewBinding.btnCategoryLenses.setOnClickListener { selectCreativeCategory(CreativeTarget.LENSES, fromUser = true) }
         viewBinding.btnCategoryEffects.setOnClickListener { selectCreativeCategory(CreativeTarget.EFFECTS, fromUser = true) }
+        viewBinding.btnCategoryArt.setOnClickListener { selectCreativeCategory(CreativeTarget.ART, fromUser = true) }
+        viewBinding.btnCategoryToon.setOnClickListener { selectCreativeCategory(CreativeTarget.TOON, fromUser = true) }
 
         // Top Toolbar: Self-Timer Toggle (Photo Mode)
         viewBinding.btnTimer.setOnClickListener { cycleCountdownTimer() }
@@ -437,6 +463,8 @@ class MainActivity : AppCompatActivity() {
         viewBinding.btnArHud.setOnClickListener { setArLens("scifi_hud") }
 
         viewBinding.btnEffectOff.setOnClickListener { setShootingEffect("none") }
+        viewBinding.btnArtOff.setOnClickListener { setShootingEffect("none") }
+        viewBinding.btnToonOff.setOnClickListener { setShootingEffect("none") }
         viewBinding.btnEffectBokeh.setOnClickListener { setShootingEffect("portrait_bokeh") }
         viewBinding.btnEffectLongExp.setOnClickListener { setShootingEffect("long_exposure") }
         viewBinding.btnEffectLightPaint.setOnClickListener { setShootingEffect("light_painting") }
@@ -478,6 +506,13 @@ class MainActivity : AppCompatActivity() {
         viewBinding.btnEffectNeonEdge.setOnClickListener { setShootingEffect("neon_edge") }
         viewBinding.btnEffectNoirNovel.setOnClickListener { setShootingEffect("noir_graphic_novel") }
         viewBinding.btnEffectThermalVision.setOnClickListener { setShootingEffect("thermal_vision") }
+        viewBinding.btnEffectCelShaded.setOnClickListener { setShootingEffect("cel_shaded_studio") }
+        viewBinding.btnEffectGraphicNoir.setOnClickListener { setShootingEffect("graphic_novel_noir") }
+        viewBinding.btnEffectMangaInk.setOnClickListener { setShootingEffect("manga_ink") }
+        viewBinding.btnEffectPopArt.setOnClickListener { setShootingEffect("pop_art_print") }
+        viewBinding.btnEffectLineArt.setOnClickListener { setShootingEffect("line_art_minimalist") }
+        viewBinding.btnEffectLigneClaire.setOnClickListener { setShootingEffect("ligne_claire") }
+        viewBinding.btnEffectClayVinyl.setOnClickListener { setShootingEffect("clay_vinyl_3d") }
 
         viewBinding.switchFilmGrain.setOnCheckedChangeListener { _, isChecked ->
             viewBinding.proOverlayView.enableFilmGrain = isChecked
@@ -1205,6 +1240,22 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun updateArtStripModeOrder() {
+        val container = viewBinding.layoutArtContainer
+        val picGroup = viewBinding.layoutPictureArtGroup
+        val vidGroup = viewBinding.layoutVideoArtGroup
+        val isVideoMode = (cameraMode == CameraMode.VIDEO || cameraMode == CameraMode.SLOW_MO)
+        container.removeView(picGroup)
+        container.removeView(vidGroup)
+        if (isVideoMode) {
+            container.addView(vidGroup)
+            container.addView(picGroup)
+        } else {
+            container.addView(picGroup)
+            container.addView(vidGroup)
+        }
+    }
+
     private fun selectCreativeCategory(target: CreativeTarget, fromUser: Boolean = true) {
         currentCreativeTarget = target
         if (fromUser) {
@@ -1214,6 +1265,8 @@ class MainActivity : AppCompatActivity() {
         val isFilter = target == CreativeTarget.FILTERS
         val isLens = target == CreativeTarget.LENSES
         val isEffect = target == CreativeTarget.EFFECTS
+        val isArt = target == CreativeTarget.ART
+        val isToon = target == CreativeTarget.TOON
 
         viewBinding.btnCategoryFilters.setBackgroundResource(if (isFilter) R.drawable.bg_cinema_button_active else R.drawable.bg_cinema_button_inactive)
         viewBinding.btnCategoryFilters.setTextColor(Color.parseColor(if (isFilter) "#0F172A" else "#94A3B8"))
@@ -1224,9 +1277,21 @@ class MainActivity : AppCompatActivity() {
         viewBinding.btnCategoryEffects.setBackgroundResource(if (isEffect) R.drawable.bg_cinema_button_active else R.drawable.bg_cinema_button_inactive)
         viewBinding.btnCategoryEffects.setTextColor(Color.parseColor(if (isEffect) "#0F172A" else "#94A3B8"))
 
+        viewBinding.btnCategoryArt.setBackgroundResource(if (isArt) R.drawable.bg_cinema_button_active else R.drawable.bg_cinema_button_inactive)
+        viewBinding.btnCategoryArt.setTextColor(Color.parseColor(if (isArt) "#0F172A" else "#94A3B8"))
+
+        viewBinding.btnCategoryToon.setBackgroundResource(if (isToon) R.drawable.bg_cinema_button_active else R.drawable.bg_cinema_button_inactive)
+        viewBinding.btnCategoryToon.setTextColor(Color.parseColor(if (isToon) "#0F172A" else "#94A3B8"))
+
         viewBinding.scrollFiltersStrip.visibility = if (isFilter) View.VISIBLE else View.GONE
         viewBinding.scrollLensesStrip.visibility = if (isLens) View.VISIBLE else View.GONE
         viewBinding.scrollEffectsStrip.visibility = if (isEffect) View.VISIBLE else View.GONE
+        viewBinding.scrollArtStrip.visibility = if (isArt) View.VISIBLE else View.GONE
+        viewBinding.scrollToonStrip.visibility = if (isToon) View.VISIBLE else View.GONE
+
+        if (isArt) {
+            updateArtStripModeOrder()
+        }
 
         updateCreativeStatusUI()
     }
@@ -1273,6 +1338,13 @@ class MainActivity : AppCompatActivity() {
         "neon_edge" -> "NEON EDGE"
         "noir_graphic_novel" -> "NOIR GRAPHIC NOVEL"
         "thermal_vision" -> "THERMAL VISION"
+        "cel_shaded_studio" -> "CEL-SHADED STUDIO"
+        "graphic_novel_noir" -> "GRAPHIC NOVEL (NOIR)"
+        "manga_ink" -> "MANGA INK"
+        "pop_art_print" -> "POP-ART PRINT"
+        "line_art_minimalist" -> "LINE ART (MINIMAL)"
+        "ligne_claire" -> "LIGNE CLAIRE"
+        "clay_vinyl_3d" -> "3D CLAY / VINYL"
         else -> "OFF"
     }
 
@@ -1280,8 +1352,22 @@ class MainActivity : AppCompatActivity() {
         val statusText = when (currentCreativeTarget) {
             CreativeTarget.FILTERS -> "FILTER: " + currentFilterName.replace("_", " ").uppercase(Locale.ROOT)
             CreativeTarget.LENSES -> "LENS: " + currentArLensName.replace("_", " ").uppercase(Locale.ROOT)
+            CreativeTarget.ART -> {
+                if (artEffectIds.contains(currentShootingEffect)) {
+                    "ART: " + getShootingEffectLabel(currentShootingEffect)
+                } else {
+                    "ART: OFF"
+                }
+            }
+            CreativeTarget.TOON -> {
+                if (toonEffectIds.contains(currentShootingEffect)) {
+                    "TOON: " + getShootingEffectLabel(currentShootingEffect)
+                } else {
+                    "TOON: OFF"
+                }
+            }
             CreativeTarget.EFFECTS -> {
-                if (currentShootingEffect != "none") {
+                if (currentShootingEffect != "none" && !artEffectIds.contains(currentShootingEffect) && !toonEffectIds.contains(currentShootingEffect)) {
                     "EFFECT: " + getShootingEffectLabel(currentShootingEffect)
                 } else {
                     val g = viewBinding.proOverlayView.enableFilmGrain
@@ -1333,7 +1419,9 @@ class MainActivity : AppCompatActivity() {
             "pastel_chalk", "halftone_print", "cyanotype", "woodcut_engraving",
             "lithograph", "prism_refraction", "kaleidoscope", "solarize",
             "super8_film", "film_16mm", "vhs_tape", "crt_monitor",
-            "stop_motion", "neon_edge", "noir_graphic_novel", "thermal_vision"
+            "stop_motion", "neon_edge", "noir_graphic_novel", "thermal_vision",
+            "cel_shaded_studio", "graphic_novel_noir", "manga_ink", "pop_art_print",
+            "line_art_minimalist", "ligne_claire", "clay_vinyl_3d"
         )
         val isIdentity = currentFilterName == "normal" && bri == 0 && con == 0 && sat == 0 &&
             currentShootingEffect != "night_sight" &&
@@ -1814,6 +1902,83 @@ class MainActivity : AppCompatActivity() {
                     0f, 0f, 0f, 1f, 0f
                 )))
             }
+            "cel_shaded_studio" -> {
+                combined.postConcat(ColorMatrix().apply { setSaturation(1.38f) })
+                val c = 1.40f
+                val t = (-0.5f * c + 0.5f) * 255f + 4f
+                combined.postConcat(ColorMatrix(floatArrayOf(
+                    c, 0f, 0f, 0f, t,
+                    0f, c, 0f, 0f, t,
+                    0f, 0f, c, 0f, t,
+                    0f, 0f, 0f, 1f, 0f
+                )))
+            }
+            "graphic_novel_noir" -> {
+                combined.postConcat(ColorMatrix().apply { setSaturation(0f) })
+                val c = 2.38f
+                val t = (-0.5f * c + 0.5f) * 255f + 4f
+                combined.postConcat(ColorMatrix(floatArrayOf(
+                    c, 0f, 0f, 0f, t,
+                    0f, c, 0f, 0f, t,
+                    0f, 0f, c, 0f, t,
+                    0f, 0f, 0f, 1f, 0f
+                )))
+            }
+            "manga_ink" -> {
+                combined.postConcat(ColorMatrix().apply { setSaturation(0f) })
+                val c = 2.15f
+                val t = (-0.5f * c + 0.5f) * 255f + 16f
+                combined.postConcat(ColorMatrix(floatArrayOf(
+                    c, 0f, 0f, 0f, t,
+                    0f, c, 0f, 0f, t,
+                    0f, 0f, c, 0f, t,
+                    0f, 0f, 0f, 1f, 0f
+                )))
+            }
+            "pop_art_print" -> {
+                combined.postConcat(ColorMatrix().apply { setSaturation(2.15f) })
+                val c = 1.65f
+                val t = (-0.5f * c + 0.5f) * 255f + 6f
+                combined.postConcat(ColorMatrix(floatArrayOf(
+                    c, 0f, 0f, 0f, t,
+                    0f, c, 0f, 0f, t,
+                    0f, 0f, c, 0f, t,
+                    0f, 0f, 0f, 1f, 0f
+                )))
+            }
+            "line_art_minimalist" -> {
+                combined.postConcat(ColorMatrix().apply { setSaturation(0f) })
+                val c = 2.55f
+                val t = (-0.5f * c + 0.5f) * 255f + 26f
+                combined.postConcat(ColorMatrix(floatArrayOf(
+                    c, 0f, 0f, 0f, t,
+                    0f, c, 0f, 0f, t,
+                    0f, 0f, c, 0f, t,
+                    0f, 0f, 0f, 1f, 0f
+                )))
+            }
+            "ligne_claire" -> {
+                combined.postConcat(ColorMatrix().apply { setSaturation(0.88f) })
+                val c = 1.18f
+                val t = (-0.5f * c + 0.5f) * 255f + 14f
+                combined.postConcat(ColorMatrix(floatArrayOf(
+                    c, 0f, 0f, 0f, t,
+                    0f, c, 0f, 0f, t,
+                    0f, 0f, c, 0f, t,
+                    0f, 0f, 0f, 1f, 0f
+                )))
+            }
+            "clay_vinyl_3d" -> {
+                combined.postConcat(ColorMatrix().apply { setSaturation(1.24f) })
+                val c = 1.08f
+                val t = (-0.5f * c + 0.5f) * 255f + 10f
+                combined.postConcat(ColorMatrix(floatArrayOf(
+                    c, 0f, 0f, 0f, t,
+                    0f, c, 0f, 0f, t,
+                    0f, 0f, c, 0f, t,
+                    0f, 0f, 0f, 1f, 0f
+                )))
+            }
         }
 
         // 2. Live Adjustment Sliders (Brightness / Contrast / Saturation)
@@ -2017,28 +2182,13 @@ class MainActivity : AppCompatActivity() {
         "dolly_zoom",
         "motion_blur",
         "action_stabilization",
-        "vintage_super8",
-        "oil_canvas",
-        "charcoal_sketch",
-        "watercolor_wash",
-        "ink_and_line",
-        "pastel_chalk",
-        "halftone_print",
-        "cyanotype",
-        "woodcut_engraving",
-        "lithograph",
-        "prism_refraction",
-        "kaleidoscope",
-        "solarize",
-        "super8_film",
-        "film_16mm",
-        "vhs_tape",
-        "crt_monitor",
-        "stop_motion",
-        "neon_edge",
-        "noir_graphic_novel",
-        "thermal_vision"
+        "vintage_super8"
     )
+
+    private fun getModeOrderedArtEffects(): List<String> {
+        val isVideoMode = (cameraMode == CameraMode.VIDEO || cameraMode == CameraMode.SLOW_MO)
+        return listOf("none") + if (isVideoMode) (videoArtOrder + pictureArtOrder) else (pictureArtOrder + videoArtOrder)
+    }
 
     private fun updateShootingEffectButtons() {
         val effectButtons = listOf(
@@ -2063,7 +2213,27 @@ class MainActivity : AppCompatActivity() {
             viewBinding.btnEffectDollyZoom to "dolly_zoom",
             viewBinding.btnEffectMotionBlur to "motion_blur",
             viewBinding.btnEffectHorizonLock to "action_stabilization",
-            viewBinding.btnEffectSuper8 to "vintage_super8",
+            viewBinding.btnEffectSuper8 to "vintage_super8"
+        )
+        val activeShootingId = if (artEffectIds.contains(currentShootingEffect) || toonEffectIds.contains(currentShootingEffect)) "none" else currentShootingEffect
+        for ((btn, id) in effectButtons) {
+            val isActive = id == activeShootingId
+            if (isActive) {
+                btn.setBackgroundResource(R.drawable.bg_cinema_button_active)
+                btn.setTextColor(Color.parseColor("#0F172A"))
+                scrollChipIntoView(viewBinding.scrollEffectsStrip, btn)
+            } else {
+                btn.setBackgroundResource(R.drawable.bg_cinema_button_inactive)
+                btn.setTextColor(Color.parseColor("#94A3B8"))
+            }
+        }
+        updateArtEffectButtons()
+        updateToonEffectButtons()
+    }
+
+    private fun updateArtEffectButtons() {
+        val artButtons = listOf(
+            viewBinding.btnArtOff to "none",
             viewBinding.btnEffectOilCanvas to "oil_canvas",
             viewBinding.btnEffectCharcoalSketch to "charcoal_sketch",
             viewBinding.btnEffectWatercolorWash to "watercolor_wash",
@@ -2085,12 +2255,38 @@ class MainActivity : AppCompatActivity() {
             viewBinding.btnEffectNoirNovel to "noir_graphic_novel",
             viewBinding.btnEffectThermalVision to "thermal_vision"
         )
-        for ((btn, id) in effectButtons) {
-            val isActive = id == currentShootingEffect
+        val activeArtId = if (artEffectIds.contains(currentShootingEffect)) currentShootingEffect else "none"
+        for ((btn, id) in artButtons) {
+            val isActive = id == activeArtId
             if (isActive) {
                 btn.setBackgroundResource(R.drawable.bg_cinema_button_active)
                 btn.setTextColor(Color.parseColor("#0F172A"))
-                scrollChipIntoView(viewBinding.scrollEffectsStrip, btn)
+                scrollChipIntoView(viewBinding.scrollArtStrip, btn)
+            } else {
+                btn.setBackgroundResource(R.drawable.bg_cinema_button_inactive)
+                btn.setTextColor(Color.parseColor("#94A3B8"))
+            }
+        }
+    }
+
+    private fun updateToonEffectButtons() {
+        val toonButtons = listOf(
+            viewBinding.btnToonOff to "none",
+            viewBinding.btnEffectCelShaded to "cel_shaded_studio",
+            viewBinding.btnEffectGraphicNoir to "graphic_novel_noir",
+            viewBinding.btnEffectMangaInk to "manga_ink",
+            viewBinding.btnEffectPopArt to "pop_art_print",
+            viewBinding.btnEffectLineArt to "line_art_minimalist",
+            viewBinding.btnEffectLigneClaire to "ligne_claire",
+            viewBinding.btnEffectClayVinyl to "clay_vinyl_3d"
+        )
+        val activeToonId = if (toonEffectIds.contains(currentShootingEffect)) currentShootingEffect else "none"
+        for ((btn, id) in toonButtons) {
+            val isActive = id == activeToonId
+            if (isActive) {
+                btn.setBackgroundResource(R.drawable.bg_cinema_button_active)
+                btn.setTextColor(Color.parseColor("#0F172A"))
+                scrollChipIntoView(viewBinding.scrollToonStrip, btn)
             } else {
                 btn.setBackgroundResource(R.drawable.bg_cinema_button_inactive)
                 btn.setTextColor(Color.parseColor("#94A3B8"))
@@ -2100,9 +2296,17 @@ class MainActivity : AppCompatActivity() {
 
     private fun setShootingEffect(effectId: String, showNotice: Boolean = true) {
         currentShootingEffect = effectId
+        val isArtEffect = artEffectIds.contains(effectId)
+        val isToonEffect = toonEffectIds.contains(effectId)
         currentTextureEffectIndex = allShootingEffects.indexOf(effectId).coerceAtLeast(0)
         if (showNotice) {
-            currentCreativeTarget = CreativeTarget.EFFECTS
+            if (isToonEffect) {
+                currentCreativeTarget = CreativeTarget.TOON
+            } else if (isArtEffect) {
+                currentCreativeTarget = CreativeTarget.ART
+            } else if (effectId != "none") {
+                currentCreativeTarget = CreativeTarget.EFFECTS
+            }
             isLastActionCreative = true
         }
         viewBinding.proOverlayView.activeShootingEffect = effectId
@@ -3296,6 +3500,142 @@ class MainActivity : AppCompatActivity() {
                     canvas.drawBitmap(up, 0f, 0f, null)
                     artBmp.recycle(); up.recycle(); small.recycle()
                 }
+                "cel_shaded_studio", "ligne_claire" -> {
+                    val sw = 320
+                    val sh = (320f * (fh / fw)).toInt().coerceIn(180, 560)
+                    val small = Bitmap.createScaledBitmap(finalBmp, sw, sh, true)
+                    val pxArr = IntArray(sw * sh)
+                    small.getPixels(pxArr, 0, sw, 0, 0, sw, sh)
+                    val outArr = IntArray(sw * sh)
+                    val isLigne = currentShootingEffect == "ligne_claire"
+                    fun tLum(px: Int, py: Int): Float {
+                        val cx = px.coerceIn(0, sw - 1)
+                        val cy = py.coerceIn(0, sh - 1)
+                        val c = pxArr[cy * sw + cx]
+                        return 0.299f * Color.red(c) + 0.587f * Color.green(c) + 0.114f * Color.blue(c)
+                    }
+                    for (y in 0 until sh) {
+                        for (x in 0 until sw) {
+                            val gx = -tLum(x - 1, y - 1) + tLum(x + 1, y - 1) - 2f * tLum(x - 1, y) + 2f * tLum(x + 1, y) - tLum(x - 1, y + 1) + tLum(x + 1, y + 1)
+                            val gy = -tLum(x - 1, y - 1) - 2f * tLum(x, y - 1) - tLum(x + 1, y - 1) + tLum(x - 1, y + 1) + 2f * tLum(x, y + 1) + tLum(x + 1, y + 1)
+                            val edge = Math.sqrt((gx * gx + gy * gy).toDouble()).toFloat()
+                            val c = pxArr[y * sw + x]
+                            if (edge > if (isLigne) 58f else 62f) {
+                                outArr[y * sw + x] = if (isLigne) Color.rgb(24, 24, 30) else Color.rgb(12, 15, 24)
+                            } else if (isLigne) {
+                                val pr = (Color.red(c) / 36) * 36
+                                val pg = (Color.green(c) / 36) * 36
+                                val pb = (Color.blue(c) / 36) * 36
+                                outArr[y * sw + x] = Color.rgb(
+                                    (pr * 0.72f + 72f).toInt().coerceIn(0, 248),
+                                    (pg * 0.72f + 70f).toInt().coerceIn(0, 246),
+                                    (pb * 0.72f + 66f).toInt().coerceIn(0, 244)
+                                )
+                            } else {
+                                outArr[y * sw + x] = Color.rgb(
+                                    ((Color.red(c) / 52) * 52 + 12).coerceIn(0, 255),
+                                    ((Color.green(c) / 52) * 52 + 12).coerceIn(0, 255),
+                                    ((Color.blue(c) / 52) * 52 + 12).coerceIn(0, 255)
+                                )
+                            }
+                        }
+                    }
+                    val artBmp = Bitmap.createBitmap(outArr, sw, sh, Bitmap.Config.ARGB_8888)
+                    val up = Bitmap.createScaledBitmap(artBmp, finalBmp.width, finalBmp.height, true)
+                    canvas.drawBitmap(up, 0f, 0f, null)
+                    artBmp.recycle(); up.recycle(); small.recycle()
+                }
+                "graphic_novel_noir", "manga_ink", "line_art_minimalist" -> {
+                    val sw = 320
+                    val sh = (320f * (fh / fw)).toInt().coerceIn(180, 560)
+                    val small = Bitmap.createScaledBitmap(finalBmp, sw, sh, true)
+                    val pxArr = IntArray(sw * sh)
+                    small.getPixels(pxArr, 0, sw, 0, 0, sw, sh)
+                    val outArr = IntArray(sw * sh)
+                    fun mLum(px: Int, py: Int): Float {
+                        val cx = px.coerceIn(0, sw - 1)
+                        val cy = py.coerceIn(0, sh - 1)
+                        val c = pxArr[cy * sw + cx]
+                        return 0.299f * Color.red(c) + 0.587f * Color.green(c) + 0.114f * Color.blue(c)
+                    }
+                    for (y in 0 until sh) {
+                        for (x in 0 until sw) {
+                            val gx = -mLum(x - 1, y - 1) + mLum(x + 1, y - 1) - 2f * mLum(x - 1, y) + 2f * mLum(x + 1, y) - mLum(x - 1, y + 1) + mLum(x + 1, y + 1)
+                            val gy = -mLum(x - 1, y - 1) - 2f * mLum(x, y - 1) - mLum(x + 1, y - 1) + mLum(x - 1, y + 1) + 2f * mLum(x, y + 1) + mLum(x + 1, y + 1)
+                            val edge = Math.sqrt((gx * gx + gy * gy).toDouble()).toFloat()
+                            val l = mLum(x, y)
+                            val v = when (currentShootingEffect) {
+                                "line_art_minimalist" -> if (edge > 54f) 12 else 254
+                                "manga_ink" -> {
+                                    val screenDot = l < 155f && ((x + (y % 2) * 2) % 4 == 0 && y % 3 == 0)
+                                    val denseDot = l < 104f && ((x + y) % 2 == 0)
+                                    if (edge > 56f || l < 40f || screenDot || denseDot) 14 else 250
+                                }
+                                else -> if (edge > 58f || l < 82f) 8 else if (l < 138f) 116 else 248
+                            }
+                            outArr[y * sw + x] = Color.rgb(v, v, v)
+                        }
+                    }
+                    val artBmp = Bitmap.createBitmap(outArr, sw, sh, Bitmap.Config.ARGB_8888)
+                    val up = Bitmap.createScaledBitmap(artBmp, finalBmp.width, finalBmp.height, true)
+                    canvas.drawBitmap(up, 0f, 0f, null)
+                    artBmp.recycle(); up.recycle(); small.recycle()
+                }
+                "pop_art_print" -> {
+                    val sw = 300
+                    val sh = (300f * (fh / fw)).toInt().coerceIn(160, 520)
+                    val small = Bitmap.createScaledBitmap(finalBmp, sw, sh, true)
+                    val pxArr = IntArray(sw * sh)
+                    small.getPixels(pxArr, 0, sw, 0, 0, sw, sh)
+                    val outArr = IntArray(sw * sh)
+                    fun pLum(px: Int, py: Int): Float {
+                        val cx = px.coerceIn(0, sw - 1)
+                        val cy = py.coerceIn(0, sh - 1)
+                        val c = pxArr[cy * sw + cx]
+                        return 0.299f * Color.red(c) + 0.587f * Color.green(c) + 0.114f * Color.blue(c)
+                    }
+                    for (y in 0 until sh) {
+                        for (x in 0 until sw) {
+                            val gx = -pLum(x - 1, y - 1) + pLum(x + 1, y - 1) - 2f * pLum(x - 1, y) + 2f * pLum(x + 1, y) - pLum(x - 1, y + 1) + pLum(x + 1, y + 1)
+                            val gy = -pLum(x - 1, y - 1) - 2f * pLum(x, y - 1) - pLum(x + 1, y - 1) + pLum(x - 1, y + 1) + 2f * pLum(x, y + 1) + pLum(x + 1, y + 1)
+                            val edge = Math.sqrt((gx * gx + gy * gy).toDouble()).toFloat()
+                            val c = pxArr[y * sw + x]
+                            outArr[y * sw + x] = if (edge > 56f) {
+                                Color.rgb(10, 10, 14)
+                            } else {
+                                val r = Color.red(c); val g = Color.green(c); val b = Color.blue(c)
+                                val l = 0.299f * r + 0.587f * g + 0.114f * b
+                                val isDot = (x % 4 == 0 && y % 4 == 0)
+                                if (l > 190f) Color.rgb(252, if (isDot) 210 else 238, if (isDot) 35 else 88)
+                                else if (r >= g && r >= b) Color.rgb(239, if (isDot) 48 else 35, if (isDot) 168 else 68)
+                                else if (b >= r && b >= g) Color.rgb(if (isDot) 245 else 37, if (isDot) 55 else 99, 235)
+                                else Color.rgb(14, if (isDot) 225 else 185, 224)
+                            }
+                        }
+                    }
+                    val artBmp = Bitmap.createBitmap(outArr, sw, sh, Bitmap.Config.ARGB_8888)
+                    val up = Bitmap.createScaledBitmap(artBmp, finalBmp.width, finalBmp.height, true)
+                    canvas.drawBitmap(up, 0f, 0f, null)
+                    artBmp.recycle(); up.recycle(); small.recycle()
+                }
+                "clay_vinyl_3d" -> {
+                    val smallW = (finalBmp.width / 14).coerceAtLeast(28)
+                    val smallH = (finalBmp.height / 14).coerceAtLeast(28)
+                    val down = Bitmap.createScaledBitmap(finalBmp, smallW, smallH, true)
+                    val soft = Bitmap.createScaledBitmap(down, finalBmp.width, finalBmp.height, true)
+                    down.recycle()
+                    canvas.drawBitmap(soft, 0f, 0f, Paint(Paint.ANTI_ALIAS_FLAG).apply { alpha = 155 })
+                    soft.recycle()
+                    val sheenP = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                        shader = RadialGradient(
+                            fw * 0.36f, fh * 0.28f, Math.max(fw, fh) * 0.46f,
+                            intArrayOf(Color.parseColor("#54FFFFFF"), Color.parseColor("#22E0F2FE"), Color.TRANSPARENT),
+                            floatArrayOf(0f, 0.45f, 1f),
+                            Shader.TileMode.CLAMP
+                        )
+                    }
+                    canvas.drawRect(0f, 0f, fw, fh, sheenP)
+                }
             }
 
             // Bake Anamorphic Flare streaks if Cine Flare toggle OR anamorphic_flare effect is active
@@ -3491,6 +3831,7 @@ class MainActivity : AppCompatActivity() {
             updateAutoLoopHud()
         }
 
+        updateArtStripModeOrder()
         bindCameraUseCases()
     }
 
@@ -3669,6 +4010,19 @@ class MainActivity : AppCompatActivity() {
                 val nextIdx = (safeIdx + 1) % allShootingEffects.size
                 setShootingEffect(allShootingEffects[nextIdx])
             }
+            CreativeTarget.ART -> {
+                val artList = getModeOrderedArtEffects()
+                val currentIdx = artList.indexOf(currentShootingEffect)
+                val safeIdx = if (currentIdx >= 0) currentIdx else 0
+                val nextIdx = (safeIdx + 1) % artList.size
+                setShootingEffect(artList[nextIdx])
+            }
+            CreativeTarget.TOON -> {
+                val currentIdx = toonStyleOrder.indexOf(currentShootingEffect)
+                val safeIdx = if (currentIdx >= 0) currentIdx else 0
+                val nextIdx = (safeIdx + 1) % toonStyleOrder.size
+                setShootingEffect(toonStyleOrder[nextIdx])
+            }
             else -> {
                 val filterList = listOf(
                     "normal",
@@ -3719,6 +4073,19 @@ class MainActivity : AppCompatActivity() {
                 val safeIdx = if (currentIdx >= 0) currentIdx else 0
                 val prevIdx = if (safeIdx <= 0) allShootingEffects.size - 1 else safeIdx - 1
                 setShootingEffect(allShootingEffects[prevIdx])
+            }
+            CreativeTarget.ART -> {
+                val artList = getModeOrderedArtEffects()
+                val currentIdx = artList.indexOf(currentShootingEffect)
+                val safeIdx = if (currentIdx >= 0) currentIdx else 0
+                val prevIdx = if (safeIdx <= 0) artList.size - 1 else safeIdx - 1
+                setShootingEffect(artList[prevIdx])
+            }
+            CreativeTarget.TOON -> {
+                val currentIdx = toonStyleOrder.indexOf(currentShootingEffect)
+                val safeIdx = if (currentIdx >= 0) currentIdx else 0
+                val prevIdx = if (safeIdx <= 0) toonStyleOrder.size - 1 else safeIdx - 1
+                setShootingEffect(toonStyleOrder[prevIdx])
             }
             else -> {
                 val filterList = listOf(

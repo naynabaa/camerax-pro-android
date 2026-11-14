@@ -2425,6 +2425,132 @@ class ProOverlayView @JvmOverloads constructor(
                 }
                 canvas.drawText("FLIR IR · 36.8°C", dpToPx(18f), h - dpToPx(125f), badgePaint)
             }
+            "cel_shaded_studio" -> {
+                // Cel-Shaded Studio: crisp black ink comic border + subtle studio cel contour frame
+                val inkPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    style = Paint.Style.STROKE
+                    strokeWidth = dpToPx(3.5f)
+                    color = Color.parseColor("#E60B0F19")
+                }
+                canvas.drawRect(dpToPx(6f), dpToPx(6f), w - dpToPx(6f), h - dpToPx(6f), inkPaint)
+                inkPaint.strokeWidth = dpToPx(1.2f)
+                inkPaint.color = Color.parseColor("#550B0F19")
+                canvas.drawRect(dpToPx(14f), dpToPx(14f), w - dpToPx(14f), h - dpToPx(14f), inkPaint)
+            }
+            "graphic_novel_noir" -> {
+                // Graphic Novel (Noir): stark B&W comic gutter + sharp ink frame
+                val gutter = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    style = Paint.Style.STROKE
+                    strokeWidth = dpToPx(9f)
+                    color = Color.WHITE
+                }
+                canvas.drawRect(dpToPx(4.5f), dpToPx(4.5f), w - dpToPx(4.5f), h - dpToPx(4.5f), gutter)
+                gutter.strokeWidth = dpToPx(3.5f)
+                gutter.color = Color.parseColor("#FF09090B")
+                canvas.drawRect(dpToPx(10f), dpToPx(10f), w - dpToPx(10f), h - dpToPx(10f), gutter)
+            }
+            "manga_ink" -> {
+                // Manga Ink: Japanese diagonal screen-tone dot corner vignette + monochrome ink panel rule
+                val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    style = Paint.Style.FILL
+                    color = Color.parseColor("#380F172A")
+                }
+                val step = dpToPx(9f).toInt().coerceAtLeast(9)
+                var row = 0
+                for (y in step / 2 until h.toInt() step step) {
+                    val xOff = if (row % 2 == 0) 0f else step * 0.5f
+                    for (x in step / 2 until w.toInt() step step) {
+                        val edgeFactor = Math.max(Math.abs(x - w * 0.5f) / (w * 0.5f), Math.abs(y - h * 0.5f) / (h * 0.5f))
+                        if (edgeFactor > 0.58f) {
+                            canvas.drawCircle(x.toFloat() + xOff, y.toFloat(), dpToPx(1.5f), dotPaint)
+                        }
+                    }
+                    row++
+                }
+                val inkFrame = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    style = Paint.Style.STROKE
+                    strokeWidth = dpToPx(2.5f)
+                    color = Color.parseColor("#DD0F172A")
+                }
+                canvas.drawRect(dpToPx(10f), dpToPx(10f), w - dpToPx(10f), h - dpToPx(10f), inkFrame)
+            }
+            "pop_art_print" -> {
+                // Pop-Art Print: retro Ben-Day print dots + heavy comic ink outline
+                val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    style = Paint.Style.FILL
+                    color = Color.parseColor("#3CEC4899")
+                }
+                val step = dpToPx(12f).toInt().coerceAtLeast(11)
+                var row = 0
+                for (y in step / 2 until h.toInt() step step) {
+                    val xOff = if (row % 2 == 0) 0f else step * 0.5f
+                    for (x in step / 2 until w.toInt() step step) {
+                        dotPaint.color = if ((x + y) % 2 == 0) Color.parseColor("#3CEC4899") else Color.parseColor("#3C06B6D4")
+                        canvas.drawCircle(x.toFloat() + xOff, y.toFloat(), dpToPx(2.2f), dotPaint)
+                    }
+                    row++
+                }
+                val outline = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    style = Paint.Style.STROKE
+                    strokeWidth = dpToPx(5f)
+                    color = Color.parseColor("#E609090B")
+                }
+                canvas.drawRect(dpToPx(4f), dpToPx(4f), w - dpToPx(4f), h - dpToPx(4f), outline)
+            }
+            "line_art_minimalist" -> {
+                // Line Art (Minimalist): bright paper wash + pure black single-line ink border
+                filterGradingPaint.color = Color.parseColor("#28FFFFFF")
+                canvas.drawRect(0f, 0f, w, h, filterGradingPaint)
+                val penPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    style = Paint.Style.STROKE
+                    strokeWidth = dpToPx(1.8f)
+                    color = Color.parseColor("#CC0A0A0A")
+                }
+                canvas.drawRect(dpToPx(14f), dpToPx(14f), w - dpToPx(14f), h - dpToPx(14f), penPaint)
+            }
+            "ligne_claire" -> {
+                // Ligne Claire: soft pastel wash + uniform weight European comic ink border
+                filterSecondaryPaint.shader = LinearGradient(
+                    0f, 0f, w, h,
+                    intArrayOf(
+                        Color.parseColor("#24FDE68A"),
+                        Color.parseColor("#22BAE6FD"),
+                        Color.parseColor("#24FBCFE8")
+                    ),
+                    floatArrayOf(0f, 0.5f, 1f),
+                    Shader.TileMode.CLAMP
+                )
+                canvas.drawRect(0f, 0f, w, h, filterSecondaryPaint)
+                filterSecondaryPaint.shader = null
+                val lignePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    style = Paint.Style.STROKE
+                    strokeWidth = dpToPx(2.4f)
+                    color = Color.parseColor("#D918181B")
+                }
+                canvas.drawRect(dpToPx(12f), dpToPx(12f), w - dpToPx(12f), h - dpToPx(12f), lignePaint)
+            }
+            "clay_vinyl_3d" -> {
+                // 3D Clay / Vinyl: smooth rounded studio specular highlight + soft ambient sculpted vignette
+                filterSecondaryPaint.shader = RadialGradient(
+                    w * 0.36f, h * 0.28f, Math.max(w, h) * 0.46f,
+                    intArrayOf(
+                        Color.parseColor("#54FFFFFF"),
+                        Color.parseColor("#22E0F2FE"),
+                        Color.TRANSPARENT
+                    ),
+                    floatArrayOf(0f, 0.45f, 1f),
+                    Shader.TileMode.CLAMP
+                )
+                canvas.drawRect(0f, 0f, w, h, filterSecondaryPaint)
+                filterSecondaryPaint.shader = RadialGradient(
+                    w * 0.5f, h * 0.48f, Math.max(w, h) * 0.72f,
+                    intArrayOf(Color.TRANSPARENT, Color.parseColor("#580F172A")),
+                    floatArrayOf(0.45f, 1f),
+                    Shader.TileMode.CLAMP
+                )
+                canvas.drawRect(0f, 0f, w, h, filterSecondaryPaint)
+                filterSecondaryPaint.shader = null
+            }
         }
 
         // 1. Film Grain (Animated 35mm emulsion noise + fine Ilford B&W grain + Vintage Super 8 + 16mm Docu)
