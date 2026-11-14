@@ -458,6 +458,18 @@ class MainActivity : AppCompatActivity() {
         viewBinding.btnEffectMotionBlur.setOnClickListener { setShootingEffect("motion_blur") }
         viewBinding.btnEffectHorizonLock.setOnClickListener { setShootingEffect("action_stabilization") }
         viewBinding.btnEffectSuper8.setOnClickListener { setShootingEffect("vintage_super8") }
+        viewBinding.btnEffectOilCanvas.setOnClickListener { setShootingEffect("oil_canvas") }
+        viewBinding.btnEffectCharcoalSketch.setOnClickListener { setShootingEffect("charcoal_sketch") }
+        viewBinding.btnEffectWatercolorWash.setOnClickListener { setShootingEffect("watercolor_wash") }
+        viewBinding.btnEffectInkLine.setOnClickListener { setShootingEffect("ink_and_line") }
+        viewBinding.btnEffectPastelChalk.setOnClickListener { setShootingEffect("pastel_chalk") }
+        viewBinding.btnEffectHalftonePrint.setOnClickListener { setShootingEffect("halftone_print") }
+        viewBinding.btnEffectCyanotype.setOnClickListener { setShootingEffect("cyanotype") }
+        viewBinding.btnEffectWoodcut.setOnClickListener { setShootingEffect("woodcut_engraving") }
+        viewBinding.btnEffectLithograph.setOnClickListener { setShootingEffect("lithograph") }
+        viewBinding.btnEffectPrism.setOnClickListener { setShootingEffect("prism_refraction") }
+        viewBinding.btnEffectKaleidoscope.setOnClickListener { setShootingEffect("kaleidoscope") }
+        viewBinding.btnEffectSolarize.setOnClickListener { setShootingEffect("solarize") }
 
         viewBinding.switchFilmGrain.setOnCheckedChangeListener { _, isChecked ->
             viewBinding.proOverlayView.enableFilmGrain = isChecked
@@ -624,7 +636,7 @@ class MainActivity : AppCompatActivity() {
 
         // ImageCapture Use Case
         imageCapture = ImageCapture.Builder()
-            .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
+            .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
             .setFlashMode(flashMode)
             .build()
 
@@ -632,8 +644,8 @@ class MainActivity : AppCompatActivity() {
         val recorder = Recorder.Builder()
             .setQualitySelector(
                 QualitySelector.from(
-                    Quality.FHD,
-                    FallbackStrategy.lowerQualityOrHigherThan(Quality.FHD)
+                    Quality.HD,
+                    FallbackStrategy.lowerQualityOrHigherThan(Quality.HD)
                 )
             )
             .build()
@@ -1233,6 +1245,18 @@ class MainActivity : AppCompatActivity() {
         "motion_blur" -> "MOTION BLUR"
         "action_stabilization" -> "HORIZON LOCK"
         "vintage_super8" -> "VINTAGE SUPER 8"
+        "oil_canvas" -> "OIL CANVAS"
+        "charcoal_sketch" -> "CHARCOAL SKETCH"
+        "watercolor_wash" -> "WATERCOLOR WASH"
+        "ink_and_line" -> "INK & LINE"
+        "pastel_chalk" -> "PASTEL CHALK"
+        "halftone_print" -> "HALFTONE PRINT"
+        "cyanotype" -> "CYANOTYPE"
+        "woodcut_engraving" -> "WOODCUT ENGRAVING"
+        "lithograph" -> "LITHOGRAPH"
+        "prism_refraction" -> "PRISM REFRACTION"
+        "kaleidoscope" -> "KALEIDOSCOPE"
+        "solarize" -> "SOLARIZE (SABATTIER)"
         else -> "OFF"
     }
 
@@ -1288,12 +1312,18 @@ class MainActivity : AppCompatActivity() {
         val bri = viewBinding.proOverlayView.liveBrightnessPercent
         val con = viewBinding.proOverlayView.liveContrastPercent
         val sat = viewBinding.proOverlayView.liveSaturationPercent
+        val artColorEffects = setOf(
+            "oil_canvas", "charcoal_sketch", "watercolor_wash", "ink_and_line",
+            "pastel_chalk", "halftone_print", "cyanotype", "woodcut_engraving",
+            "lithograph", "prism_refraction", "kaleidoscope", "solarize"
+        )
         val isIdentity = currentFilterName == "normal" && bri == 0 && con == 0 && sat == 0 &&
             currentShootingEffect != "night_sight" &&
             currentShootingEffect != "tilt_shift" &&
             currentShootingEffect != "macro_focus" &&
             currentShootingEffect != "double_exposure" &&
-            currentShootingEffect != "vintage_super8"
+            currentShootingEffect != "vintage_super8" &&
+            !artColorEffects.contains(currentShootingEffect)
 
         if (isIdentity) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -1583,6 +1613,116 @@ class MainActivity : AppCompatActivity() {
                     0f, 0f, 0f, 1f, 0f
                 )))
             }
+            "oil_canvas" -> {
+                combined.postConcat(ColorMatrix().apply { setSaturation(1.42f) })
+                val c = 1.20f
+                val t = (-0.5f * c + 0.5f) * 255f + 4f
+                combined.postConcat(ColorMatrix(floatArrayOf(
+                    c, 0f, 0f, 0f, t,
+                    0f, c, 0f, 0f, t,
+                    0f, 0f, c, 0f, t,
+                    0f, 0f, 0f, 1f, 0f
+                )))
+            }
+            "charcoal_sketch" -> {
+                combined.postConcat(ColorMatrix().apply { setSaturation(0f) })
+                val c = 1.65f
+                val t = (-0.5f * c + 0.5f) * 255f + 22f
+                combined.postConcat(ColorMatrix(floatArrayOf(
+                    c, 0f, 0f, 0f, t,
+                    0f, c, 0f, 0f, t,
+                    0f, 0f, c, 0f, t,
+                    0f, 0f, 0f, 1f, 0f
+                )))
+            }
+            "watercolor_wash" -> {
+                combined.postConcat(ColorMatrix().apply { setSaturation(1.26f) })
+                val c = 0.90f
+                val t = (-0.5f * c + 0.5f) * 255f + 18f
+                combined.postConcat(ColorMatrix(floatArrayOf(
+                    c, 0f, 0f, 0f, t,
+                    0f, c, 0f, 0f, t,
+                    0f, 0f, c, 0f, t,
+                    0f, 0f, 0f, 1f, 0f
+                )))
+            }
+            "ink_and_line" -> {
+                combined.postConcat(ColorMatrix().apply { setSaturation(0f) })
+                val c = 2.45f
+                val t = (-0.5f * c + 0.5f) * 255f + 16f
+                combined.postConcat(ColorMatrix(floatArrayOf(
+                    c, 0f, 0f, 0f, t,
+                    0f, c, 0f, 0f, t,
+                    0f, 0f, c, 0f, t,
+                    0f, 0f, 0f, 1f, 0f
+                )))
+            }
+            "pastel_chalk" -> {
+                combined.postConcat(ColorMatrix().apply { setSaturation(0.78f) })
+                val c = 0.82f
+                val t = (-0.5f * c + 0.5f) * 255f + 28f
+                combined.postConcat(ColorMatrix(floatArrayOf(
+                    c, 0f, 0f, 0f, t,
+                    0f, c, 0f, 0f, t,
+                    0f, 0f, c, 0f, t,
+                    0f, 0f, 0f, 1f, 0f
+                )))
+            }
+            "halftone_print" -> {
+                combined.postConcat(ColorMatrix().apply { setSaturation(0.85f) })
+                val c = 1.40f
+                val t = (-0.5f * c + 0.5f) * 255f
+                combined.postConcat(ColorMatrix(floatArrayOf(
+                    c, 0f, 0f, 0f, t,
+                    0f, c, 0f, 0f, t,
+                    0f, 0f, c, 0f, t,
+                    0f, 0f, 0f, 1f, 0f
+                )))
+            }
+            "cyanotype" -> {
+                // Historic Prussian-blue duotone architectural blueprint mapping
+                combined.postConcat(ColorMatrix().apply { setSaturation(0f) })
+                combined.postConcat(ColorMatrix(floatArrayOf(
+                    0.82f, 0f, 0f, 0f, 8f,
+                    0f, 0.92f, 0f, 0f, 34f,
+                    0f, 0f, 1.15f, 0f, 74f,
+                    0f, 0f, 0f, 1f, 0f
+                )))
+            }
+            "woodcut_engraving" -> {
+                combined.postConcat(ColorMatrix().apply { setSaturation(0f) })
+                val c = 2.30f
+                val t = (-0.5f * c + 0.5f) * 255f + 6f
+                combined.postConcat(ColorMatrix(floatArrayOf(
+                    c, 0f, 0f, 0f, t,
+                    0f, c, 0f, 0f, t,
+                    0f, 0f, c, 0f, t,
+                    0f, 0f, 0f, 1f, 0f
+                )))
+            }
+            "lithograph" -> {
+                combined.postConcat(ColorMatrix().apply { setSaturation(0.36f) })
+                val c = 1.32f
+                val t = (-0.5f * c + 0.5f) * 255f + 8f
+                combined.postConcat(ColorMatrix(floatArrayOf(
+                    c, 0f, 0f, 0f, t + 4f,
+                    0f, c, 0f, 0f, t + 2f,
+                    0f, 0f, c, 0f, t - 4f,
+                    0f, 0f, 0f, 1f, 0f
+                )))
+            }
+            "prism_refraction", "kaleidoscope" -> {
+                combined.postConcat(ColorMatrix().apply { setSaturation(1.24f) })
+            }
+            "solarize" -> {
+                // Surreal metallic darkroom highlight-inversion tone curve
+                combined.postConcat(ColorMatrix(floatArrayOf(
+                    -0.85f, 0.15f, 0.25f, 0f, 185f,
+                    0.15f, -0.82f, 0.25f, 0f, 192f,
+                    0.20f, 0.20f, -0.78f, 0f, 205f,
+                    0f, 0f, 0f, 1f, 0f
+                )))
+            }
         }
 
         // 2. Live Adjustment Sliders (Brightness / Contrast / Saturation)
@@ -1786,7 +1926,19 @@ class MainActivity : AppCompatActivity() {
         "dolly_zoom",
         "motion_blur",
         "action_stabilization",
-        "vintage_super8"
+        "vintage_super8",
+        "oil_canvas",
+        "charcoal_sketch",
+        "watercolor_wash",
+        "ink_and_line",
+        "pastel_chalk",
+        "halftone_print",
+        "cyanotype",
+        "woodcut_engraving",
+        "lithograph",
+        "prism_refraction",
+        "kaleidoscope",
+        "solarize"
     )
 
     private fun updateShootingEffectButtons() {
@@ -1812,7 +1964,19 @@ class MainActivity : AppCompatActivity() {
             viewBinding.btnEffectDollyZoom to "dolly_zoom",
             viewBinding.btnEffectMotionBlur to "motion_blur",
             viewBinding.btnEffectHorizonLock to "action_stabilization",
-            viewBinding.btnEffectSuper8 to "vintage_super8"
+            viewBinding.btnEffectSuper8 to "vintage_super8",
+            viewBinding.btnEffectOilCanvas to "oil_canvas",
+            viewBinding.btnEffectCharcoalSketch to "charcoal_sketch",
+            viewBinding.btnEffectWatercolorWash to "watercolor_wash",
+            viewBinding.btnEffectInkLine to "ink_and_line",
+            viewBinding.btnEffectPastelChalk to "pastel_chalk",
+            viewBinding.btnEffectHalftonePrint to "halftone_print",
+            viewBinding.btnEffectCyanotype to "cyanotype",
+            viewBinding.btnEffectWoodcut to "woodcut_engraving",
+            viewBinding.btnEffectLithograph to "lithograph",
+            viewBinding.btnEffectPrism to "prism_refraction",
+            viewBinding.btnEffectKaleidoscope to "kaleidoscope",
+            viewBinding.btnEffectSolarize to "solarize"
         )
         for ((btn, id) in effectButtons) {
             val isActive = id == currentShootingEffect
@@ -2605,6 +2769,248 @@ class MainActivity : AppCompatActivity() {
                     val gatePaint = Paint().apply { color = Color.parseColor("#E6060608") }
                     canvas.drawRect(0f, 0f, railW, fh, gatePaint)
                     canvas.drawRect(fw - fw * 0.015f, 0f, fw, fh, gatePaint)
+                }
+                "oil_canvas" -> {
+                    // Impasto painterly brushstrokes sampled from photo grid + canvas weave
+                    val cols = 38
+                    val rows = 50
+                    val sample = Bitmap.createScaledBitmap(finalBmp, cols, rows, true)
+                    val cellW = fw / cols
+                    val cellH = fh / rows
+                    val brushP = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; alpha = 155 }
+                    for (sy in 0 until rows) {
+                        for (sx in 0 until cols) {
+                            val px = sample.getPixel(sx, sy)
+                            val r = ((Color.red(px) / 28) * 28 + 14).coerceIn(0, 255)
+                            val g = ((Color.green(px) / 28) * 28 + 14).coerceIn(0, 255)
+                            val b = ((Color.blue(px) / 28) * 28 + 14).coerceIn(0, 255)
+                            brushP.color = Color.argb(165, r, g, b)
+                            val ang = ((r * 3 + g * 5 + sx * 17 + sy * 23) % 180).toFloat()
+                            canvas.save()
+                            canvas.translate((sx + 0.5f) * cellW, (sy + 0.5f) * cellH)
+                            canvas.rotate(ang)
+                            canvas.drawOval(RectF(-cellW * 0.9f, -cellH * 0.42f, cellW * 0.9f, cellH * 0.42f), brushP)
+                            canvas.restore()
+                        }
+                    }
+                    sample.recycle()
+                }
+                "charcoal_sketch", "ink_and_line" -> {
+                    // Sobel contour edge detection on paper base
+                    val sw = 240
+                    val sh = (240f * (fh / fw)).toInt().coerceIn(120, 420)
+                    val small = Bitmap.createScaledBitmap(finalBmp, sw, sh, true)
+                    val pxArr = IntArray(sw * sh)
+                    small.getPixels(pxArr, 0, sw, 0, 0, sw, sh)
+                    val outArr = IntArray(sw * sh)
+                    val isInk = currentShootingEffect == "ink_and_line"
+                    fun lumAt(px: Int, py: Int): Float {
+                        val cx = px.coerceIn(0, sw - 1)
+                        val cy = py.coerceIn(0, sh - 1)
+                        val c = pxArr[cy * sw + cx]
+                        return 0.299f * Color.red(c) + 0.587f * Color.green(c) + 0.114f * Color.blue(c)
+                    }
+                    for (y in 0 until sh) {
+                        for (x in 0 until sw) {
+                            val gx = -lumAt(x - 1, y - 1) + lumAt(x + 1, y - 1) - 2f * lumAt(x - 1, y) + 2f * lumAt(x + 1, y) - lumAt(x - 1, y + 1) + lumAt(x + 1, y + 1)
+                            val gy = -lumAt(x - 1, y - 1) - 2f * lumAt(x, y - 1) - lumAt(x + 1, y - 1) + lumAt(x - 1, y + 1) + 2f * lumAt(x, y + 1) + lumAt(x + 1, y + 1)
+                            val edge = Math.sqrt((gx * gx + gy * gy).toDouble()).toFloat()
+                            val base = lumAt(x, y)
+                            if (isInk) {
+                                val v = if (edge > 66f || base < 38f) 16 else 252
+                                outArr[y * sw + x] = Color.rgb(v, v, v)
+                            } else {
+                                val shade = if (base < 88f && (x + y) % 4 == 0) 70f else base * 0.28f + 165f
+                                val ink = (shade - edge * 0.92f).toInt().coerceIn(22, 244)
+                                outArr[y * sw + x] = Color.rgb((ink + 4).coerceAtMost(248), (ink + 1).coerceAtMost(244), (ink - 6).coerceAtLeast(18))
+                            }
+                        }
+                    }
+                    val artBmp = Bitmap.createBitmap(outArr, sw, sh, Bitmap.Config.ARGB_8888)
+                    val up = Bitmap.createScaledBitmap(artBmp, finalBmp.width, finalBmp.height, true)
+                    canvas.drawBitmap(up, 0f, 0f, null)
+                    artBmp.recycle()
+                    up.recycle()
+                    small.recycle()
+                }
+                "watercolor_wash", "pastel_chalk" -> {
+                    // Soft downsampled pigment bleed wash + warm matte paper/chalk finish
+                    val smallW = (finalBmp.width / 18).coerceAtLeast(24)
+                    val smallH = (finalBmp.height / 18).coerceAtLeast(24)
+                    val down = Bitmap.createScaledBitmap(finalBmp, smallW, smallH, true)
+                    val soft = Bitmap.createScaledBitmap(down, finalBmp.width, finalBmp.height, true)
+                    down.recycle()
+                    val blendP = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                        alpha = if (currentShootingEffect == "watercolor_wash") 145 else 135
+                    }
+                    canvas.drawBitmap(soft, 0f, 0f, blendP)
+                    soft.recycle()
+                    val washP = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                        shader = LinearGradient(
+                            0f, 0f, fw, fh,
+                            if (currentShootingEffect == "watercolor_wash")
+                                intArrayOf(Color.parseColor("#24FBBF24"), Color.parseColor("#2238BDF8"), Color.parseColor("#2CF472B6"))
+                            else
+                                intArrayOf(Color.parseColor("#32FBCFE8"), Color.parseColor("#24FEF08A"), Color.parseColor("#32BAE6FD")),
+                            floatArrayOf(0f, 0.5f, 1f),
+                            Shader.TileMode.CLAMP
+                        )
+                    }
+                    canvas.drawRect(0f, 0f, fw, fh, washP)
+                }
+                "halftone_print" -> {
+                    // Newspaper / graphic novel dot grid sampled from luminance
+                    val cols = 52
+                    val rows = (52f * (fh / fw)).toInt().coerceIn(36, 90)
+                    val sample = Bitmap.createScaledBitmap(finalBmp, cols, rows, true)
+                    canvas.drawColor(Color.parseColor("#F6F1E4"))
+                    val cellW = fw / cols
+                    val cellH = fh / rows
+                    val dotP = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                        style = Paint.Style.FILL
+                        color = Color.parseColor("#12161C")
+                    }
+                    for (sy in 0 until rows) {
+                        val xOff = if (sy % 2 == 0) 0f else cellW * 0.25f
+                        for (sx in 0 until cols) {
+                            val px = sample.getPixel(sx, sy)
+                            val luma = (0.299f * Color.red(px) + 0.587f * Color.green(px) + 0.114f * Color.blue(px)) / 255f
+                            val rad = (1f - luma) * (Math.min(cellW, cellH) * 0.54f)
+                            if (rad > 0.8f) {
+                                canvas.drawCircle((sx + 0.5f) * cellW + xOff, (sy + 0.5f) * cellH, rad, dotP)
+                            }
+                        }
+                    }
+                    sample.recycle()
+                }
+                "cyanotype" -> {
+                    // Deep Prussian-blue architectural blueprint conversion (#08224A -> #E0F2FE)
+                    val sw = 320
+                    val sh = (320f * (fh / fw)).toInt().coerceIn(180, 560)
+                    val small = Bitmap.createScaledBitmap(finalBmp, sw, sh, true)
+                    val pxArr = IntArray(sw * sh)
+                    small.getPixels(pxArr, 0, sw, 0, 0, sw, sh)
+                    for (i in pxArr.indices) {
+                        val c = pxArr[i]
+                        val l = (0.299f * Color.red(c) + 0.587f * Color.green(c) + 0.114f * Color.blue(c)) / 255f
+                        pxArr[i] = Color.rgb((8 + l * 216).toInt(), (34 + l * 208).toInt(), (78 + l * 176).toInt())
+                    }
+                    val artBmp = Bitmap.createBitmap(pxArr, sw, sh, Bitmap.Config.ARGB_8888)
+                    val up = Bitmap.createScaledBitmap(artBmp, finalBmp.width, finalBmp.height, true)
+                    canvas.drawBitmap(up, 0f, 0f, null)
+                    artBmp.recycle(); up.recycle(); small.recycle()
+                    val bpPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                        style = Paint.Style.STROKE
+                        strokeWidth = (fw * 0.003f).coerceAtLeast(3f)
+                        color = Color.parseColor("#88E0F2FE")
+                    }
+                    canvas.drawRect(fw * 0.025f, fh * 0.025f, fw * 0.975f, fh * 0.975f, bpPaint)
+                }
+                "woodcut_engraving" -> {
+                    // Carved high-contrast relief ink block with horizontal woodcut grooves
+                    val sw = 300
+                    val sh = (300f * (fh / fw)).toInt().coerceIn(160, 520)
+                    val small = Bitmap.createScaledBitmap(finalBmp, sw, sh, true)
+                    val pxArr = IntArray(sw * sh)
+                    small.getPixels(pxArr, 0, sw, 0, 0, sw, sh)
+                    for (y in 0 until sh) {
+                        val groove = if (y % 3 == 0) 18f else 0f
+                        for (x in 0 until sw) {
+                            val c = pxArr[y * sw + x]
+                            val l = 0.299f * Color.red(c) + 0.587f * Color.green(c) + 0.114f * Color.blue(c)
+                            val v = if (l + groove > 122f) 242 else 12
+                            pxArr[y * sw + x] = Color.rgb(v, (v - 4).coerceAtLeast(10), (v - 10).coerceAtLeast(8))
+                        }
+                    }
+                    val artBmp = Bitmap.createBitmap(pxArr, sw, sh, Bitmap.Config.ARGB_8888)
+                    val up = Bitmap.createScaledBitmap(artBmp, finalBmp.width, finalBmp.height, true)
+                    canvas.drawBitmap(up, 0f, 0f, null)
+                    artBmp.recycle(); up.recycle(); small.recycle()
+                }
+                "lithograph" -> {
+                    // Muted museum ink tones + fine limestone stipple grain
+                    val lithoCm = ColorMatrix().apply {
+                        setSaturation(0.36f)
+                        postConcat(ColorMatrix(floatArrayOf(
+                            1.28f, 0f, 0f, 0f, -24f,
+                            0f, 1.26f, 0f, 0f, -26f,
+                            0f, 0f, 1.22f, 0f, -30f,
+                            0f, 0f, 0f, 1f, 0f
+                        )))
+                    }
+                    val copy = finalBmp.copy(Bitmap.Config.ARGB_8888, false)
+                    val p = Paint(Paint.ANTI_ALIAS_FLAG).apply { colorFilter = ColorMatrixColorFilter(lithoCm) }
+                    canvas.drawBitmap(copy, 0f, 0f, p)
+                    copy.recycle()
+                    val stipP = Paint(Paint.ANTI_ALIAS_FLAG)
+                    val rng = java.util.Random(77L)
+                    for (i in 0..900) {
+                        stipP.color = Color.argb(48, 38, 35, 32)
+                        canvas.drawCircle(rng.nextFloat() * fw, rng.nextFloat() * fh, (fw * 0.0014f).coerceAtLeast(1.5f), stipP)
+                    }
+                }
+                "prism_refraction" -> {
+                    // Spectral edge chromatic dispersion ghosting + rainbow corner caustics
+                    val srcCopy = finalBmp.copy(Bitmap.Config.ARGB_8888, false)
+                    val p = Paint(Paint.ANTI_ALIAS_FLAG).apply { alpha = 78 }
+                    canvas.drawBitmap(srcCopy, -fw * 0.018f, -fh * 0.01f, p)
+                    canvas.drawBitmap(srcCopy, fw * 0.018f, fh * 0.01f, p)
+                    srcCopy.recycle()
+                    val prismP = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                        shader = LinearGradient(
+                            0f, 0f, fw * 0.5f, fh * 0.5f,
+                            intArrayOf(Color.parseColor("#66F43F5E"), Color.parseColor("#44FACC15"), Color.parseColor("#5522D3EE"), Color.TRANSPARENT),
+                            floatArrayOf(0f, 0.35f, 0.7f, 1f),
+                            Shader.TileMode.CLAMP
+                        )
+                    }
+                    canvas.drawRect(0f, 0f, fw, fh, prismP)
+                }
+                "kaleidoscope" -> {
+                    // 8-fold radial symmetrical mandala mirrored around center
+                    val srcCopy = finalBmp.copy(Bitmap.Config.ARGB_8888, false)
+                    canvas.drawColor(Color.parseColor("#020617"))
+                    val cx = fw * 0.5f
+                    val cy = fh * 0.5f
+                    val rad = Math.hypot(fw.toDouble(), fh.toDouble()).toFloat() * 0.6f
+                    val wedge = Path().apply {
+                        moveTo(0f, 0f)
+                        lineTo(rad, -rad * Math.tan(Math.PI / 8.0).toFloat() * 1.05f)
+                        lineTo(rad, rad * Math.tan(Math.PI / 8.0).toFloat() * 1.05f)
+                        close()
+                    }
+                    for (i in 0..7) {
+                        canvas.save()
+                        canvas.translate(cx, cy)
+                        canvas.rotate(i * 45f)
+                        canvas.clipPath(wedge)
+                        if (i % 2 == 1) canvas.scale(1f, -1f)
+                        canvas.drawBitmap(srcCopy, -cx, -cy, null)
+                        canvas.restore()
+                    }
+                    srcCopy.recycle()
+                }
+                "solarize" -> {
+                    // Authentic Sabattier darkroom curve reversing bright highlights into metallic silver tones
+                    val sw = 360
+                    val sh = (360f * (fh / fw)).toInt().coerceIn(200, 620)
+                    val small = Bitmap.createScaledBitmap(finalBmp, sw, sh, true)
+                    val pxArr = IntArray(sw * sh)
+                    small.getPixels(pxArr, 0, sw, 0, 0, sw, sh)
+                    for (i in pxArr.indices) {
+                        val c = pxArr[i]
+                        val r = Color.red(c)
+                        val g = Color.green(c)
+                        val b = Color.blue(c)
+                        val sr = if (r > 128) (255 - ((r - 128) * 1.9f).toInt()).coerceIn(0, 255) else r
+                        val sg = if (g > 128) (255 - ((g - 128) * 1.85f).toInt()).coerceIn(0, 255) else g
+                        val sb = if (b > 128) (255 - ((b - 128) * 1.75f).toInt()).coerceIn(0, 255) else b
+                        pxArr[i] = Color.rgb(sr, sg, sb)
+                    }
+                    val artBmp = Bitmap.createBitmap(pxArr, sw, sh, Bitmap.Config.ARGB_8888)
+                    val up = Bitmap.createScaledBitmap(artBmp, finalBmp.width, finalBmp.height, true)
+                    canvas.drawBitmap(up, 0f, 0f, null)
+                    artBmp.recycle(); up.recycle(); small.recycle()
                 }
             }
 

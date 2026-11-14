@@ -1980,6 +1980,239 @@ class ProOverlayView @JvmOverloads constructor(
                 }
                 needsAnim = true
             }
+            "oil_canvas" -> {
+                // Fine linen weave + textured impasto oil brushstroke dabs
+                val weavePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    style = Paint.Style.STROKE
+                    strokeWidth = dpToPx(0.8f)
+                    color = Color.parseColor("#18FFF8E8")
+                }
+                val step = dpToPx(9f).toInt().coerceAtLeast(8)
+                for (gx in 0 until w.toInt() step step) {
+                    canvas.drawLine(gx.toFloat(), 0f, gx.toFloat(), h, weavePaint)
+                }
+                for (gy in 0 until h.toInt() step step) {
+                    canvas.drawLine(0f, gy.toFloat(), w, gy.toFloat(), weavePaint)
+                }
+                val dabPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    style = Paint.Style.STROKE
+                    strokeCap = Paint.Cap.ROUND
+                    strokeWidth = dpToPx(8f)
+                }
+                dabPaint.color = Color.parseColor("#24FDE68A")
+                canvas.drawArc(RectF(w * 0.08f, h * 0.14f, w * 0.45f, h * 0.36f), 15f, 110f, false, dabPaint)
+                dabPaint.color = Color.parseColor("#2238BDF8")
+                canvas.drawArc(RectF(w * 0.55f, h * 0.56f, w * 0.92f, h * 0.84f), 195f, 120f, false, dabPaint)
+            }
+            "charcoal_sketch" -> {
+                // Warm sketch paper wash + graphite diagonal cross-hatching strokes
+                filterGradingPaint.color = Color.parseColor("#26F4EFE6")
+                canvas.drawRect(0f, 0f, w, h, filterGradingPaint)
+                val hatchPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    style = Paint.Style.STROKE
+                    strokeWidth = dpToPx(1.2f)
+                    color = Color.parseColor("#321E293B")
+                }
+                val step = dpToPx(18f).toInt().coerceAtLeast(16)
+                for (i in -h.toInt() until w.toInt() step step) {
+                    canvas.drawLine(i.toFloat(), 0f, i + h * 0.35f, h, hatchPaint)
+                }
+                hatchPaint.strokeWidth = dpToPx(3f)
+                hatchPaint.color = Color.parseColor("#66334155")
+                canvas.drawRect(dpToPx(6f), dpToPx(6f), w - dpToPx(6f), h - dpToPx(6f), hatchPaint)
+            }
+            "watercolor_wash" -> {
+                // Soft pastel pigment bleeding wash & cold-press deckled frame
+                filterSecondaryPaint.shader = RadialGradient(
+                    w * 0.25f, h * 0.28f, Math.max(w, h) * 0.74f,
+                    intArrayOf(
+                        Color.parseColor("#2CFBBF24"),
+                        Color.parseColor("#2838BDF8"),
+                        Color.parseColor("#38F472B6")
+                    ),
+                    floatArrayOf(0f, 0.55f, 1f),
+                    Shader.TileMode.CLAMP
+                )
+                canvas.drawRect(0f, 0f, w, h, filterSecondaryPaint)
+                filterSecondaryPaint.shader = null
+                val paperFrame = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    style = Paint.Style.STROKE
+                    strokeWidth = dpToPx(10f)
+                    color = Color.parseColor("#66FFFBF2")
+                }
+                canvas.drawRect(dpToPx(5f), dpToPx(5f), w - dpToPx(5f), h - dpToPx(5f), paperFrame)
+            }
+            "ink_and_line" -> {
+                // Minimalist pen-and-ink drafting frame + crisp corner ink flourish rules
+                filterGradingPaint.color = Color.parseColor("#18FFFFFF")
+                canvas.drawRect(0f, 0f, w, h, filterGradingPaint)
+                val inkPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    style = Paint.Style.STROKE
+                    strokeWidth = dpToPx(2.2f)
+                    color = Color.parseColor("#CC0F172A")
+                }
+                val pad = dpToPx(14f)
+                canvas.drawRect(pad, pad, w - pad, h - pad, inkPaint)
+                inkPaint.strokeWidth = dpToPx(1f)
+                canvas.drawRect(pad + dpToPx(5f), pad + dpToPx(5f), w - pad - dpToPx(5f), h - pad - dpToPx(5f), inkPaint)
+            }
+            "pastel_chalk" -> {
+                // Soft powdery matte chalk veil + pastel dust speckles
+                filterSecondaryPaint.shader = LinearGradient(
+                    0f, 0f, w, h,
+                    intArrayOf(
+                        Color.parseColor("#34FBCFE8"),
+                        Color.parseColor("#22FEF08A"),
+                        Color.parseColor("#34BAE6FD")
+                    ),
+                    floatArrayOf(0f, 0.5f, 1f),
+                    Shader.TileMode.CLAMP
+                )
+                canvas.drawRect(0f, 0f, w, h, filterSecondaryPaint)
+                filterSecondaryPaint.shader = null
+                val chalkPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#44FFFFFF") }
+                val rng = java.util.Random(42L)
+                for (i in 0..90) {
+                    canvas.drawCircle(rng.nextFloat() * w, rng.nextFloat() * h, dpToPx(1.6f), chalkPaint)
+                }
+            }
+            "halftone_print" -> {
+                // Newspaper / graphic novel staggered halftone ink dot screen
+                filterGradingPaint.color = Color.parseColor("#1AF7F3E8")
+                canvas.drawRect(0f, 0f, w, h, filterGradingPaint)
+                val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    style = Paint.Style.FILL
+                    color = Color.parseColor("#420F172A")
+                }
+                val step = dpToPx(10f).toInt().coerceAtLeast(10)
+                var row = 0
+                for (y in step / 2 until h.toInt() step step) {
+                    val xOff = if (row % 2 == 0) 0f else step * 0.5f
+                    for (x in step / 2 until w.toInt() step step) {
+                        canvas.drawCircle(x.toFloat() + xOff, y.toFloat(), dpToPx(2.0f), dotPaint)
+                    }
+                    row++
+                }
+            }
+            "cyanotype" -> {
+                // Historic Prussian-blue blueprint overlay + white architectural blueprint border
+                filterGradingPaint.color = Color.parseColor("#380C2D57")
+                canvas.drawRect(0f, 0f, w, h, filterGradingPaint)
+                val gridPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    style = Paint.Style.STROKE
+                    strokeWidth = dpToPx(1.2f)
+                    color = Color.parseColor("#66E0F2FE")
+                }
+                val pad = dpToPx(16f)
+                canvas.drawRect(pad, pad, w - pad, h - pad, gridPaint)
+                val badgePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.parseColor("#CCE0F2FE")
+                    textSize = dpToPx(10f)
+                    typeface = Typeface.MONOSPACE
+                    isFakeBoldText = true
+                }
+                canvas.drawText("CYANOTYPE · PRUSSIAN BLUEPRINT", pad + dpToPx(8f), h - dpToPx(125f), badgePaint)
+            }
+            "woodcut_engraving" -> {
+                // Bold horizontal carved relief lines & thick woodblock ink border
+                val groovePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    style = Paint.Style.STROKE
+                    strokeWidth = dpToPx(1.5f)
+                    color = Color.parseColor("#38020617")
+                }
+                val step = dpToPx(7f).toInt().coerceAtLeast(6)
+                for (y in 0 until h.toInt() step step) {
+                    canvas.drawLine(0f, y.toFloat(), w, y.toFloat(), groovePaint)
+                }
+                val blockBorder = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    style = Paint.Style.STROKE
+                    strokeWidth = dpToPx(10f)
+                    color = Color.parseColor("#CC09090B")
+                }
+                canvas.drawRect(dpToPx(5f), dpToPx(5f), w - dpToPx(5f), h - dpToPx(5f), blockBorder)
+            }
+            "lithograph" -> {
+                // Muted stone-print limestone stipple grain & archival plate margin
+                filterGradingPaint.color = Color.parseColor("#20E2DCCE")
+                canvas.drawRect(0f, 0f, w, h, filterGradingPaint)
+                val stipple = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#34262320") }
+                val rng = java.util.Random(77L)
+                for (i in 0..160) {
+                    canvas.drawCircle(rng.nextFloat() * w, rng.nextFloat() * h, dpToPx(1.3f), stipple)
+                }
+                val platePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    style = Paint.Style.STROKE
+                    strokeWidth = dpToPx(10f)
+                    color = Color.parseColor("#66F5F2EB")
+                }
+                canvas.drawRect(dpToPx(5f), dpToPx(5f), w - dpToPx(5f), h - dpToPx(5f), platePaint)
+            }
+            "prism_refraction" -> {
+                // Rainbow glass dispersion caustics along frame corners
+                filterSecondaryPaint.shader = LinearGradient(
+                    0f, 0f, w * 0.45f, h * 0.45f,
+                    intArrayOf(
+                        Color.parseColor("#66F43F5E"),
+                        Color.parseColor("#4DFACC15"),
+                        Color.parseColor("#5C22D3EE"),
+                        Color.TRANSPARENT
+                    ),
+                    floatArrayOf(0f, 0.35f, 0.7f, 1f),
+                    Shader.TileMode.CLAMP
+                )
+                canvas.drawRect(0f, 0f, w, h, filterSecondaryPaint)
+
+                filterSecondaryPaint.shader = LinearGradient(
+                    w, h, w * 0.55f, h * 0.55f,
+                    intArrayOf(
+                        Color.parseColor("#66A855F7"),
+                        Color.parseColor("#5238BDF8"),
+                        Color.TRANSPARENT
+                    ),
+                    floatArrayOf(0f, 0.45f, 1f),
+                    Shader.TileMode.CLAMP
+                )
+                canvas.drawRect(0f, 0f, w, h, filterSecondaryPaint)
+                filterSecondaryPaint.shader = null
+            }
+            "kaleidoscope" -> {
+                // Symmetrical 8-axis geometric kaleidoscope facet reticle from lens center
+                val cx = w * 0.5f
+                val cy = h * 0.5f
+                val radius = Math.hypot(w.toDouble(), h.toDouble()).toFloat() * 0.55f
+                val facetPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    style = Paint.Style.STROKE
+                    strokeWidth = dpToPx(1.5f)
+                    color = Color.parseColor("#77FFFFFF")
+                }
+                val spin = (timeSec * 0.14).toFloat()
+                for (i in 0..3) {
+                    val ang = spin + i * (Math.PI / 4.0).toFloat()
+                    val dx = Math.cos(ang.toDouble()).toFloat() * radius
+                    val dy = Math.sin(ang.toDouble()).toFloat() * radius
+                    canvas.drawLine(cx - dx, cy - dy, cx + dx, cy + dy, facetPaint)
+                }
+                val ringR = Math.min(w, h) * 0.28f
+                facetPaint.color = Color.parseColor("#66E0F2FE")
+                canvas.drawCircle(cx, cy, ringR, facetPaint)
+                canvas.drawCircle(cx, cy, ringR * 0.5f, facetPaint)
+                needsAnim = true
+            }
+            "solarize" -> {
+                // Surreal Sabattier darkroom metallic silver highlight sheen
+                filterSecondaryPaint.shader = RadialGradient(
+                    w * 0.5f, h * 0.45f, Math.max(w, h) * 0.68f,
+                    intArrayOf(
+                        Color.parseColor("#24E2E8F0"),
+                        Color.parseColor("#2C38BDF8"),
+                        Color.parseColor("#4A0F172A")
+                    ),
+                    floatArrayOf(0f, 0.58f, 1f),
+                    Shader.TileMode.CLAMP
+                )
+                canvas.drawRect(0f, 0f, w, h, filterSecondaryPaint)
+                filterSecondaryPaint.shader = null
+            }
         }
 
         // 1. Film Grain (Animated 35mm emulsion noise + fine Ilford B&W grain + Vintage Super 8)

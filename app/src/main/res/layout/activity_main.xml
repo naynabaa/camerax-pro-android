@@ -3038,6 +3038,174 @@
                         android:fontFamily="monospace"
                         android:background="@drawable/bg_cinema_button_inactive" />
 
+                    <TextView
+                        android:id="@+id/btnEffectOilCanvas"
+                        android:layout_width="wrap_content"
+                        android:minWidth="82dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="6dp"
+                        android:paddingHorizontal="12dp"
+                        android:gravity="center"
+                        android:text="OIL CANVAS"
+                        android:textColor="#94A3B8"
+                        android:textSize="10sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+
+                    <TextView
+                        android:id="@+id/btnEffectCharcoalSketch"
+                        android:layout_width="wrap_content"
+                        android:minWidth="94dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="6dp"
+                        android:paddingHorizontal="12dp"
+                        android:gravity="center"
+                        android:text="CHARCOAL SKETCH"
+                        android:textColor="#94A3B8"
+                        android:textSize="10sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+
+                    <TextView
+                        android:id="@+id/btnEffectWatercolorWash"
+                        android:layout_width="wrap_content"
+                        android:minWidth="96dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="6dp"
+                        android:paddingHorizontal="12dp"
+                        android:gravity="center"
+                        android:text="WATERCOLOR WASH"
+                        android:textColor="#94A3B8"
+                        android:textSize="10sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+
+                    <TextView
+                        android:id="@+id/btnEffectInkLine"
+                        android:layout_width="wrap_content"
+                        android:minWidth="80dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="6dp"
+                        android:paddingHorizontal="12dp"
+                        android:gravity="center"
+                        android:text="INK &amp; LINE"
+                        android:textColor="#94A3B8"
+                        android:textSize="10sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+
+                    <TextView
+                        android:id="@+id/btnEffectPastelChalk"
+                        android:layout_width="wrap_content"
+                        android:minWidth="88dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="6dp"
+                        android:paddingHorizontal="12dp"
+                        android:gravity="center"
+                        android:text="PASTEL CHALK"
+                        android:textColor="#94A3B8"
+                        android:textSize="10sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+
+                    <TextView
+                        android:id="@+id/btnEffectHalftonePrint"
+                        android:layout_width="wrap_content"
+                        android:minWidth="90dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="6dp"
+                        android:paddingHorizontal="12dp"
+                        android:gravity="center"
+                        android:text="HALFTONE PRINT"
+                        android:textColor="#94A3B8"
+                        android:textSize="10sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+
+                    <TextView
+                        android:id="@+id/btnEffectCyanotype"
+                        android:layout_width="wrap_content"
+                        android:minWidth="82dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="6dp"
+                        android:paddingHorizontal="12dp"
+                        android:gravity="center"
+                        android:text="CYANOTYPE"
+                        android:textColor="#94A3B8"
+                        android:textSize="10sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+
+                    <TextView
+                        android:id="@+id/btnEffectWoodcut"
+                        android:layout_width="wrap_content"
+                        android:minWidth="82dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="6dp"
+                        android:paddingHorizontal="12dp"
+                        android:gravity="center"
+                        android:text="WOODCUT"
+                        android:textColor="#94A3B8"
+                        android:textSize="10sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+
+                    <TextView
+                        android:id="@+id/btnEffectLithograph"
+                        android:layout_width="wrap_content"
+                        android:minWidth="84dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="6dp"
+                        android:paddingHorizontal="12dp"
+                        android:gravity="center"
+                        android:text="LITHOGRAPH"
+                        android:textColor="#94A3B8"
+                        android:textSize="10sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+
+                    <TextView
+                        android:id="@+id/btnEffectPrism"
+                        android:layout_width="wrap_content"
+                        android:minWidth="94dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="6dp"
+                        android:paddingHorizontal="12dp"
+                        android:gravity="center"
+                        android:text="PRISM REFRACTION"
+                        android:textColor="#94A3B8"
+                        android:textSize="10sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+
+                    <TextView
+                        android:id="@+id/btnEffectKaleidoscope"
+                        android:layout_width="wrap_content"
+                        android:minWidth="88dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="6dp"
+                        android:paddingHorizontal="12dp"
+                        android:gravity="center"
+                        android:text="KALEIDOSCOPE"
+                        android:textColor="#94A3B8"
+                        android:textSize="10sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+
+                    <TextView
+                        android:id="@+id/btnEffectSolarize"
+                        android:layout_width="wrap_content"
+                        android:minWidth="80dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="6dp"
+                        android:paddingHorizontal="12dp"
+                        android:gravity="center"
+                        android:text="SOLARIZE"
+                        android:textColor="#94A3B8"
+                        android:textSize="10sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+
                     <LinearLayout
                         android:layout_width="wrap_content"
                         android:layout_height="36dp"
