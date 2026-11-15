@@ -20,7 +20,7 @@
         app:layout_constraintEnd_toEndOf="parent" />
 
     <!-- Real-Time MediaPipe AR Face Mesh & Lens Overlay View -->
-    <com.example.cameraxapp.ar.ARFaceOverlayView
+    <com.example.cameraxdemo.ar.ARFaceOverlayView
         android:id="@+id/arFaceOverlayView"
         android:layout_width="0dp"
         android:layout_height="0dp"
@@ -30,7 +30,7 @@
         app:layout_constraintEnd_toEndOf="@id/viewFinder" />
 
     <!-- High-Performance 60 FPS Pro Overlay View (Live Filters, Shaders, Effects, Grids) -->
-    <com.example.cameraxapp.overlay.ProOverlayView
+    <com.example.cameraxdemo.overlay.ProOverlayView
         android:id="@+id/proOverlayView"
         android:layout_width="0dp"
         android:layout_height="0dp"
@@ -2685,6 +2685,20 @@
                         android:textSize="10.5sp"
                         android:fontFamily="monospace"
                         android:background="@drawable/bg_cinema_button_inactive" />
+
+                    <TextView
+                        android:id="@+id/btnFilterComicBook"
+                        android:layout_width="wrap_content"
+                        android:minWidth="96dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="6dp"
+                        android:paddingHorizontal="12dp"
+                        android:gravity="center"
+                        android:text="COMIC BOOK"
+                        android:textColor="#94A3B8"
+                        android:textSize="10.5sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
                 </LinearLayout>
             </HorizontalScrollView>
 
@@ -2768,6 +2782,34 @@
                         android:gravity="center"
                         android:text="HUD"
                         android:textColor="#94A3B8"
+                        android:textSize="10sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+
+                    <TextView
+                        android:id="@+id/btnArComicFrame"
+                        android:layout_width="wrap_content"
+                        android:minWidth="92dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="6dp"
+                        android:paddingHorizontal="12dp"
+                        android:gravity="center"
+                        android:text="COMIC FRAME"
+                        android:textColor="#94A3B8"
+                        android:textSize="10sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+
+                    <TextView
+                        android:id="@+id/btnArComicOnomatopoeia"
+                        android:layout_width="wrap_content"
+                        android:minWidth="94dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="6dp"
+                        android:paddingHorizontal="12dp"
+                        android:gravity="center"
+                        android:text="POW! COMIC"
+                        android:textColor="#FACC15"
                         android:textSize="10sp"
                         android:fontFamily="monospace"
                         android:background="@drawable/bg_cinema_button_inactive" />
