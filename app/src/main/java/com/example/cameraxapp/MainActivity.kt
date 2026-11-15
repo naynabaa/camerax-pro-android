@@ -209,9 +209,9 @@ class MainActivity : AppCompatActivity() {
                 if (tv != null && tv.isAvailable) {
                     val vw = tv.width.coerceAtLeast(1)
                     val vh = tv.height.coerceAtLeast(1)
-                    val maxEdge = 220
-                    val sampleW = if (vw >= vh) maxEdge else Math.max(96, (maxEdge * vw / vh.toFloat()).toInt())
-                    val sampleH = if (vh >= vw) maxEdge else Math.max(96, (maxEdge * vh / vw.toFloat()).toInt())
+                    val maxEdge = 280
+                    val sampleW = if (vw >= vh) maxEdge else Math.max(108, (maxEdge * vw / vh.toFloat()).toInt())
+                    val sampleH = if (vh >= vw) maxEdge else Math.max(108, (maxEdge * vh / vw.toFloat()).toInt())
                     val frame = tv.getBitmap(sampleW, sampleH)
                     if (frame != null) {
                         val activeEffect = currentShootingEffect
@@ -321,6 +321,17 @@ class MainActivity : AppCompatActivity() {
     private val toonEffectIds = setOf(
         "cel_shaded_studio", "graphic_novel_noir", "manga_ink", "pop_art_print",
         "line_art_minimalist", "ligne_claire", "clay_vinyl_3d"
+    )
+    private val filterPresetOrder = listOf(
+        "normal",
+        "lut_rec709", "lut_flat_log", "lut_teal_orange", "lut_bleach_bypass",
+        "lut_anamorphic_cyan", "lut_matte_cinema", "lut_midnight_neon", "lut_warm_documentary", "lut_noir_cinema",
+        "golden_nostalgia", "velvia_landscape", "nordic_slate", "arctic_mist",
+        "classic_mono", "high_contrast_noir", "ilford_grain", "silver_gelatin", "antique_sepia",
+        "cinematic", "vintage", "bw", "cyberpunk", "hdr"
+    )
+    private val arLensOrder = listOf(
+        "none", "mesh_contour", "cyberpunk_visor", "golden_crown", "scifi_hud"
     )
     private val toonStyleOrder = listOf(
         "none", "cel_shaded_studio", "graphic_novel_noir", "manga_ink", "pop_art_print",
@@ -1454,8 +1465,11 @@ class MainActivity : AppCompatActivity() {
 
         if (isArt) {
             updateArtStripModeOrder()
+            updateArtEffectButtons()
         } else if (isEffect) {
             updateShootingEffectButtons()
+        } else if (isToon) {
+            updateToonEffectButtons()
         }
 
         updateCreativeStatusUI()
@@ -1514,25 +1528,43 @@ class MainActivity : AppCompatActivity() {
 
     private fun updateCreativeStatusUI() {
         val statusText = when (currentCreativeTarget) {
-            CreativeTarget.FILTERS -> "FILTER: " + currentFilterName.replace("_", " ").uppercase(Locale.ROOT)
-            CreativeTarget.LENSES -> "LENS: " + currentArLensName.replace("_", " ").uppercase(Locale.ROOT)
+            CreativeTarget.FILTERS -> {
+                val total = (filterPresetOrder.size - 1).coerceAtLeast(1)
+                val idx = filterPresetOrder.indexOf(currentFilterName)
+                val label = currentFilterName.replace("_", " ").uppercase(Locale.ROOT)
+                if (idx > 0) "FILTER: $label ($idx/$total)" else "FILTER: NORMAL (0/$total)"
+            }
+            CreativeTarget.LENSES -> {
+                val total = (arLensOrder.size - 1).coerceAtLeast(1)
+                val idx = arLensOrder.indexOf(currentArLensName)
+                val label = currentArLensName.replace("_", " ").uppercase(Locale.ROOT)
+                if (idx > 0) "LENS: $label ($idx/$total)" else "LENS: OFF (0/$total)"
+            }
             CreativeTarget.ART -> {
-                if (artEffectIds.contains(currentShootingEffect)) {
-                    "ART: " + getShootingEffectLabel(currentShootingEffect)
+                val artList = getModeOrderedArtEffects()
+                val total = (artList.size - 1).coerceAtLeast(1)
+                val idx = artList.indexOf(currentShootingEffect)
+                if (idx > 0) {
+                    "ART: ${getShootingEffectLabel(currentShootingEffect)} ($idx/$total)"
                 } else {
-                    "ART: OFF"
+                    "ART: OFF (0/$total)"
                 }
             }
             CreativeTarget.TOON -> {
-                if (toonEffectIds.contains(currentShootingEffect)) {
-                    "TOON: " + getShootingEffectLabel(currentShootingEffect)
+                val total = (toonStyleOrder.size - 1).coerceAtLeast(1)
+                val idx = toonStyleOrder.indexOf(currentShootingEffect)
+                if (idx > 0) {
+                    "TOON: ${getShootingEffectLabel(currentShootingEffect)} ($idx/$total)"
                 } else {
-                    "TOON: OFF"
+                    "TOON: OFF (0/$total)"
                 }
             }
             CreativeTarget.EFFECTS -> {
-                if (currentShootingEffect != "none" && !artEffectIds.contains(currentShootingEffect) && !toonEffectIds.contains(currentShootingEffect)) {
-                    "EFFECT: " + getShootingEffectLabel(currentShootingEffect)
+                val modeList = getModeFilteredShootingEffects()
+                val total = (modeList.size - 1).coerceAtLeast(1)
+                val idx = modeList.indexOf(currentShootingEffect)
+                if (idx > 0 && !artEffectIds.contains(currentShootingEffect) && !toonEffectIds.contains(currentShootingEffect)) {
+                    "EFFECT: ${getShootingEffectLabel(currentShootingEffect)} ($idx/$total)"
                 } else {
                     val g = viewBinding.proOverlayView.enableFilmGrain
                     val d = viewBinding.proOverlayView.enableDateStamp
@@ -1542,18 +1574,45 @@ class MainActivity : AppCompatActivity() {
                         g -> "EFFECT: 35MM GRAIN"
                         d -> "EFFECT: 90S STAMP"
                         f -> "EFFECT: CINE FLARE"
-                        else -> "EFFECT: OFF"
+                        else -> "EFFECT: OFF (0/$total)"
                     }
                 }
             }
         }
         viewBinding.tvEffectsActiveStatus.text = statusText
+        viewBinding.tvEffectsActiveStatus.isSelected = true
     }
 
     private fun scrollChipIntoView(scrollView: android.widget.HorizontalScrollView, child: View) {
-        scrollView.post {
-            val scrollX = (child.left - (scrollView.width / 2) + (child.width / 2)).coerceAtLeast(0)
+        fun performScroll() {
+            val contentRoot = scrollView.getChildAt(0) as? ViewGroup ?: return
+            if (scrollView.width <= 0 || contentRoot.width <= 0 || child.width <= 0) return
+            val rect = Rect()
+            child.getDrawingRect(rect)
+            try {
+                contentRoot.offsetDescendantRectToMyCoords(child, rect)
+            } catch (_: IllegalArgumentException) {
+                return
+            }
+            val maxScroll = (contentRoot.width - scrollView.width).coerceAtLeast(0)
+            val scrollX = (rect.centerX() - (scrollView.width / 2)).coerceIn(0, maxScroll)
             scrollView.smoothScrollTo(scrollX, 0)
+        }
+        if (scrollView.width > 0 && child.width > 0 && !scrollView.isLayoutRequested) {
+            scrollView.post { performScroll() }
+        } else {
+            scrollView.addOnLayoutChangeListener(object : View.OnLayoutChangeListener {
+                override fun onLayoutChange(
+                    v: View, left: Int, top: Int, right: Int, bottom: Int,
+                    oldLeft: Int, oldTop: Int, oldRight: Int, oldBottom: Int
+                ) {
+                    if (v.width > 0 && child.width > 0) {
+                        v.removeOnLayoutChangeListener(this)
+                        scrollView.post { performScroll() }
+                    }
+                }
+            })
+            scrollView.post { performScroll() }
         }
     }
 
@@ -2607,12 +2666,103 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
+     * Fast O(w*h) 4-quadrant Kuwahara painterly brush filter using 2D integral prefix sums.
+     * Produces silky, cohesive oil-paint & watercolor brushstrokes without jagged pixel aliasing.
+     */
+    private fun applyKuwaharaIntArray(src: IntArray, w: Int, h: Int, radius: Int): IntArray {
+        val pw = w + 1
+        val ph = h + 1
+        val total = pw * ph
+        val pR = LongArray(total)
+        val pG = LongArray(total)
+        val pB = LongArray(total)
+        val pL = DoubleArray(total)
+        val pL2 = DoubleArray(total)
+
+        for (y in 0 until h) {
+            var rowR = 0L
+            var rowG = 0L
+            var rowB = 0L
+            var rowL = 0.0
+            var rowL2 = 0.0
+            val srcRow = y * w
+            val curRow = (y + 1) * pw
+            val prevRow = y * pw
+            for (x in 0 until w) {
+                val c = src[srcRow + x]
+                val r = ((c shr 16) and 0xFF).toLong()
+                val g = ((c shr 8) and 0xFF).toLong()
+                val b = (c and 0xFF).toLong()
+                val lum = 0.299 * r + 0.587 * g + 0.114 * b
+                rowR += r
+                rowG += g
+                rowB += b
+                rowL += lum
+                rowL2 += lum * lum
+                val idx = curRow + x + 1
+                val up = prevRow + x + 1
+                pR[idx] = pR[up] + rowR
+                pG[idx] = pG[up] + rowG
+                pB[idx] = pB[up] + rowB
+                pL[idx] = pL[up] + rowL
+                pL2[idx] = pL2[up] + rowL2
+            }
+        }
+
+        val out = IntArray(w * h)
+        for (y in 0 until h) {
+            val yTop0 = (y - radius).coerceIn(0, h - 1)
+            val yTop1 = y.coerceIn(0, h - 1)
+            val yBot0 = y.coerceIn(0, h - 1)
+            val yBot1 = (y + radius).coerceIn(0, h - 1)
+            for (x in 0 until w) {
+                val xL0 = (x - radius).coerceIn(0, w - 1)
+                val xL1 = x.coerceIn(0, w - 1)
+                val xR0 = x.coerceIn(0, w - 1)
+                val xR1 = (x + radius).coerceIn(0, w - 1)
+
+                var bestVar = Double.MAX_VALUE
+                var bestR = 0
+                var bestG = 0
+                var bestB = 0
+
+                for (q in 0 until 4) {
+                    val x0 = if ((q and 1) == 0) xL0 else xR0
+                    val x1 = if ((q and 1) == 0) xL1 else xR1
+                    val y0 = if (q < 2) yTop0 else yBot0
+                    val y1 = if (q < 2) yTop1 else yBot1
+                    val area = (x1 - x0 + 1) * (y1 - y0 + 1)
+                    if (area <= 0) continue
+
+                    val br = (y1 + 1) * pw + (x1 + 1)
+                    val bl = (y1 + 1) * pw + x0
+                    val tr = y0 * pw + (x1 + 1)
+                    val tl = y0 * pw + x0
+
+                    val sL = pL[br] - pL[bl] - pL[tr] + pL[tl]
+                    val sL2 = pL2[br] - pL2[bl] - pL2[tr] + pL2[tl]
+                    val meanL = sL / area
+                    val variance = (sL2 / area) - (meanL * meanL)
+                    if (variance < bestVar) {
+                        bestVar = variance
+                        bestR = ((pR[br] - pR[bl] - pR[tr] + pR[tl]) / area).toInt()
+                        bestG = ((pG[br] - pG[bl] - pG[tr] + pG[tl]) / area).toInt()
+                        bestB = ((pB[br] - pB[bl] - pB[tr] + pB[tl]) / area).toInt()
+                    }
+                }
+                out[y * w + x] = Color.rgb(bestR.coerceIn(0, 255), bestG.coerceIn(0, 255), bestB.coerceIn(0, 255))
+            }
+        }
+        return out
+    }
+
+    /**
      * Unified pixel-accurate Art, Optical Blur & Toon Renderer used for both Live Viewfinder & Captured JPEG Photos
      */
     private fun renderStylizedEffectBitmap(srcBmp: Bitmap, effectId: String, forLivePreview: Boolean): Bitmap {
         val w = srcBmp.width.coerceAtLeast(1)
         val h = srcBmp.height.coerceAtLeast(1)
-        val maxSample = if (forLivePreview) 260 else 620
+        val maxSample = if (forLivePreview) 300 else 640
         val sw: Int
         val sh: Int
         if (w >= h) {
@@ -2655,12 +2805,20 @@ class MainActivity : AppCompatActivity() {
         small.getPixels(rawArr, 0, sw, 0, 0, sw, sh)
         if (small != srcBmp) small.recycle()
 
-        val smoothPasses = when (effectId) {
-            "cel_shaded_studio", "ligne_claire", "pop_art_print", "clay_vinyl_3d", "oil_canvas", "watercolor_wash", "pastel_chalk" -> if (forLivePreview) 2 else 4
-            "graphic_novel_noir", "manga_ink", "line_art_minimalist", "noir_graphic_novel", "ink_and_line", "charcoal_sketch" -> if (forLivePreview) 2 else 3
+        val kuwaharaRadius = when (effectId) {
+            "oil_canvas", "watercolor_wash" -> if (forLivePreview) 3 else 4
+            "pastel_chalk", "lithograph", "cel_shaded_studio", "ligne_claire", "clay_vinyl_3d", "pop_art_print" -> if (forLivePreview) 2 else 3
             else -> 0
         }
-        val pxArr = if (smoothPasses > 0) smoothIntArray(rawArr, sw, sh, smoothPasses) else rawArr
+        val baseArr = if (kuwaharaRadius > 0) applyKuwaharaIntArray(rawArr, sw, sh, kuwaharaRadius) else rawArr
+
+        val smoothPasses = when (effectId) {
+            "cel_shaded_studio", "ligne_claire", "pop_art_print", "clay_vinyl_3d", "watercolor_wash", "pastel_chalk" -> if (forLivePreview) 1 else 2
+            "oil_canvas", "lithograph" -> 1
+            "graphic_novel_noir", "manga_ink", "line_art_minimalist", "noir_graphic_novel", "ink_and_line", "charcoal_sketch", "woodcut_engraving" -> if (forLivePreview) 2 else 3
+            else -> 0
+        }
+        val pxArr = if (smoothPasses > 0) smoothIntArray(baseArr, sw, sh, smoothPasses) else baseArr
         val outArr = IntArray(sw * sh)
 
         fun lumArr(arr: IntArray, px: Int, py: Int): Float {
@@ -2687,7 +2845,7 @@ class MainActivity : AppCompatActivity() {
             val vecEdge = Math.sqrt((0.30f * chanMag(16) + 0.52f * chanMag(8) + 0.18f * chanMag(0)).toDouble()).toFloat()
             val cL = 0.299f * ((mc shr 16) and 0xFF) + 0.587f * ((mc shr 8) and 0xFF) + 0.114f * (mc and 0xFF)
             val avgL = 0.25f * (lumArr(arr, x, y0) + lumArr(arr, x, y1) + lumArr(arr, x0, y) + lumArr(arr, x1, y))
-            val crease = Math.max(0f, avgL - cL) * 1.4f
+            val crease = Math.max(0f, avgL - cL) * 1.45f
             return vecEdge + crease
         }
 
@@ -2701,8 +2859,19 @@ class MainActivity : AppCompatActivity() {
             val scaled = norm * bands
             val b = Math.floor(scaled.toDouble()).toFloat()
             val f = scaled - b
-            val q = (b + smoothstep(0.36f, 0.64f, f)) / bands
-            return (q * 240f + 10f).coerceIn(12f, 252f)
+            val q = (b + smoothstep(0.32f, 0.68f, f)) / bands
+            return (q * 238f + 12f).coerceIn(12f, 252f)
+        }
+
+        fun rotatedHalftoneDot(x: Int, y: Int, darkness: Float, pitch: Float): Float {
+            if (darkness <= 0.03f) return 0f
+            val rx = (x * 0.7071f - y * 0.7071f) / pitch
+            val ry = (x * 0.7071f + y * 0.7071f) / pitch
+            val fx = rx - Math.floor(rx.toDouble()).toFloat() - 0.5f
+            val fy = ry - Math.floor(ry.toDouble()).toFloat() - 0.5f
+            val dist = Math.sqrt((fx * fx + fy * fy).toDouble()).toFloat()
+            val rad = Math.sqrt(darkness.coerceIn(0f, 1f).toDouble()).toFloat() * 0.48f
+            return 1f - smoothstep(rad - 0.10f, rad + 0.10f, dist)
         }
 
         fun sobelAt(arr: IntArray, x: Int, y: Int): Float = colorSobelAt(arr, x, y)
@@ -2748,7 +2917,7 @@ class MainActivity : AppCompatActivity() {
                     for (x in 0 until sw) {
                         val idx = y * sw + x
                         val edge = colorSobelAt(pxArr, x, y)
-                        val ink = smoothstep(38f, 76f, edge)
+                        val ink = smoothstep(32f, 64f, edge)
                         val c = pxArr[idx]
                         val r = (c shr 16) and 0xFF
                         val g = (c shr 8) and 0xFF
@@ -2757,13 +2926,13 @@ class MainActivity : AppCompatActivity() {
                         val bandLum = softCelBand(l, 5)
                         val sc = bandLum / l
                         val shadowMix = smoothstep(105f, 38f, bandLum)
-                        val hiMix = smoothstep(192f, 245f, bandLum)
-                        val baseR = ((l + (r - l) * 1.34f) * sc - shadowMix * 8f + hiMix * 8f).coerceIn(0f, 255f)
-                        val baseG = ((l + (g - l) * 1.34f) * sc - shadowMix * 4f + hiMix * 5f).coerceIn(0f, 255f)
-                        val baseB = ((l + (b - l) * 1.34f) * sc + shadowMix * 10f - hiMix * 2f).coerceIn(0f, 255f)
+                        val hiMix = smoothstep(195f, 245f, bandLum) * 10f
+                        val baseR = ((l + (r - l) * 1.38f) * sc - shadowMix * 8f + hiMix).coerceIn(0f, 255f)
+                        val baseG = ((l + (g - l) * 1.38f) * sc - shadowMix * 4f + hiMix * 0.8f).coerceIn(0f, 255f)
+                        val baseB = ((l + (b - l) * 1.38f) * sc + shadowMix * 11f - hiMix * 0.2f).coerceIn(0f, 255f)
                         outArr[idx] = Color.rgb(
-                            (baseR * (1f - ink) + 11f * ink).toInt().coerceIn(0, 255),
-                            (baseG * (1f - ink) + 13f * ink).toInt().coerceIn(0, 255),
+                            (baseR * (1f - ink) + 10f * ink).toInt().coerceIn(0, 255),
+                            (baseG * (1f - ink) + 12f * ink).toInt().coerceIn(0, 255),
                             (baseB * (1f - ink) + 22f * ink).toInt().coerceIn(0, 255)
                         )
                     }
@@ -2774,17 +2943,17 @@ class MainActivity : AppCompatActivity() {
                     for (x in 0 until sw) {
                         val idx = y * sw + x
                         val edge = colorSobelAt(pxArr, x, y)
-                        val ink = smoothstep(36f, 70f, edge)
+                        val ink = smoothstep(30f, 58f, edge) * 0.90f
                         val c = pxArr[idx]
                         val r = (c shr 16) and 0xFF
                         val g = (c shr 8) and 0xFF
                         val b = c and 0xFF
                         val l = Math.max(1f, 0.299f * r + 0.587f * g + 0.114f * b)
-                        val flatL = softCelBand(l, 5) * 0.78f + 52f
+                        val flatL = softCelBand(l, 5) * 0.78f + 50f
                         val sc = flatL / l
-                        val baseR = ((l + (r - l) * 0.92f) * sc).coerceIn(0f, 250f)
-                        val baseG = ((l + (g - l) * 0.92f) * sc).coerceIn(0f, 248f)
-                        val baseB = ((l + (b - l) * 0.92f) * sc).coerceIn(0f, 245f)
+                        val baseR = ((l + (r - l) * 0.94f) * sc).coerceIn(0f, 252f)
+                        val baseG = ((l + (g - l) * 0.94f) * sc).coerceIn(0f, 250f)
+                        val baseB = ((l + (b - l) * 0.94f) * sc).coerceIn(0f, 246f)
                         outArr[idx] = Color.rgb(
                             (baseR * (1f - ink) + 24f * ink).toInt().coerceIn(0, 255),
                             (baseG * (1f - ink) + 22f * ink).toInt().coerceIn(0, 255),
@@ -2794,16 +2963,17 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             "graphic_novel_noir", "noir_graphic_novel" -> {
+                val dotPitch = Math.max(3.6f, sw / 84f)
                 for (y in 0 until sh) {
                     for (x in 0 until sw) {
                         val idx = y * sw + x
                         val edge = colorSobelAt(pxArr, x, y)
                         val l = lumArr(pxArr, x, y)
-                        val ink = smoothstep(36f, 72f, edge)
-                        val shadow = smoothstep(88f, 60f, l)
-                        val mid = smoothstep(154f, 126f, l)
-                        val dot = ((x + (y % 2) * 2) % 4 == 0 && y % 3 == 0)
-                        val midShade = if (dot) 42f else 138f
+                        val ink = smoothstep(30f, 60f, edge)
+                        val shadow = smoothstep(82f, 52f, l)
+                        val mid = smoothstep(156f, 118f, l)
+                        val htDot = rotatedHalftoneDot(x, y, 0.42f, dotPitch)
+                        val midShade = 198f - htDot * 124f
                         var v = 250f * (1f - mid) + midShade * mid
                         v = v * (1f - shadow) + 10f * shadow
                         v = v * (1f - ink) + 8f * ink
@@ -2813,17 +2983,17 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             "manga_ink" -> {
+                val dotPitch = Math.max(3.4f, sw / 90f)
                 for (y in 0 until sh) {
                     for (x in 0 until sw) {
                         val idx = y * sw + x
                         val edge = colorSobelAt(pxArr, x, y)
                         val l = lumArr(pxArr, x, y)
-                        val ink = smoothstep(34f, 66f, edge)
-                        val darkFill = smoothstep(46f, 26f, l)
-                        val dot1 = l < 150f && ((x + (y % 2) * 2) % 4 == 0 && y % 3 == 0)
-                        val dot2 = l < 96f && ((x + y) % 2 == 0)
-                        val tone = if (dot1 || dot2) 0.72f else 0f
-                        val shade = Math.max(ink, Math.max(darkFill, tone))
+                        val ink = smoothstep(28f, 56f, edge)
+                        val darkFill = smoothstep(52f, 24f, l)
+                        val stDarkness = (smoothstep(168f, 62f, l) * 0.55f)
+                        val stDot = rotatedHalftoneDot(x, y, stDarkness, dotPitch) * 0.80f
+                        val shade = Math.max(ink, Math.max(darkFill, stDot))
                         val iv = (252f * (1f - shade) + 14f * shade).toInt().coerceIn(0, 255)
                         outArr[idx] = Color.rgb(iv, iv, iv)
                     }
@@ -2834,7 +3004,7 @@ class MainActivity : AppCompatActivity() {
                     for (x in 0 until sw) {
                         val idx = y * sw + x
                         val edge = colorSobelAt(pxArr, x, y)
-                        val ink = smoothstep(30f, 62f, edge)
+                        val ink = smoothstep(26f, 54f, edge)
                         outArr[idx] = Color.rgb(
                             (252f * (1f - ink) + 14f * ink).toInt().coerceIn(0, 255),
                             (251f * (1f - ink) + 16f * ink).toInt().coerceIn(0, 255),
@@ -2844,26 +3014,35 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             "pop_art_print" -> {
+                val dotPitch = Math.max(4.0f, sw / 68f)
                 for (y in 0 until sh) {
                     for (x in 0 until sw) {
                         val idx = y * sw + x
                         val edge = colorSobelAt(pxArr, x, y)
-                        val ink = smoothstep(36f, 72f, edge)
+                        val ink = smoothstep(32f, 62f, edge)
                         val c = pxArr[idx]
                         val r = (c shr 16) and 0xFF
                         val g = (c shr 8) and 0xFF
                         val b = c and 0xFF
                         val l = 0.299f * r + 0.587f * g + 0.114f * b
-                        val isDot = (x % 4 == 0 && y % 4 == 0)
-                        val pr: Int
-                        val pg: Int
-                        val pb: Int
+                        val dotMix = rotatedHalftoneDot(x, y, (1f - l / 255f) * 0.65f, dotPitch)
+                        val pr: Float; val pg: Float; val pb: Float
                         when {
-                            l > 190f -> { pr = 254; pg = if (isDot) 196 else 240; pb = if (isDot) 36 else 92 }
-                            l < 62f -> { pr = if (isDot) 37 else 18; pg = if (isDot) 99 else 24; pb = if (isDot) 235 else 58 }
-                            r >= g && r >= b -> { pr = 242; pg = if (isDot) 48 else 34; pb = if (isDot) 168 else 66 }
-                            b >= r && b >= g -> { pr = if (isDot) 245 else 37; pg = if (isDot) 60 else 105; pb = 238 }
-                            else -> { pr = 14; pg = if (isDot) 225 else 188; pb = 224 }
+                            l > 188f -> {
+                                pr = 254f; pg = 236f * (1f - dotMix) + 184f * dotMix; pb = 94f * (1f - dotMix) + 28f * dotMix
+                            }
+                            l < 64f -> {
+                                pr = 16f * (1f - dotMix) + 37f * dotMix; pg = 22f * (1f - dotMix) + 99f * dotMix; pb = 54f * (1f - dotMix) + 235f * dotMix
+                            }
+                            r >= g && r >= b -> {
+                                pr = 244f; pg = 34f * (1f - dotMix) + 188f * dotMix; pb = 78f * (1f - dotMix) + 38f * dotMix
+                            }
+                            b >= r && b >= g -> {
+                                pr = 34f * (1f - dotMix) + 236f * dotMix; pg = 104f * (1f - dotMix) + 56f * dotMix; pb = 238f
+                            }
+                            else -> {
+                                pr = 16f * (1f - dotMix) + 250f * dotMix; pg = 192f; pb = 224f * (1f - dotMix) + 92f * dotMix
+                            }
                         }
                         outArr[idx] = Color.rgb(
                             (pr * (1f - ink) + 10f * ink).toInt().coerceIn(0, 255),
@@ -2875,36 +3054,55 @@ class MainActivity : AppCompatActivity() {
             }
             "clay_vinyl_3d" -> {
                 for (y in 0 until sh) {
-                    val ny = y / sh.toFloat()
+                    val ym = (y - 1).coerceIn(0, sh - 1)
+                    val yp = (y + 1).coerceIn(0, sh - 1)
                     for (x in 0 until sw) {
+                        val xm = (x - 1).coerceIn(0, sw - 1)
+                        val xp = (x + 1).coerceIn(0, sw - 1)
                         val idx = y * sw + x
-                        val nx = x / sw.toFloat()
                         val c = pxArr[idx]
-                        val edge = sobelAt(pxArr, x, y)
+                        val gx = (lumArr(pxArr, xp, y) - lumArr(pxArr, xm, y)) / 255f
+                        val gy = (lumArr(pxArr, x, yp) - lumArr(pxArr, x, ym)) / 255f
+                        var nx = -gx * 3.4f
+                        var ny = -gy * 3.4f
+                        var nz = 0.55f
+                        val invLen = 1f / Math.sqrt((nx * nx + ny * ny + nz * nz).toDouble()).toFloat()
+                        nx *= invLen; ny *= invLen; nz *= invLen
+                        val nDotL = ((-nx * 0.45f - ny * 0.55f + nz * 0.70f) + 0.35f) / 1.35f
+                        val diff = nDotL.coerceIn(0.68f, 1.12f)
+                        val hDotN = (-nx * 0.25f - ny * 0.31f + nz * 0.92f).coerceIn(0f, 1f)
+                        val spec = Math.pow(hDotN.toDouble(), 20.0).toFloat() * 52f
+                        val rim = Math.pow((1f - nz).toDouble(), 2.0).toFloat() * 34f
                         val r = ((c shr 16) and 0xFF)
                         val g = ((c shr 8) and 0xFF)
                         val b = (c and 0xFF)
-                        val spec = Math.max(0f, 1f - Math.hypot((nx - 0.36).toDouble(), (ny - 0.28).toDouble()).toFloat() * 2.2f) * 44f
-                        val rim = (edge * 0.28f).coerceAtMost(36f)
                         outArr[idx] = Color.rgb(
-                            (r * 0.94f + 16f + spec + rim).toInt().coerceIn(0, 255),
-                            (g * 0.94f + 16f + spec + rim).toInt().coerceIn(0, 255),
-                            (b * 0.94f + 18f + spec + rim).toInt().coerceIn(0, 255)
+                            (r * diff + 8f + spec + rim).toInt().coerceIn(0, 255),
+                            (g * diff + 8f + spec + rim).toInt().coerceIn(0, 255),
+                            (b * diff + 12f + spec + rim).toInt().coerceIn(0, 255)
                         )
                     }
                 }
             }
             "oil_canvas" -> {
                 for (y in 0 until sh) {
+                    val ym = (y - 1).coerceIn(0, sh - 1)
+                    val yp = (y + 1).coerceIn(0, sh - 1)
                     for (x in 0 until sw) {
+                        val xm = (x - 1).coerceIn(0, sw - 1)
+                        val xp = (x + 1).coerceIn(0, sw - 1)
                         val idx = y * sw + x
-                        val sx = (x + ((y % 4) - 2)).coerceIn(0, sw - 1)
-                        val sy = (y + ((x % 3) - 1)).coerceIn(0, sh - 1)
-                        val c = pxArr[sy * sw + sx]
-                        val weave = if ((x + y) % 3 == 0) 8 else -6
-                        val r = ((((c shr 16) and 0xFF) / 26) * 26 + 14 + weave).coerceIn(0, 255)
-                        val g = ((((c shr 8) and 0xFF) / 26) * 26 + 14 + weave).coerceIn(0, 255)
-                        val b = (((c and 0xFF) / 26) * 26 + 14 + weave).coerceIn(0, 255)
+                        val c = pxArr[idx]
+                        val r0 = (c shr 16) and 0xFF
+                        val g0 = (c shr 8) and 0xFF
+                        val b0 = c and 0xFF
+                        val l = 0.299f * r0 + 0.587f * g0 + 0.114f * b0
+                        val dx = lumArr(pxArr, xp, y) - lumArr(pxArr, xm, y)
+                        val dy = lumArr(pxArr, x, yp) - lumArr(pxArr, x, ym)
+                        val relief = ((-dx * 0.45f - dy * 0.55f) * 0.48f).coerceIn(-16f, 22f)
+                        val r = (l + (r0 - l) * 1.24f + relief + 3f).toInt().coerceIn(0, 255)
+                        val g = (l + (g0 - l) * 1.24f + relief + 1f).toInt().coerceIn(0, 255)
+                        val b = (l + (b0 - l) * 1.24f + relief - 3f).toInt().coerceIn(0, 255)
                         outArr[idx] = Color.rgb(r, g, b)
                     }
                 }
@@ -2913,11 +3111,20 @@ class MainActivity : AppCompatActivity() {
                 for (y in 0 until sh) {
                     for (x in 0 until sw) {
                         val idx = y * sw + x
-                        val edge = sobelAt(pxArr, x, y)
-                        val base = lumArr(pxArr, x, y)
-                        val hatch = if (base < 95f && (x + y) % 3 == 0) 68f else base * 0.30f + 164f
-                        val ink = (hatch - edge * 0.96f).toInt().coerceIn(18, 244)
-                        outArr[idx] = Color.rgb((ink + 4).coerceAtMost(248), (ink + 1).coerceAtMost(244), (ink - 6).coerceAtLeast(16))
+                        val edgeInk = smoothstep(24f, 62f, sobelAt(pxArr, x, y))
+                        val l = lumArr(pxArr, x, y)
+                        val h1 = 0.5f + 0.5f * Math.sin((x + y) * 0.92).toFloat()
+                        val h2 = 0.5f + 0.5f * Math.sin((x - y) * 0.92).toFloat()
+                        val midShade = smoothstep(155f, 75f, l) * (0.28f + 0.42f * h1)
+                        val deepShade = smoothstep(82f, 24f, l) * (0.42f + 0.46f * h2)
+                        val shade = Math.max(edgeInk * 0.94f, Math.max(midShade, deepShade))
+                        val paperL = 244f - (1f - (l / 255f).coerceIn(0f, 1f)) * 18f
+                        val v = paperL * (1f - shade) + 22f * shade
+                        outArr[idx] = Color.rgb(
+                            (v + 3f).toInt().coerceIn(16, 250),
+                            v.toInt().coerceIn(15, 246),
+                            (v - 6f).toInt().coerceIn(13, 239)
+                        )
                     }
                 }
             }
@@ -2925,10 +3132,21 @@ class MainActivity : AppCompatActivity() {
                 for (y in 0 until sh) {
                     for (x in 0 until sw) {
                         val idx = y * sw + x
-                        val edge = sobelAt(pxArr, x, y)
-                        val base = lumArr(pxArr, x, y)
-                        val v = if (edge > 56f || base < 38f) 14 else 250
-                        outArr[idx] = Color.rgb(v, v, (v - 4).coerceAtLeast(12))
+                        val edgeInk = smoothstep(26f, 56f, sobelAt(pxArr, x, y))
+                        val l = lumArr(pxArr, x, y)
+                        val solidDark = smoothstep(42f, 20f, l)
+                        val w1 = smoothstep(0.62f, 0.92f, 0.5f + 0.5f * Math.sin((x + y) * 1.25).toFloat())
+                        val w2 = smoothstep(0.62f, 0.92f, 0.5f + 0.5f * Math.sin((x - y) * 1.25).toFloat())
+                        val hatch = Math.max(
+                            smoothstep(106f, 68f, l) * w1 * 0.78f,
+                            smoothstep(62f, 34f, l) * w2 * 0.85f
+                        )
+                        val ink = Math.max(edgeInk, Math.max(solidDark, hatch))
+                        outArr[idx] = Color.rgb(
+                            (252f * (1f - ink) + 15f * ink).toInt().coerceIn(0, 255),
+                            (251f * (1f - ink) + 16f * ink).toInt().coerceIn(0, 255),
+                            (246f * (1f - ink) + 22f * ink).toInt().coerceIn(0, 255)
+                        )
                     }
                 }
             }
@@ -2937,11 +3155,17 @@ class MainActivity : AppCompatActivity() {
                     for (x in 0 until sw) {
                         val idx = y * sw + x
                         val c = pxArr[idx]
-                        val edge = sobelAt(pxArr, x, y) * 0.25f
-                        val r = (((c shr 16) and 0xFF) * 0.88f + 28f - edge).toInt().coerceIn(0, 255)
-                        val g = (((c shr 8) and 0xFF) * 0.88f + 26f - edge).toInt().coerceIn(0, 255)
-                        val b = ((c and 0xFF) * 0.88f + 28f - edge).toInt().coerceIn(0, 255)
-                        outArr[idx] = Color.rgb(r, g, b)
+                        val r0 = (c shr 16) and 0xFF
+                        val g0 = (c shr 8) and 0xFF
+                        val b0 = c and 0xFF
+                        val l = 0.299f * r0 + 0.587f * g0 + 0.114f * b0
+                        val bleach = smoothstep(192f, 246f, l) * 0.62f
+                        var r = (l + (r0 - l) * 1.38f + 16f) * (1f - bleach) + 250f * bleach
+                        var g = (l + (g0 - l) * 1.38f + 14f) * (1f - bleach) + 247f * bleach
+                        var b = (l + (b0 - l) * 1.38f + 12f) * (1f - bleach) + 240f * bleach
+                        val pool = 1f - smoothstep(26f, 70f, sobelAt(pxArr, x, y)) * 0.24f
+                        r *= pool; g *= pool; b *= pool
+                        outArr[idx] = Color.rgb(r.toInt().coerceIn(0, 255), g.toInt().coerceIn(0, 255), b.toInt().coerceIn(0, 255))
                     }
                 }
             }
@@ -2950,44 +3174,60 @@ class MainActivity : AppCompatActivity() {
                     for (x in 0 until sw) {
                         val idx = y * sw + x
                         val c = pxArr[idx]
-                        val tooth = (((x * 37 + y * 53) % 19) - 9)
-                        val r = (((c shr 16) and 0xFF) * 0.72f + 68f + tooth).toInt().coerceIn(0, 255)
-                        val g = (((c shr 8) and 0xFF) * 0.72f + 66f + tooth).toInt().coerceIn(0, 255)
-                        val b = ((c and 0xFF) * 0.72f + 68f + tooth).toInt().coerceIn(0, 255)
-                        outArr[idx] = Color.rgb(r, g, b)
+                        val r0 = (c shr 16) and 0xFF
+                        val g0 = (c shr 8) and 0xFF
+                        val b0 = c and 0xFF
+                        val l = Math.max(1f, 0.299f * r0 + 0.587f * g0 + 0.114f * b0)
+                        val softL = softCelBand(l, 7)
+                        val sc = softL / l
+                        val outline = smoothstep(36f, 84f, sobelAt(pxArr, x, y)) * 0.16f
+                        val r = ((l + (r0 - l) * 0.86f) * sc * 0.78f + 58f) * (1f - outline)
+                        val g = ((l + (g0 - l) * 0.86f) * sc * 0.78f + 56f) * (1f - outline)
+                        val b = ((l + (b0 - l) * 0.86f) * sc * 0.78f + 60f) * (1f - outline)
+                        outArr[idx] = Color.rgb(r.toInt().coerceIn(30, 255), g.toInt().coerceIn(28, 255), b.toInt().coerceIn(32, 255))
                     }
                 }
             }
             "halftone_print" -> {
-                val cell = Math.max(4, sw / 48)
+                val pitch = Math.max(3.6f, sw / 82f)
                 for (y in 0 until sh) {
                     for (x in 0 until sw) {
-                        val cx = (x / cell) * cell + cell / 2
-                        val cy = (y / cell) * cell + cell / 2
-                        val l = lumArr(pxArr, cx, cy) / 255f
-                        val dx = x - cx
-                        val dy = y - cy
-                        val dist = Math.sqrt((dx * dx + dy * dy).toDouble()).toFloat()
-                        val rad = (1f - l) * (cell * 0.56f)
-                        outArr[y * sw + x] = if (dist < rad) Color.rgb(18, 22, 28) else Color.rgb(246, 241, 228)
+                        val l = (lumArr(pxArr, x, y) / 255f).coerceIn(0f, 1f)
+                        val darkness = (1f - Math.pow(l.toDouble(), 0.92).toFloat()).coerceIn(0f, 1f)
+                        val dotInk = rotatedHalftoneDot(x, y, darkness, pitch)
+                        val crispEdge = smoothstep(34f, 68f, sobelAt(pxArr, x, y)) * 0.62f
+                        val ink = Math.max(dotInk, crispEdge)
+                        outArr[y * sw + x] = Color.rgb(
+                            (248f * (1f - ink) + 18f * ink).toInt().coerceIn(0, 255),
+                            (243f * (1f - ink) + 22f * ink).toInt().coerceIn(0, 255),
+                            (231f * (1f - ink) + 32f * ink).toInt().coerceIn(0, 255)
+                        )
                     }
                 }
             }
             "cyanotype" -> {
                 for (i in pxArr.indices) {
                     val c = pxArr[i]
-                    val l = (0.299f * ((c shr 16) and 0xFF) + 0.587f * ((c shr 8) and 0xFF) + 0.114f * (c and 0xFF)) / 255f
-                    outArr[i] = Color.rgb((8 + l * 216).toInt(), (34 + l * 208).toInt(), (78 + l * 176).toInt())
+                    val l = ((0.299f * ((c shr 16) and 0xFF) + 0.587f * ((c shr 8) and 0xFF) + 0.114f * (c and 0xFF)) / 255f).coerceIn(0f, 1f)
+                    val s = l * l * (3f - 2f * l)
+                    val cL = Math.pow(s.toDouble(), 0.88).toFloat()
+                    outArr[i] = Color.rgb((8 + cL * 230).toInt().coerceIn(0, 255), (32 + cL * 214).toInt().coerceIn(0, 255), (76 + cL * 176).toInt().coerceIn(0, 255))
                 }
             }
             "woodcut_engraving" -> {
                 for (y in 0 until sh) {
-                    val groove = if (y % 3 == 0) 20f else 0f
                     for (x in 0 until sw) {
                         val idx = y * sw + x
-                        val l = lumArr(pxArr, x, y)
-                        val v = if (l + groove > 120f) 244 else 12
-                        outArr[idx] = Color.rgb(v, (v - 4).coerceAtLeast(10), (v - 10).coerceAtLeast(8))
+                        val l = (lumArr(pxArr, x, y) / 255f).coerceIn(0f, 1f)
+                        val wave = 0.5f + 0.5f * Math.sin(y * 1.35 + Math.sin(x * 0.05) * 2.2).toFloat()
+                        val burin = smoothstep(l - 0.14f, l + 0.14f, wave)
+                        val borderInk = smoothstep(28f, 60f, sobelAt(pxArr, x, y))
+                        val ink = if (l < 0.14f) 1f else if (l > 0.88f) borderInk else Math.max(borderInk, burin)
+                        outArr[idx] = Color.rgb(
+                            (246f * (1f - ink) + 16f * ink).toInt().coerceIn(0, 255),
+                            (239f * (1f - ink) + 14f * ink).toInt().coerceIn(0, 255),
+                            (224f * (1f - ink) + 12f * ink).toInt().coerceIn(0, 255)
+                        )
                     }
                 }
             }
@@ -2995,22 +3235,30 @@ class MainActivity : AppCompatActivity() {
                 for (y in 0 until sh) {
                     for (x in 0 until sw) {
                         val idx = y * sw + x
-                        val l = lumArr(pxArr, x, y)
-                        val grain = (((x * 19 + y * 31) % 21) - 10)
-                        val v = (l * 0.88f + 18f + grain).toInt().coerceIn(16, 240)
-                        outArr[idx] = Color.rgb(v, (v - 3).coerceAtLeast(14), (v - 10).coerceAtLeast(12))
+                        val c = pxArr[idx]
+                        val r0 = (c shr 16) and 0xFF
+                        val g0 = (c shr 8) and 0xFF
+                        val b0 = c and 0xFF
+                        val l = Math.max(1f, 0.299f * r0 + 0.587f * g0 + 0.114f * b0)
+                        val stoneBand = softCelBand(l, 5)
+                        val sc = stoneBand / l
+                        val inkLine = smoothstep(30f, 66f, sobelAt(pxArr, x, y)) * 0.44f
+                        val r = ((l + (r0 - l) * 0.42f) * sc * 0.92f + 16f) * (1f - inkLine)
+                        val g = ((l + (g0 - l) * 0.42f) * sc * 0.90f + 14f) * (1f - inkLine)
+                        val b = ((l + (b0 - l) * 0.36f) * sc * 0.85f + 10f) * (1f - inkLine)
+                        outArr[idx] = Color.rgb(r.toInt().coerceIn(16, 246), g.toInt().coerceIn(16, 242), b.toInt().coerceIn(14, 234))
                     }
                 }
             }
             "solarize" -> {
                 for (i in pxArr.indices) {
                     val c = pxArr[i]
-                    val r = (c shr 16) and 0xFF
-                    val g = (c shr 8) and 0xFF
-                    val b = c and 0xFF
-                    val sr = if (r > 128) (255 - ((r - 128) * 1.9f).toInt()).coerceIn(0, 255) else r
-                    val sg = if (g > 128) (255 - ((g - 128) * 1.85f).toInt()).coerceIn(0, 255) else g
-                    val sb = if (b > 128) (255 - ((b - 128) * 1.75f).toInt()).coerceIn(0, 255) else b
+                    val nr = ((c shr 16) and 0xFF) / 255.0
+                    val ng = ((c shr 8) and 0xFF) / 255.0
+                    val nb = (c and 0xFF) / 255.0
+                    val sr = (Math.sin(Math.PI * Math.pow(nr, 0.88)) * 246.0 + 6.0).toInt().coerceIn(0, 255)
+                    val sg = (Math.sin(Math.PI * Math.pow(ng, 0.90)) * 244.0 + 8.0).toInt().coerceIn(0, 255)
+                    val sb = (Math.sin(Math.PI * Math.pow(nb, 0.92)) * 248.0 + 10.0).toInt().coerceIn(0, 255)
                     outArr[i] = Color.rgb(sr, sg, sb)
                 }
             }
@@ -4325,11 +4573,10 @@ class MainActivity : AppCompatActivity() {
     private fun navigateNextEffectOrFilter() {
         when (currentCreativeTarget) {
             CreativeTarget.LENSES -> {
-                val lensList = listOf("none", "mesh_contour", "cyberpunk_visor", "golden_crown", "scifi_hud")
-                val currentIdx = lensList.indexOf(currentArLensName)
+                val currentIdx = arLensOrder.indexOf(currentArLensName)
                 val safeIdx = if (currentIdx >= 0) currentIdx else 0
-                val nextIdx = (safeIdx + 1) % lensList.size
-                setArLens(lensList[nextIdx])
+                val nextIdx = (safeIdx + 1) % arLensOrder.size
+                setArLens(arLensOrder[nextIdx])
             }
             CreativeTarget.EFFECTS -> {
                 val modeEffects = getModeFilteredShootingEffects()
@@ -4352,36 +4599,10 @@ class MainActivity : AppCompatActivity() {
                 setShootingEffect(toonStyleOrder[nextIdx])
             }
             else -> {
-                val filterList = listOf(
-                    "normal",
-                    "lut_rec709",
-                    "lut_flat_log",
-                    "lut_teal_orange",
-                    "lut_bleach_bypass",
-                    "lut_anamorphic_cyan",
-                    "lut_matte_cinema",
-                    "lut_midnight_neon",
-                    "lut_warm_documentary",
-                    "lut_noir_cinema",
-                    "golden_nostalgia",
-                    "velvia_landscape",
-                    "nordic_slate",
-                    "arctic_mist",
-                    "classic_mono",
-                    "high_contrast_noir",
-                    "ilford_grain",
-                    "silver_gelatin",
-                    "antique_sepia",
-                    "cinematic",
-                    "vintage",
-                    "bw",
-                    "cyberpunk",
-                    "hdr"
-                )
-                val currentIdx = filterList.indexOf(currentFilterName)
+                val currentIdx = filterPresetOrder.indexOf(currentFilterName)
                 val safeIdx = if (currentIdx >= 0) currentIdx else 0
-                val nextIdx = (safeIdx + 1) % filterList.size
-                setFilterPreset(filterList[nextIdx])
+                val nextIdx = (safeIdx + 1) % filterPresetOrder.size
+                setFilterPreset(filterPresetOrder[nextIdx])
             }
         }
         window.decorView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
@@ -4390,11 +4611,10 @@ class MainActivity : AppCompatActivity() {
     private fun navigatePreviousEffectOrFilter() {
         when (currentCreativeTarget) {
             CreativeTarget.LENSES -> {
-                val lensList = listOf("none", "mesh_contour", "cyberpunk_visor", "golden_crown", "scifi_hud")
-                val currentIdx = lensList.indexOf(currentArLensName)
+                val currentIdx = arLensOrder.indexOf(currentArLensName)
                 val safeIdx = if (currentIdx >= 0) currentIdx else 0
-                val prevIdx = if (safeIdx <= 0) lensList.size - 1 else safeIdx - 1
-                setArLens(lensList[prevIdx])
+                val prevIdx = if (safeIdx <= 0) arLensOrder.size - 1 else safeIdx - 1
+                setArLens(arLensOrder[prevIdx])
             }
             CreativeTarget.EFFECTS -> {
                 val modeEffects = getModeFilteredShootingEffects()
@@ -4417,36 +4637,10 @@ class MainActivity : AppCompatActivity() {
                 setShootingEffect(toonStyleOrder[prevIdx])
             }
             else -> {
-                val filterList = listOf(
-                    "normal",
-                    "lut_rec709",
-                    "lut_flat_log",
-                    "lut_teal_orange",
-                    "lut_bleach_bypass",
-                    "lut_anamorphic_cyan",
-                    "lut_matte_cinema",
-                    "lut_midnight_neon",
-                    "lut_warm_documentary",
-                    "lut_noir_cinema",
-                    "golden_nostalgia",
-                    "velvia_landscape",
-                    "nordic_slate",
-                    "arctic_mist",
-                    "classic_mono",
-                    "high_contrast_noir",
-                    "ilford_grain",
-                    "silver_gelatin",
-                    "antique_sepia",
-                    "cinematic",
-                    "vintage",
-                    "bw",
-                    "cyberpunk",
-                    "hdr"
-                )
-                val currentIdx = filterList.indexOf(currentFilterName)
+                val currentIdx = filterPresetOrder.indexOf(currentFilterName)
                 val safeIdx = if (currentIdx >= 0) currentIdx else 0
-                val prevIdx = if (safeIdx <= 0) filterList.size - 1 else safeIdx - 1
-                setFilterPreset(filterList[prevIdx])
+                val prevIdx = if (safeIdx <= 0) filterPresetOrder.size - 1 else safeIdx - 1
+                setFilterPreset(filterPresetOrder[prevIdx])
             }
         }
         window.decorView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)

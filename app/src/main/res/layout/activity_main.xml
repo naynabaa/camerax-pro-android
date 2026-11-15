@@ -2174,7 +2174,7 @@
             android:clickable="false"
             android:focusable="false" />
 
-        <!-- Top Floating Category Bar (Docked directly under top toolbar) -->
+        <!-- Top Floating Category Bar (2-Row Layout: Category Pills + Full-Width Active Readout) -->
         <LinearLayout
             android:id="@+id/layoutEffectsHeader"
             android:layout_width="match_parent"
@@ -2184,110 +2184,142 @@
             android:paddingHorizontal="10dp"
             android:paddingVertical="8dp"
             android:background="@drawable/bg_pro_drawer"
-            android:orientation="horizontal"
-            android:gravity="center_vertical"
+            android:orientation="vertical"
             app:layout_constraintTop_toTopOf="parent"
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintEnd_toEndOf="parent">
 
-            <!-- Category Switcher Pill: FILTERS | LENSES | EFFECTS | ART -->
             <LinearLayout
-                android:layout_width="wrap_content"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:background="@drawable/bg_tabs_bar"
                 android:orientation="horizontal"
-                android:padding="2dp">
+                android:gravity="center_vertical">
 
-                <TextView
-                    android:id="@+id/btnCategoryFilters"
-                    android:layout_width="wrap_content"
-                    android:layout_height="28dp"
-                    android:paddingHorizontal="6dp"
-                    android:gravity="center"
-                    android:text="FILTERS"
-                    android:textColor="#0F172A"
-                    android:textSize="8.5sp"
-                    android:textStyle="bold"
-                    android:fontFamily="monospace"
-                    android:background="@drawable/bg_cinema_button_active" />
+                <!-- Category Switcher Pill: FILTERS | LENSES | EFFECTS | ART | TOON -->
+                <HorizontalScrollView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:scrollbars="none">
 
-                <TextView
-                    android:id="@+id/btnCategoryLenses"
-                    android:layout_width="wrap_content"
-                    android:layout_height="28dp"
-                    android:layout_marginStart="2dp"
-                    android:paddingHorizontal="6dp"
-                    android:gravity="center"
-                    android:text="LENSES"
-                    android:textColor="#94A3B8"
-                    android:textSize="8.5sp"
-                    android:fontFamily="monospace"
-                    android:background="@drawable/bg_cinema_button_inactive" />
+                    <LinearLayout
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:background="@drawable/bg_tabs_bar"
+                        android:orientation="horizontal"
+                        android:padding="2dp">
 
-                <TextView
-                    android:id="@+id/btnCategoryEffects"
-                    android:layout_width="wrap_content"
-                    android:layout_height="28dp"
-                    android:layout_marginStart="2dp"
-                    android:paddingHorizontal="6dp"
-                    android:gravity="center"
-                    android:text="EFFECTS"
-                    android:textColor="#94A3B8"
-                    android:textSize="8.5sp"
-                    android:fontFamily="monospace"
-                    android:background="@drawable/bg_cinema_button_inactive" />
+                        <TextView
+                            android:id="@+id/btnCategoryFilters"
+                            android:layout_width="wrap_content"
+                            android:layout_height="28dp"
+                            android:paddingHorizontal="8dp"
+                            android:gravity="center"
+                            android:text="FILTERS"
+                            android:textColor="#0F172A"
+                            android:textSize="9sp"
+                            android:textStyle="bold"
+                            android:fontFamily="monospace"
+                            android:background="@drawable/bg_cinema_button_active" />
 
-                <TextView
-                    android:id="@+id/btnCategoryArt"
-                    android:layout_width="wrap_content"
-                    android:layout_height="28dp"
-                    android:layout_marginStart="2dp"
-                    android:paddingHorizontal="6dp"
-                    android:gravity="center"
-                    android:text="ART"
-                    android:textColor="#94A3B8"
-                    android:textSize="8.5sp"
-                    android:fontFamily="monospace"
-                    android:background="@drawable/bg_cinema_button_inactive" />
+                        <TextView
+                            android:id="@+id/btnCategoryLenses"
+                            android:layout_width="wrap_content"
+                            android:layout_height="28dp"
+                            android:layout_marginStart="2dp"
+                            android:paddingHorizontal="8dp"
+                            android:gravity="center"
+                            android:text="LENSES"
+                            android:textColor="#94A3B8"
+                            android:textSize="9sp"
+                            android:fontFamily="monospace"
+                            android:background="@drawable/bg_cinema_button_inactive" />
 
-                <TextView
-                    android:id="@+id/btnCategoryToon"
-                    android:layout_width="wrap_content"
+                        <TextView
+                            android:id="@+id/btnCategoryEffects"
+                            android:layout_width="wrap_content"
+                            android:layout_height="28dp"
+                            android:layout_marginStart="2dp"
+                            android:paddingHorizontal="8dp"
+                            android:gravity="center"
+                            android:text="EFFECTS"
+                            android:textColor="#94A3B8"
+                            android:textSize="9sp"
+                            android:fontFamily="monospace"
+                            android:background="@drawable/bg_cinema_button_inactive" />
+
+                        <TextView
+                            android:id="@+id/btnCategoryArt"
+                            android:layout_width="wrap_content"
+                            android:layout_height="28dp"
+                            android:layout_marginStart="2dp"
+                            android:paddingHorizontal="8dp"
+                            android:gravity="center"
+                            android:text="ART"
+                            android:textColor="#94A3B8"
+                            android:textSize="9sp"
+                            android:fontFamily="monospace"
+                            android:background="@drawable/bg_cinema_button_inactive" />
+
+                        <TextView
+                            android:id="@+id/btnCategoryToon"
+                            android:layout_width="wrap_content"
+                            android:layout_height="28dp"
+                            android:layout_marginStart="2dp"
+                            android:paddingHorizontal="8dp"
+                            android:gravity="center"
+                            android:text="TOON"
+                            android:textColor="#94A3B8"
+                            android:textSize="9sp"
+                            android:fontFamily="monospace"
+                            android:background="@drawable/bg_cinema_button_inactive" />
+                    </LinearLayout>
+                </HorizontalScrollView>
+
+                <ImageButton
+                    android:id="@+id/btnCloseEffectsDrawer"
+                    android:layout_width="28dp"
                     android:layout_height="28dp"
-                    android:layout_marginStart="2dp"
-                    android:paddingHorizontal="6dp"
-                    android:gravity="center"
-                    android:text="TOON"
-                    android:textColor="#94A3B8"
-                    android:textSize="8.5sp"
-                    android:fontFamily="monospace"
-                    android:background="@drawable/bg_cinema_button_inactive" />
+                    android:layout_marginStart="6dp"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:src="@drawable/ic_close"
+                    app:tint="#94A3B8"
+                    android:contentDescription="Close Effects" />
             </LinearLayout>
 
-            <TextView
-                android:id="@+id/tvEffectsActiveStatus"
-                android:layout_width="0dp"
+            <LinearLayout
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:layout_marginStart="10dp"
-                android:text="FILTER: NORMAL"
-                android:textColor="#FFC107"
-                android:textSize="10sp"
-                android:textStyle="bold"
-                android:fontFamily="monospace"
-                android:gravity="center_vertical|end"
-                android:singleLine="true"
-                android:ellipsize="end" />
+                android:layout_marginTop="6dp"
+                android:paddingHorizontal="2dp"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
 
-            <ImageButton
-                android:id="@+id/btnCloseEffectsDrawer"
-                android:layout_width="28dp"
-                android:layout_height="28dp"
-                android:layout_marginStart="6dp"
-                android:background="?attr/selectableItemBackgroundBorderless"
-                android:src="@drawable/ic_close"
-                app:tint="#94A3B8"
-                android:contentDescription="Close Effects" />
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="ACTIVE"
+                    android:textColor="#64748B"
+                    android:textSize="9sp"
+                    android:textStyle="bold"
+                    android:fontFamily="monospace" />
+
+                <TextView
+                    android:id="@+id/tvEffectsActiveStatus"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:layout_marginStart="8dp"
+                    android:text="FILTER: NORMAL (0/23)"
+                    android:textColor="#FFC107"
+                    android:textSize="10.5sp"
+                    android:textStyle="bold"
+                    android:fontFamily="monospace"
+                    android:gravity="center_vertical|end"
+                    android:singleLine="true"
+                    android:ellipsize="marquee"
+                    android:marqueeRepeatLimit="marquee_forever" />
+            </LinearLayout>
         </LinearLayout>
 
         <!-- Bottom Options Floating Strip (Docked directly above mode selector, leaves center 70% open!) -->

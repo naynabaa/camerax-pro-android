@@ -77,6 +77,61 @@ class OpenGLSurfaceProcessor : SurfaceProcessor, SurfaceTexture.OnFrameAvailable
     private var activeEffectId: String = "none"
 
     @Volatile
+    private var activeEffectIntensity: Float = 0.85f
+
+    private val effectIntensities: MutableMap<String, Float> = mutableMapOf(
+        "portrait_bokeh" to 75f / 100f,
+        "long_exposure" to 70f / 100f,
+        "light_painting" to 80f / 100f,
+        "star_trails" to 75f / 100f,
+        "night_sight" to 65f / 100f,
+        "macro_focus" to 70f / 100f,
+        "tilt_shift" to 75f / 100f,
+        "double_exposure" to 55f / 100f,
+        "panorama" to 80f / 100f,
+        "film_grain" to 38f / 100f,
+        "soft_halation" to 65f / 100f,
+        "vignette" to 50f / 100f,
+        "video_bokeh" to 75f / 100f,
+        "slow_motion_120_240" to 80f / 100f,
+        "time_lapse" to 80f / 100f,
+        "hyperlapse" to 75f / 100f,
+        "anamorphic_flare" to 75f / 100f,
+        "dolly_zoom" to 70f / 100f,
+        "motion_blur" to 70f / 100f,
+        "action_stabilization" to 85f / 100f,
+        "vintage_super8" to 80f / 100f,
+        "oil_canvas" to 78f / 100f,
+        "charcoal_sketch" to 80f / 100f,
+        "watercolor_wash" to 75f / 100f,
+        "ink_and_line" to 82f / 100f,
+        "pastel_chalk" to 74f / 100f,
+        "halftone_print" to 80f / 100f,
+        "cyanotype" to 85f / 100f,
+        "woodcut_engraving" to 84f / 100f,
+        "lithograph" to 76f / 100f,
+        "prism_refraction" to 78f / 100f,
+        "kaleidoscope" to 85f / 100f,
+        "solarize" to 82f / 100f,
+        "film_16mm" to 75f / 100f,
+        "vhs_tape" to 82f / 100f,
+        "crt_monitor" to 78f / 100f,
+        "stop_motion" to 80f / 100f,
+        "neon_edge" to 85f / 100f,
+        "noir_graphic_novel" to 86f / 100f,
+        "thermal_vision" to 88f / 100f,
+        "cel_shaded_studio" to 85f / 100f,
+        "graphic_novel_noir" to 88f / 100f,
+        "manga_ink" to 86f / 100f,
+        "pop_art_print" to 86f / 100f,
+        "line_art_minimalist" to 90f / 100f,
+        "ligne_claire" to 84f / 100f,
+        "clay_vinyl_3d" to 82f / 100f,
+        "letterbox" to 100f / 100f,
+        "watermark" to 100f / 100f
+    )
+
+    @Volatile
     private var brightnessPct: Int = 0
 
     @Volatile
@@ -96,6 +151,15 @@ class OpenGLSurfaceProcessor : SurfaceProcessor, SurfaceTexture.OnFrameAvailable
 
     fun setShootingEffect(effectId: String) {
         activeEffectId = effectId
+        activeEffectIntensity = effectIntensities[effectId] ?: 0.85f
+    }
+
+    fun setEffectIntensity(effectId: String, intensityPercent: Int) {
+        val norm = (intensityPercent.coerceIn(0, 100)) / 100f
+        effectIntensities[effectId] = norm
+        if (activeEffectId == effectId) {
+            activeEffectIntensity = norm
+        }
     }
 
     fun setAdjustments(brightness: Int, contrast: Int, saturation: Int) {
@@ -258,6 +322,7 @@ class OpenGLSurfaceProcessor : SurfaceProcessor, SurfaceTexture.OnFrameAvailable
                 GLES20.glUniformMatrix4fv(GLES20.glGetUniformLocation(glProgram, "uTexMatrix"), 1, false, texMatrix, 0)
                 GLES20.glUniform1i(GLES20.glGetUniformLocation(glProgram, "uFilterMode"), filterCode)
                 GLES20.glUniform1i(GLES20.glGetUniformLocation(glProgram, "uEffectMode"), effectCode)
+                GLES20.glUniform1f(GLES20.glGetUniformLocation(glProgram, "uEffectIntensity"), activeEffectIntensity)
                 GLES20.glUniform3f(GLES20.glGetUniformLocation(glProgram, "uAdjustments"), briVal, conVal, satVal)
                 GLES20.glUniform1f(GLES20.glGetUniformLocation(glProgram, "uNightBoost"), if (nightBoost) 1f else 0f)
                 GLES20.glUniform1f(GLES20.glGetUniformLocation(glProgram, "uTime"), uTimeSec)
@@ -406,6 +471,7 @@ class OpenGLSurfaceProcessor : SurfaceProcessor, SurfaceTexture.OnFrameAvailable
             uniform samplerExternalOES sTexture;
             uniform int uFilterMode;
             uniform int uEffectMode;
+            uniform float uEffectIntensity;
             uniform vec3 uAdjustments;
             uniform float uNightBoost;
             uniform float uTime;
@@ -415,32 +481,38 @@ class OpenGLSurfaceProcessor : SurfaceProcessor, SurfaceTexture.OnFrameAvailable
                 return dot(c, vec3(0.299, 0.587, 0.114));
             }
 
-            vec3 biTap(vec2 uv, vec2 off, vec3 center, inout float wSum) {
+            vec3 biTap(vec2 uv, vec2 off, vec3 center, float spatialW, inout float wSum) {
                 vec3 s = texture2D(sTexture, clamp(uv + off, 0.0, 1.0)).rgb;
                 float dc = length(s - center);
-                float w = exp(-dc * dc * 28.0);
+                float w = spatialW * exp(-dc * dc * 24.0);
                 wSum += w;
                 return s * w;
             }
 
             vec3 smoothSample(vec2 uv, float spread) {
                 vec2 o = uTexelSize * spread;
+                vec2 o2 = o * 2.0;
                 vec3 center = texture2D(sTexture, uv).rgb;
-                vec3 acc = center * 4.0;
-                float wSum = 4.0;
-                acc += biTap(uv, vec2(-o.x, -o.y), center, wSum);
-                acc += biTap(uv, vec2( 0.0, -o.y), center, wSum);
-                acc += biTap(uv, vec2( o.x, -o.y), center, wSum);
-                acc += biTap(uv, vec2(-o.x,  0.0), center, wSum);
-                acc += biTap(uv, vec2( o.x,  0.0), center, wSum);
-                acc += biTap(uv, vec2(-o.x,  o.y), center, wSum);
-                acc += biTap(uv, vec2( 0.0,  o.y), center, wSum);
-                acc += biTap(uv, vec2( o.x,  o.y), center, wSum);
+                vec3 acc = center * 3.0;
+                float wSum = 3.0;
+                acc += biTap(uv, vec2(-o.x, -o.y), center, 0.75, wSum);
+                acc += biTap(uv, vec2( 0.0, -o.y), center, 1.00, wSum);
+                acc += biTap(uv, vec2( o.x, -o.y), center, 0.75, wSum);
+                acc += biTap(uv, vec2(-o.x,  0.0), center, 1.00, wSum);
+                acc += biTap(uv, vec2( o.x,  0.0), center, 1.00, wSum);
+                acc += biTap(uv, vec2(-o.x,  o.y), center, 0.75, wSum);
+                acc += biTap(uv, vec2( 0.0,  o.y), center, 1.00, wSum);
+                acc += biTap(uv, vec2( o.x,  o.y), center, 0.75, wSum);
+                acc += biTap(uv, vec2(-o2.x, 0.0), center, 0.45, wSum);
+                acc += biTap(uv, vec2( o2.x, 0.0), center, 0.45, wSum);
+                acc += biTap(uv, vec2( 0.0, -o2.y), center, 0.45, wSum);
+                acc += biTap(uv, vec2( 0.0,  o2.y), center, 0.45, wSum);
                 return acc / max(wSum, 0.001);
             }
 
-            float sobelEdge(vec2 uv, float spread) {
+            float xdogEdge(vec2 uv, float spread) {
                 vec2 o = uTexelSize * spread;
+                vec2 oWide = uTexelSize * (spread * 2.4);
                 vec3 tl = texture2D(sTexture, clamp(uv + vec2(-o.x, -o.y), 0.0, 1.0)).rgb;
                 vec3 tc = texture2D(sTexture, clamp(uv + vec2( 0.0, -o.y), 0.0, 1.0)).rgb;
                 vec3 tr = texture2D(sTexture, clamp(uv + vec2( o.x, -o.y), 0.0, 1.0)).rgb;
@@ -452,16 +524,65 @@ class OpenGLSurfaceProcessor : SurfaceProcessor, SurfaceTexture.OnFrameAvailable
                 vec3 br = texture2D(sTexture, clamp(uv + vec2( o.x,  o.y), 0.0, 1.0)).rgb;
                 vec3 gx = -tl - 2.0 * ml - bl + tr + 2.0 * mr + br;
                 vec3 gy = -tl - 2.0 * tc - tr + bl + 2.0 * bc + br;
-                float vecEdge = sqrt(dot(gx, gx) * 0.45 + dot(gy, gy) * 0.45);
-                float crease = max(0.0, luma((tc + bc + ml + mr) * 0.25) - luma(mc)) * 1.4;
-                return vecEdge + crease;
+                float vecEdge = sqrt(dot(gx, gx) * 0.42 + dot(gy, gy) * 0.42);
+
+                float fineLum = (luma(mc) * 2.0 + luma(tc) + luma(bc) + luma(ml) + luma(mr)) / 6.0;
+                float wideLum = (
+                    luma(texture2D(sTexture, clamp(uv + vec2(-oWide.x, -oWide.y), 0.0, 1.0)).rgb) +
+                    luma(texture2D(sTexture, clamp(uv + vec2( oWide.x, -oWide.y), 0.0, 1.0)).rgb) +
+                    luma(texture2D(sTexture, clamp(uv + vec2(-oWide.x,  oWide.y), 0.0, 1.0)).rgb) +
+                    luma(texture2D(sTexture, clamp(uv + vec2( oWide.x,  oWide.y), 0.0, 1.0)).rgb)
+                ) * 0.25;
+                float dog = max(0.0, wideLum - fineLum - 0.015) * 4.2;
+                return clamp(max(vecEdge, dog * 0.9), 0.0, 1.5);
             }
 
             float softCelBand(float lum, float bands) {
                 float scaled = clamp(lum, 0.0, 1.0) * bands;
                 float b = floor(scaled);
                 float f = scaled - b;
-                return clamp((b + smoothstep(0.36, 0.64, f)) / bands * 0.94 + 0.04, 0.05, 0.99);
+                return clamp((b + smoothstep(0.32, 0.68, f)) / bands * 0.94 + 0.04, 0.05, 0.99);
+            }
+
+            float halftone45(vec2 uv, float lum, float pitch) {
+                vec2 p = uv * pitch;
+                vec2 rot = vec2(p.x * 0.7071 - p.y * 0.7071, p.x * 0.7071 + p.y * 0.7071);
+                vec2 cell = fract(rot) - 0.5;
+                float radius = sqrt(clamp(1.0 - lum, 0.0, 1.0)) * 0.48;
+                return smoothstep(radius - 0.06, radius + 0.06, length(cell));
+            }
+
+            float paperHash(vec2 uv) {
+                return fract(sin(dot(uv, vec2(127.1, 311.7))) * 43758.5453);
+            }
+
+            vec3 kuwaharaOil(vec2 uv, float spread) {
+                vec2 s = uTexelSize * spread;
+                vec3 m0 = vec3(0.0); vec3 m1 = vec3(0.0); vec3 m2 = vec3(0.0); vec3 m3 = vec3(0.0);
+                float q0 = 0.0; float q1 = 0.0; float q2 = 0.0; float q3 = 0.0;
+                for (int dy = -2; dy <= 0; dy++) {
+                    for (int dx = -2; dx <= 0; dx++) {
+                        vec3 c0 = texture2D(sTexture, clamp(uv + vec2(float(dx), float(dy)) * s, 0.0, 1.0)).rgb;
+                        m0 += c0; float l0 = luma(c0); q0 += l0 * l0;
+                        vec3 c1 = texture2D(sTexture, clamp(uv + vec2(float(-dx), float(dy)) * s, 0.0, 1.0)).rgb;
+                        m1 += c1; float l1 = luma(c1); q1 += l1 * l1;
+                        vec3 c2 = texture2D(sTexture, clamp(uv + vec2(float(dx), float(-dy)) * s, 0.0, 1.0)).rgb;
+                        m2 += c2; float l2 = luma(c2); q2 += l2 * l2;
+                        vec3 c3 = texture2D(sTexture, clamp(uv + vec2(float(-dx), float(-dy)) * s, 0.0, 1.0)).rgb;
+                        m3 += c3; float l3 = luma(c3); q3 += l3 * l3;
+                    }
+                }
+                m0 /= 9.0; m1 /= 9.0; m2 /= 9.0; m3 /= 9.0;
+                float v0 = q0 / 9.0 - pow(luma(m0), 2.0);
+                float v1 = q1 / 9.0 - pow(luma(m1), 2.0);
+                float v2 = q2 / 9.0 - pow(luma(m2), 2.0);
+                float v3 = q3 / 9.0 - pow(luma(m3), 2.0);
+                vec3 best = m0;
+                float bestV = v0;
+                if (v1 < bestV) { bestV = v1; best = m1; }
+                if (v2 < bestV) { bestV = v2; best = m2; }
+                if (v3 < bestV) { best = m3; }
+                return best;
             }
 
             void main() {
@@ -495,86 +616,155 @@ class OpenGLSurfaceProcessor : SurfaceProcessor, SurfaceTexture.OnFrameAvailable
                     color = color * 0.72 + 0.12;
                 }
 
-                float edge = sobelEdge(uv, 1.6);
-                vec3 smoothed = smoothSample(uv, 2.2);
+                vec3 baseEffectColor = texture2D(sTexture, clamp(vTexCoord, 0.0, 1.0)).rgb;
+                if (uNightBoost > 0.5) {
+                    baseEffectColor = pow(max(baseEffectColor, vec3(0.001)), vec3(0.62)) + vec3(0.03);
+                }
+                if (uFilterMode == 1) {
+                    float g0 = luma(baseEffectColor);
+                    baseEffectColor = vec3((g0 - 0.5) * 1.28 + 0.5);
+                } else if (uFilterMode == 2) {
+                    float g0 = luma(baseEffectColor);
+                    baseEffectColor = mix(baseEffectColor, vec3(g0 * 1.08 + 0.05, g0 * 0.94 + 0.02, g0 * 0.72), 0.72);
+                } else if (uFilterMode == 3) {
+                    baseEffectColor = vec3(baseEffectColor.r * 1.16, baseEffectColor.g * 1.02, baseEffectColor.b * 0.90 + 0.05);
+                } else if (uFilterMode == 4) {
+                    baseEffectColor = vec3(baseEffectColor.r * 1.24, baseEffectColor.g * 0.92, baseEffectColor.b * 1.32);
+                } else if (uFilterMode == 5) {
+                    baseEffectColor = (baseEffectColor - 0.5) * 1.22 + 0.5;
+                } else if (uFilterMode == 6) {
+                    baseEffectColor = baseEffectColor * 0.72 + 0.12;
+                }
+
+                float edge = xdogEdge(uv, 1.65);
+                vec3 smoothed = smoothSample(uv, 2.35);
                 float lum = luma(smoothed);
 
                 if (uEffectMode == 1) {
                     float bandL = softCelBand(lum, 5.0);
-                    vec3 vib = mix(vec3(lum), smoothed, 1.34) * (bandL / max(lum, 0.01));
-                    float shadowT = smoothstep(0.42, 0.16, bandL);
-                    vib += vec3(-0.03 * shadowT, -0.01 * shadowT, 0.04 * shadowT);
-                    float ink = smoothstep(0.18, 0.36, edge);
-                    color = mix(clamp(vib, 0.0, 1.0), vec3(0.04, 0.05, 0.09), ink);
+                    vec3 vib = mix(vec3(lum), smoothed, 1.36) * (bandL / max(lum, 0.02));
+                    float shadowT = smoothstep(0.42, 0.14, bandL);
+                    float spec = smoothstep(0.84, 0.95, lum) * 0.12;
+                    vib += vec3(-0.025 * shadowT, -0.008 * shadowT, 0.045 * shadowT) + vec3(spec);
+                    float ink = smoothstep(0.21, 0.40, edge);
+                    color = mix(clamp(vib, 0.0, 1.0), vec3(0.035, 0.045, 0.085), ink);
                 } else if (uEffectMode == 2) {
-                    float ink = smoothstep(0.18, 0.34, edge);
-                    float shadow = smoothstep(0.34, 0.24, lum);
-                    float mid = smoothstep(0.60, 0.48, lum);
-                    float baseG = mix(0.97, 0.48, mid);
-                    baseG = mix(baseG, 0.04, shadow);
-                    color = vec3(mix(baseG, 0.03, ink));
+                    float ink = smoothstep(0.19, 0.36, edge);
+                    float shadow = smoothstep(0.32, 0.22, lum);
+                    float mid = smoothstep(0.62, 0.48, lum);
+                    float baseG = mix(0.98, 0.50, mid);
+                    baseG = mix(baseG, 0.035, shadow);
+                    color = vec3(mix(baseG, 0.025, ink));
                 } else if (uEffectMode == 3) {
-                    float gx = floor(uv.x * 260.0);
-                    float gy = floor(uv.y * 260.0);
-                    float dotMask = step(0.5, mod(gx + mod(gy, 2.0) * 2.0, 3.0)) * step(0.5, mod(gy, 2.0));
-                    float ink = smoothstep(0.17, 0.33, edge);
-                    float shade = max(ink, (lum < 0.17 || (lum < 0.52 && dotMask < 0.5)) ? 0.85 : 0.0);
-                    color = mix(vec3(0.99, 0.98, 0.96), vec3(0.05, 0.06, 0.08), shade);
-                } else if (uEffectMode == 4) {
-                    vec3 pop = smoothed.r > smoothed.g && smoothed.r > smoothed.b ? vec3(0.95, 0.15, 0.32)
-                             : (smoothed.b > smoothed.r ? vec3(0.14, 0.44, 0.95) : vec3(0.98, 0.84, 0.14));
+                    float st = halftone45(uv, lum, 180.0);
                     float ink = smoothstep(0.18, 0.34, edge);
-                    color = mix(pop, vec3(0.04, 0.04, 0.06), ink);
+                    float paper = lum > 0.62 ? 0.97 : (lum < 0.22 ? 0.05 : st);
+                    float finalVal = mix(paper, 0.04, ink);
+                    color = vec3(finalVal * 0.99, finalVal * 0.98, finalVal * 0.96);
+                } else if (uEffectMode == 4) {
+                    vec3 basePop = smoothed.r > smoothed.g && smoothed.r > smoothed.b ? vec3(0.95, 0.16, 0.34)
+                                 : (smoothed.b > smoothed.r ? vec3(0.12, 0.46, 0.96) : vec3(0.99, 0.85, 0.12));
+                    float dotMask = halftone45(uv, clamp(lum * 1.15, 0.0, 1.0), 125.0);
+                    vec3 shadedPop = mix(basePop * 0.72, basePop, dotMask);
+                    float ink = smoothstep(0.19, 0.36, edge);
+                    color = mix(shadedPop, vec3(0.04, 0.04, 0.06), ink);
                 } else if (uEffectMode == 5) {
-                    float ink = smoothstep(0.15, 0.31, edge);
-                    color = mix(vec3(0.99, 0.98, 0.96), vec3(0.05, 0.06, 0.08), ink);
+                    float ink = smoothstep(0.16, 0.33, edge);
+                    color = mix(vec3(0.985, 0.975, 0.955), vec3(0.05, 0.06, 0.085), ink);
                 } else if (uEffectMode == 6) {
-                    float bandL = softCelBand(lum, 5.0) * 0.78 + 0.20;
-                    vec3 clean = mix(vec3(lum), smoothed, 0.92) * (bandL / max(lum, 0.01));
-                    float ink = smoothstep(0.18, 0.35, edge);
-                    color = mix(clamp(clean, 0.0, 1.0), vec3(0.09, 0.09, 0.08), ink);
+                    float bandL = softCelBand(lum, 5.0) * 0.76 + 0.22;
+                    vec3 clean = mix(vec3(lum), smoothed, 0.96) * (bandL / max(lum, 0.02));
+                    float ink = smoothstep(0.20, 0.37, edge) * 0.88;
+                    color = mix(clamp(clean, 0.0, 1.0), vec3(0.10, 0.09, 0.08), ink);
                 } else if (uEffectMode == 7) {
-                    float rim = pow(clamp(1.0 - lum, 0.0, 1.0), 2.0) * 0.18;
-                    float edgeRim = smoothstep(0.22, 0.50, edge) * 0.24;
-                    color = clamp(smoothSample(uv, 2.8) * 1.06 + vec3(rim), 0.0, 1.0) * (1.0 - edgeRim);
+                    vec2 eps = uTexelSize * 2.4;
+                    float lL = luma(texture2D(sTexture, clamp(uv - vec2(eps.x, 0.0), 0.0, 1.0)).rgb);
+                    float lR = luma(texture2D(sTexture, clamp(uv + vec2(eps.x, 0.0), 0.0, 1.0)).rgb);
+                    float lU = luma(texture2D(sTexture, clamp(uv - vec2(0.0, eps.y), 0.0, 1.0)).rgb);
+                    float lD = luma(texture2D(sTexture, clamp(uv + vec2(0.0, eps.y), 0.0, 1.0)).rgb);
+                    vec3 n = normalize(vec3((lL - lR) * 3.8, (lU - lD) * 3.8, 0.65));
+                    vec3 lightDir = normalize(vec3(-0.45, -0.55, 0.70));
+                    vec3 halfDir = normalize(lightDir + vec3(0.0, 0.0, 1.0));
+                    float diff = max(0.0, (dot(n, lightDir) + 0.35) / 1.35);
+                    float spec = pow(max(0.0, dot(n, halfDir)), 24.0) * 0.42;
+                    float rim = pow(1.0 - max(0.0, n.z), 2.2) * 0.22;
+                    vec3 clay = smoothSample(uv, 3.0) * (0.68 + 0.42 * diff) + vec3(spec + rim);
+                    color = clamp(clay, 0.0, 1.0);
                 } else if (uEffectMode == 8) {
-                    color = floor(smoothSample(uv, 2.6) * 5.5 + 0.3) / 5.5;
+                    vec3 kuw = kuwaharaOil(uv, 2.2);
+                    float sLum = luma(kuw);
+                    vec2 gOff = uTexelSize * 2.0;
+                    float dxL = luma(texture2D(sTexture, clamp(uv + vec2(gOff.x, 0.0), 0.0, 1.0)).rgb) - luma(texture2D(sTexture, clamp(uv - vec2(gOff.x, 0.0), 0.0, 1.0)).rgb);
+                    float dyL = luma(texture2D(sTexture, clamp(uv + vec2(0.0, gOff.y), 0.0, 1.0)).rgb) - luma(texture2D(sTexture, clamp(uv - vec2(0.0, gOff.y), 0.0, 1.0)).rgb);
+                    float relief = clamp((-dxL * 0.45 - dyL * 0.55) * 0.28, -0.06, 0.09);
+                    vec3 oil = mix(vec3(sLum), kuw, 1.26) + vec3(relief + 0.012, relief + 0.004, relief - 0.010);
+                    color = clamp(oil, 0.0, 1.0);
                 } else if (uEffectMode == 9) {
-                    float hatch = mod(floor((uv.x + uv.y) * 220.0), 3.0) < 1.0 ? 0.36 : 0.90;
-                    color = vec3(clamp(mix(lum * 0.4 + 0.58, hatch, step(lum, 0.35)) - edge * 0.9, 0.08, 0.96));
+                    float h1 = 0.5 + 0.5 * sin((uv.x + uv.y) * 520.0);
+                    float h2 = 0.5 + 0.5 * sin((uv.x - uv.y) * 520.0);
+                    float midShade = smoothstep(0.62, 0.28, lum) * (0.28 + 0.42 * h1);
+                    float deepShade = smoothstep(0.32, 0.09, lum) * (0.42 + 0.46 * h2);
+                    float inkEdge = smoothstep(0.16, 0.36, edge) * 0.94;
+                    float shade = max(inkEdge, max(midShade, deepShade));
+                    float paper = 0.96 - (1.0 - lum) * 0.07;
+                    float val = mix(paper, 0.085, shade);
+                    color = clamp(vec3(val * 1.01, val * 0.99, val * 0.95), 0.05, 0.98);
                 } else if (uEffectMode == 10) {
-                    color = mix(smoothSample(uv, 3.0), vec3(0.96, 0.94, 0.90), 0.18);
+                    vec3 wash = mix(kuwaharaOil(uv, 2.0), smoothed, 0.35);
+                    float wLum = luma(wash);
+                    float bleach = smoothstep(0.75, 0.96, wLum) * 0.62;
+                    vec3 vibrant = mix(mix(vec3(wLum), wash, 1.38) + vec3(0.05), vec3(0.98, 0.97, 0.94), bleach);
+                    float pool = 1.0 - smoothstep(0.18, 0.44, edge) * 0.24;
+                    color = clamp(vibrant * pool, 0.0, 1.0);
                 } else if (uEffectMode == 11) {
-                    color = (edge > 0.20 || lum < 0.16) ? vec3(0.07) : vec3(0.98, 0.97, 0.93);
+                    float nib = smoothstep(0.16, 0.33, edge);
+                    float solid = smoothstep(0.18, 0.08, lum);
+                    float w1 = smoothstep(0.62, 0.92, 0.5 + 0.5 * sin((uv.x + uv.y) * 580.0));
+                    float h = max(smoothstep(0.42, 0.26, lum) * w1 * 0.78, solid);
+                    float ink = max(nib, h);
+                    color = mix(vec3(0.985, 0.975, 0.955), vec3(0.055, 0.06, 0.08), ink);
                 } else if (uEffectMode == 12) {
-                    float r = step(0.35, sin(uv.x * 380.0) * sin(uv.y * 380.0) + lum * 1.4 - 0.5);
-                    color = mix(vec3(0.08), vec3(0.96, 0.94, 0.88), r);
+                    float cInk = halftone45(uv + vec2(0.001, 0.0), smoothed.r, 150.0);
+                    float mInk = halftone45(uv + vec2(0.0, 0.001), smoothed.g, 150.0);
+                    float yInk = halftone45(uv - vec2(0.001, 0.0), smoothed.b, 150.0);
+                    color = clamp(vec3(cInk, mInk, yInk) * 0.85 + smoothed * 0.18, 0.0, 1.0);
                 } else if (uEffectMode == 13) {
-                    color = mix(vec3(0.03, 0.13, 0.31), vec3(0.88, 0.95, 1.0), luma(color));
+                    float s = lum * lum * (3.0 - 2.0 * lum);
+                    float cLum = pow(clamp(s * 1.04, 0.0, 1.0), 0.88);
+                    color = mix(vec3(0.03, 0.125, 0.30), vec3(0.92, 0.965, 1.0), cLum);
                 } else if (uEffectMode == 14) {
-                    float groove = sin(uv.y * 520.0) * 0.08;
-                    color = (luma(color) + groove) > 0.46 ? vec3(0.95, 0.93, 0.88) : vec3(0.05, 0.04, 0.03);
+                    float wave = 0.5 + 0.5 * sin(uv.y * 560.0 + sin(uv.x * 36.0) * 2.2);
+                    float burin = smoothstep(lum - 0.14, lum + 0.14, wave);
+                    float borderInk = smoothstep(0.18, 0.36, edge);
+                    float ink = lum < 0.14 ? 1.0 : (lum > 0.88 ? borderInk : max(borderInk, burin));
+                    color = mix(vec3(0.965, 0.937, 0.878), vec3(0.06, 0.05, 0.045), ink);
                 } else if (uEffectMode == 15) {
-                    color = mix(vec3(lum * 0.96, lum * 0.93, lum * 0.86), smoothed * 0.9, 0.26);
+                    vec3 lithBase = mix(kuwaharaOil(uv, 1.8), smoothed, 0.35);
+                    float stL = softCelBand(luma(lithBase), 5.0);
+                    vec3 muted = mix(vec3(stL), lithBase * (stL / max(luma(lithBase), 0.02)), 0.42);
+                    float line = smoothstep(0.19, 0.40, edge) * 0.44;
+                    color = clamp((muted * 0.92 + vec3(0.06, 0.05, 0.04)) * (1.0 - line), 0.06, 0.96);
                 } else if (uEffectMode == 16) {
-                    float rC = texture2D(sTexture, clamp(uv + vec2(-0.012, -0.004), 0.0, 1.0)).r;
-                    float bC = texture2D(sTexture, clamp(uv + vec2( 0.012,  0.004), 0.0, 1.0)).b;
-                    color = vec3(rC, color.g, bC);
+                    float rC = texture2D(sTexture, clamp(uv + vec2(-0.014, -0.005), 0.0, 1.0)).r;
+                    float gC = texture2D(sTexture, clamp(uv + vec2( 0.002,  0.002), 0.0, 1.0)).g;
+                    float bC = texture2D(sTexture, clamp(uv + vec2( 0.014,  0.005), 0.0, 1.0)).b;
+                    color = clamp(vec3(rC, gC, bC) * 1.06, 0.0, 1.0);
                 } else if (uEffectMode == 18) {
                     color = vec3(
-                        color.r > 0.5 ? (1.0 - (color.r - 0.5) * 1.9) : color.r,
-                        color.g > 0.5 ? (1.0 - (color.g - 0.5) * 1.85) : color.g,
-                        color.b > 0.5 ? (1.0 - (color.b - 0.5) * 1.75) : color.b
+                        sin(3.1415926 * pow(clamp(smoothed.r, 0.0, 1.0), 0.88)) * 0.96 + 0.02,
+                        sin(3.1415926 * pow(clamp(smoothed.g, 0.0, 1.0), 0.90)) * 0.95 + 0.03,
+                        sin(3.1415926 * pow(clamp(smoothed.b, 0.0, 1.0), 0.92)) * 0.97 + 0.04
                     );
                 } else if (uEffectMode == 19) {
-                    float eGlow = clamp((edge - 0.08) * 3.4, 0.0, 1.0);
-                    vec3 neon = vec3(0.1 + uv.x * 0.9, 0.95 - uv.y * 0.55, 0.98);
-                    color = vec3(0.02, 0.03, 0.07) + neon * eGlow;
+                    float eGlow = clamp((edge - 0.07) * 3.8, 0.0, 1.0);
+                    vec3 neon = mix(vec3(0.05, 0.92, 1.0), vec3(1.0, 0.18, 0.82), clamp(uv.x * 0.65 + uv.y * 0.35, 0.0, 1.0));
+                    color = smoothed * 0.14 + vec3(0.02, 0.025, 0.06) + neon * eGlow;
                 } else if (uEffectMode == 20) {
-                    float t = luma(color);
-                    color = t < 0.35 ? mix(vec3(0.06, 0.04, 0.34), vec3(0.86, 0.14, 0.42), t / 0.35)
-                          : (t < 0.72 ? mix(vec3(0.86, 0.14, 0.42), vec3(0.99, 0.74, 0.08), (t - 0.35) / 0.37)
-                          : mix(vec3(0.99, 0.74, 0.08), vec3(1.0, 1.0, 0.96), (t - 0.72) / 0.28));
+                    float t = luma(smoothed);
+                    color = t < 0.25 ? mix(vec3(0.03, 0.02, 0.22), vec3(0.45, 0.05, 0.58), t / 0.25)
+                          : (t < 0.52 ? mix(vec3(0.45, 0.05, 0.58), vec3(0.92, 0.18, 0.24), (t - 0.25) / 0.27)
+                          : (t < 0.80 ? mix(vec3(0.92, 0.18, 0.24), vec3(0.99, 0.78, 0.06), (t - 0.52) / 0.28)
+                          : mix(vec3(0.99, 0.78, 0.06), vec3(1.0, 1.0, 0.96), (t - 0.80) / 0.20)));
                 } else if (uEffectMode == 21) {
                     float rC = texture2D(sTexture, clamp(uv + vec2(-0.008, 0.0), 0.0, 1.0)).r;
                     float bC = texture2D(sTexture, clamp(uv + vec2( 0.008, 0.0), 0.0, 1.0)).b;
@@ -596,6 +786,10 @@ class OpenGLSurfaceProcessor : SurfaceProcessor, SurfaceTexture.OnFrameAvailable
                     color *= clamp(1.08 - dist * 1.05, 0.25, 1.0);
                 } else if (uEffectMode == 27) {
                     color += smoothSample(uv, 3.5) * 0.18;
+                }
+
+                if (uEffectMode > 0) {
+                    color = mix(baseEffectColor, color, clamp(uEffectIntensity, 0.0, 1.0));
                 }
 
                 // Apply Brightness / Contrast / Saturation sliders
