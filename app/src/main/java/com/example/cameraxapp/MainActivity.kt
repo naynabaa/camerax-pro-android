@@ -67,6 +67,8 @@ import androidx.camera.video.QualitySelector
 import androidx.camera.core.CameraEffect
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.UseCaseGroup
+import androidx.camera.extensions.ExtensionMode
+import androidx.camera.extensions.ExtensionsManager
 import androidx.camera.video.Recorder
 import androidx.camera.video.Recording
 import androidx.camera.video.VideoCapture
@@ -122,6 +124,10 @@ class MainActivity : AppCompatActivity() {
     private var camera: Camera? = null
     private var cameraControl: CameraControl? = null
     private var cameraProvider: ProcessCameraProvider? = null
+    private var extensionsManager: ExtensionsManager? = null
+    private var isNightExtensionActive: Boolean = false
+    private var preNightExposureIndex: Int = 0
+    private var hasSavedPreNightExposure: Boolean = false
 
     // Default lens is BACK camera
     private var lensFacing: CameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
@@ -662,7 +668,26 @@ class MainActivity : AppCompatActivity() {
 
         cameraProviderFuture.addListener({
             cameraProvider = cameraProviderFuture.get()
-            bindCameraUseCases()
+            val provider = cameraProvider
+            if (provider != null) {
+                try {
+                    val extFuture = ExtensionsManager.getInstanceAsync(this, provider)
+                    extFuture.addListener({
+                        try {
+                            extensionsManager = extFuture.get()
+                        } catch (e: Exception) {
+                            Log.w(TAG, "CameraX ExtensionsManager unavailable, using computational night mode", e)
+                            extensionsManager = null
+                        }
+                        bindCameraUseCases()
+                    }, ContextCompat.getMainExecutor(this))
+                } catch (e: Exception) {
+                    Log.w(TAG, "ExtensionsManager init failed, binding standard camera", e)
+                    bindCameraUseCases()
+                }
+            } else {
+                bindCameraUseCases()
+            }
         }, ContextCompat.getMainExecutor(this))
     }
 
@@ -677,9 +702,14 @@ class MainActivity : AppCompatActivity() {
             it.setSurfaceProvider(viewBinding.viewFinder.surfaceProvider)
         }
 
-        // ImageCapture Use Case
+        // ImageCapture Use Case (Force MAXIMIZE_QUALITY in NIGHT mode for full multi-frame ISP capture)
+        val desiredCaptureMode = if (cameraMode == CameraMode.NIGHT) {
+            ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY
+        } else {
+            ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY
+        }
         imageCapture = ImageCapture.Builder()
-            .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+            .setCaptureMode(desiredCaptureMode)
             .setFlashMode(flashMode)
             .build()
 
@@ -921,30 +951,49 @@ class MainActivity : AppCompatActivity() {
                 }
             }
 
+        var activeNightExt = false
+        val effectiveSelector = if (cameraMode == CameraMode.NIGHT) {
+            try {
+                if (extensionsManager?.isExtensionAvailable(lensFacing, ExtensionMode.NIGHT) == true) {
+                    activeNightExt = true
+                    extensionsManager!!.getExtensionEnabledCameraSelector(lensFacing, ExtensionMode.NIGHT)
+                } else {
+                    lensFacing
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "ExtensionMode.NIGHT check failed, using computational night fallback", e)
+                lensFacing
+            }
+        } else {
+            lensFacing
+        }
+        isNightExtensionActive = activeNightExt
+
         try {
             cameraProvider.unbindAll()
 
             val isPhotoType = cameraMode == CameraMode.PHOTO || cameraMode == CameraMode.PORTRAIT || cameraMode == CameraMode.NIGHT
             if (isPhotoType) {
-                camera = cameraProvider.bindToLifecycle(this, lensFacing, preview, imageCapture!!, imageAnalysis!!)
+                camera = cameraProvider.bindToLifecycle(this, effectiveSelector, preview, imageCapture!!, imageAnalysis!!)
             } else {
                 camera = cameraProvider.bindToLifecycle(this, lensFacing, preview, videoCapture!!, imageAnalysis!!)
             }
 
             cameraControl = camera?.cameraControl
 
-            // Initialize Exposure compensation range from CameraInfo
+            // Initialize Exposure compensation range from CameraInfo (auto-lifts EV in NIGHT mode)
             initExposureRange()
 
             // Re-apply real-time ColorMatrix / RenderEffect filter onto TextureView preview
             viewBinding.viewFinder.post { applyLivePreviewColorMatrix() }
 
         } catch (exc: Exception) {
-            Log.e(TAG, "Use case binding failed, attempting without analysis", exc)
+            Log.e(TAG, "Use case binding failed, attempting fallback without analysis", exc)
             try {
+                cameraProvider.unbindAll()
                 val isPhotoType = cameraMode == CameraMode.PHOTO || cameraMode == CameraMode.PORTRAIT || cameraMode == CameraMode.NIGHT
                 if (isPhotoType) {
-                    camera = cameraProvider.bindToLifecycle(this, lensFacing, preview, imageCapture!!)
+                    camera = cameraProvider.bindToLifecycle(this, effectiveSelector, preview, imageCapture!!)
                 } else {
                     camera = cameraProvider.bindToLifecycle(this, lensFacing, preview, videoCapture!!)
                 }
@@ -952,6 +1001,20 @@ class MainActivity : AppCompatActivity() {
                 initExposureRange()
                 viewBinding.viewFinder.post { applyLivePreviewColorMatrix() }
             } catch (e: Exception) {
+                // Final safety fallback if OEM Extension selector rejects binding: fall back to standard lensFacing + computational night pipeline
+                if (activeNightExt) {
+                    isNightExtensionActive = false
+                    try {
+                        cameraProvider.unbindAll()
+                        camera = cameraProvider.bindToLifecycle(this, lensFacing, preview, imageCapture!!, imageAnalysis!!)
+                        cameraControl = camera?.cameraControl
+                        initExposureRange()
+                        viewBinding.viewFinder.post { applyLivePreviewColorMatrix() }
+                        return
+                    } catch (inner: Exception) {
+                        Log.e(TAG, "Fallback night binding failed", inner)
+                    }
+                }
                 Toast.makeText(this, "Camera start error: ${e.message}", Toast.LENGTH_SHORT).show()
             }
         }
@@ -973,11 +1036,11 @@ class MainActivity : AppCompatActivity() {
 
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
-                    // Prepare burst check after 400ms hold
+                    // Prepare burst check after 400ms hold (PHOTO mode only; PORTRAIT & NIGHT capture single frames)
                     isBurstCapturing = false
                     burstCount = 0
                     burstRunnable = Runnable {
-                        if (!isCountingDown) {
+                        if (!isCountingDown && cameraMode == CameraMode.PHOTO) {
                             isBurstCapturing = true
                             viewBinding.tvBurstBadge.visibility = View.VISIBLE
                             startBurstCapturingLoop()
@@ -1178,11 +1241,32 @@ class MainActivity : AppCompatActivity() {
             val range = exposureState.exposureCompensationRange
             val min = range.lower
             val max = range.upper
+            var activeIndex = exposureState.exposureCompensationIndex
+
+            if (cameraMode == CameraMode.NIGHT) {
+                if (!hasSavedPreNightExposure) {
+                    preNightExposureIndex = activeIndex
+                    hasSavedPreNightExposure = true
+                }
+                // Lift hardware AE exposure in low light (+55% of positive range, or +25% when hardware Night Extension handles multi-frame)
+                val ratio = if (isNightExtensionActive) 0.25f else 0.55f
+                val targetIndex = Math.round(max * ratio).coerceIn(0, max)
+                if (targetIndex != activeIndex) {
+                    cameraControl?.setExposureCompensationIndex(targetIndex)
+                    activeIndex = targetIndex
+                }
+            } else if (hasSavedPreNightExposure) {
+                val restoredIndex = preNightExposureIndex.coerceIn(min, max)
+                cameraControl?.setExposureCompensationIndex(restoredIndex)
+                activeIndex = restoredIndex
+                hasSavedPreNightExposure = false
+            }
+
             viewBinding.exposureSlider.max = max - min
-            viewBinding.exposureSlider.progress = exposureState.exposureCompensationIndex - min
+            viewBinding.exposureSlider.progress = (activeIndex - min).coerceIn(0, max - min)
 
             viewBinding.exposureLayout.visibility = View.VISIBLE
-            updateExposureLabel(exposureState.exposureCompensationIndex, exposureState.exposureCompensationStep.toFloat())
+            updateExposureLabel(activeIndex, exposureState.exposureCompensationStep.toFloat())
         } else {
             viewBinding.exposureLayout.visibility = View.GONE
         }
@@ -1423,8 +1507,9 @@ class MainActivity : AppCompatActivity() {
             "cel_shaded_studio", "graphic_novel_noir", "manga_ink", "pop_art_print",
             "line_art_minimalist", "ligne_claire", "clay_vinyl_3d"
         )
+        val isNightActive = (cameraMode == CameraMode.NIGHT || currentShootingEffect == "night_sight")
         val isIdentity = currentFilterName == "normal" && bri == 0 && con == 0 && sat == 0 &&
-            currentShootingEffect != "night_sight" &&
+            !isNightActive &&
             currentShootingEffect != "tilt_shift" &&
             currentShootingEffect != "macro_focus" &&
             currentShootingEffect != "double_exposure" &&
@@ -1674,14 +1759,28 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // 1b. Optical Shooting Effects live luminance & miniature tone boosts
+        // 1b. Night Mode & Optical Shooting Effects live luminance boosts
+        if (cameraMode == CameraMode.NIGHT && currentShootingEffect != "night_sight") {
+            val gain = if (isNightExtensionActive) 1.22f else 1.38f
+            val lift = if (isNightExtensionActive) 18f else 36f
+            combined.postConcat(ColorMatrix().apply { setSaturation(1.12f) })
+            combined.postConcat(ColorMatrix(floatArrayOf(
+                gain, 0f, 0f, 0f, lift,
+                0f, gain + 0.02f, 0f, 0f, lift + 2f,
+                0f, 0f, gain + 0.02f, 0f, lift + 2f,
+                0f, 0f, 0f, 1f, 0f
+            )))
+        }
+
         when (currentShootingEffect) {
             "night_sight" -> {
-                combined.postConcat(ColorMatrix().apply { setSaturation(1.08f) })
+                val gain = if (cameraMode == CameraMode.NIGHT) 1.42f else 1.28f
+                val lift = if (cameraMode == CameraMode.NIGHT) 38f else 26f
+                combined.postConcat(ColorMatrix().apply { setSaturation(1.10f) })
                 combined.postConcat(ColorMatrix(floatArrayOf(
-                    1.24f, 0f, 0f, 0f, 22f,
-                    0f, 1.26f, 0f, 0f, 24f,
-                    0f, 0f, 1.24f, 0f, 22f,
+                    gain, 0f, 0f, 0f, lift,
+                    0f, gain + 0.02f, 0f, 0f, lift + 2f,
+                    0f, 0f, gain, 0f, lift,
                     0f, 0f, 0f, 1f, 0f
                 )))
             }
@@ -2796,6 +2895,11 @@ class MainActivity : AppCompatActivity() {
         ).build()
 
         if (!isBurst) {
+            if (cameraMode == CameraMode.NIGHT) {
+                viewBinding.tvRecordingStatus.text = "HOLD STEADY"
+                viewBinding.tvRecordingStatus.setTextColor(Color.parseColor("#818CF8"))
+                showHudNotice("NIGHT EXPOSURE · HOLD STEADY")
+            }
             viewBinding.viewFinder.animate().alpha(0.3f).setDuration(50).withEndAction {
                 viewBinding.viewFinder.animate().alpha(1.0f).setDuration(150).start()
             }.start()
@@ -2807,6 +2911,12 @@ class MainActivity : AppCompatActivity() {
             object : ImageCapture.OnImageSavedCallback {
                 override fun onError(exc: ImageCaptureException) {
                     Log.e(TAG, "Photo capture failed: ${exc.message}", exc)
+                    if (cameraMode == CameraMode.NIGHT) {
+                        runOnUiThread {
+                            viewBinding.tvRecordingStatus.text = "NIGHT"
+                            viewBinding.tvRecordingStatus.setTextColor(Color.parseColor("#818CF8"))
+                        }
+                    }
                 }
 
                 override fun onImageSaved(output: ImageCapture.OutputFileResults) {
@@ -2816,7 +2926,8 @@ class MainActivity : AppCompatActivity() {
                         lastCapturedUri = savedUri
                         lastCapturedMimeType = "image/jpeg"
 
-                        val needsPostProcess = currentFilterName != "normal" ||
+                        val needsPostProcess = cameraMode == CameraMode.NIGHT ||
+                            currentFilterName != "normal" ||
                             currentShootingEffect != "none" ||
                             viewBinding.proOverlayView.liveBrightnessPercent != 0 ||
                             viewBinding.proOverlayView.liveContrastPercent != 0 ||
@@ -2831,6 +2942,10 @@ class MainActivity : AppCompatActivity() {
                             cameraExecutor.execute {
                                 applyCreativeLookToSavedPhoto(savedUri)
                                 runOnUiThread {
+                                    if (cameraMode == CameraMode.NIGHT) {
+                                        viewBinding.tvRecordingStatus.text = "NIGHT"
+                                        viewBinding.tvRecordingStatus.setTextColor(Color.parseColor("#818CF8"))
+                                    }
                                     try {
                                         viewBinding.ivGalleryThumbnail.setImageURI(null)
                                         viewBinding.ivGalleryThumbnail.setImageURI(savedUri)
@@ -2853,6 +2968,61 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         )
+    }
+
+    private fun applyComputationalNightEnhancement(bmp: Bitmap, isHardwareExt: Boolean) {
+        val w = bmp.width
+        val h = bmp.height
+        if (w <= 0 || h <= 0) return
+
+        // 1. Sample strided average luminance across image to detect dark night scenes
+        val row = IntArray(w)
+        val stepY = Math.max(1, h / 40)
+        val stepX = Math.max(1, w / 40)
+        var lumaSum = 0.0
+        var count = 0
+        var y = 0
+        while (y < h) {
+            bmp.getPixels(row, 0, w, 0, y, w, 1)
+            var x = 0
+            while (x < w) {
+                val px = row[x]
+                val r = (px shr 16) and 0xFF
+                val g = (px shr 8) and 0xFF
+                val b = px and 0xFF
+                lumaSum += 0.299 * r + 0.587 * g + 0.114 * b
+                count++
+                x += stepX
+            }
+            y += stepY
+        }
+        val avgLuma = if (count > 0) (lumaSum / count) else 80.0
+        // Stronger shadow/gamma recovery in dark environments; milder HDR lift if already well-lit
+        val baseDarkness = ((140.0 - avgLuma) / 115.0).coerceIn(0.0, 1.0)
+        val darkness = if (isHardwareExt) baseDarkness * 0.55 else baseDarkness
+        val gamma = 0.84 - darkness * 0.36 // down to 0.48 in pitch-dark scenes
+        val floorLift = darkness * 14.0
+
+        val lut = IntArray(256)
+        for (i in 0..255) {
+            val norm = i / 255.0
+            val lifted = Math.pow(norm, gamma) * 255.0 + floorLift * Math.pow(1.0 - norm, 2.0)
+            lut[i] = Math.round(lifted).toInt().coerceIn(0, 255)
+        }
+
+        // 2. Apply LUT row-by-row to avoid large memory allocations on 12MP-48MP captures
+        for (py in 0 until h) {
+            bmp.getPixels(row, 0, w, 0, py, w, 1)
+            for (px in 0 until w) {
+                val c = row[px]
+                val a = c ushr 24
+                val r = lut[(c shr 16) and 0xFF]
+                val g = lut[(c shr 8) and 0xFF]
+                val b = lut[c and 0xFF]
+                row[px] = (a shl 24) or (r shl 16) or (g shl 8) or b
+            }
+            bmp.setPixels(row, 0, w, 0, py, w, 1)
+        }
     }
 
     private fun applyCreativeLookToSavedPhoto(savedUri: Uri) {
@@ -2907,6 +3077,11 @@ class MainActivity : AppCompatActivity() {
                 finalBmp = writable
             }
 
+            // Computational Night Mode / Night Sight adaptive shadow-recovery LUT
+            if (cameraMode == CameraMode.NIGHT || currentShootingEffect == "night_sight") {
+                applyComputationalNightEnhancement(finalBmp, isHardwareExt = isNightExtensionActive && cameraMode == CameraMode.NIGHT)
+            }
+
             val canvas = Canvas(finalBmp)
             val fw = finalBmp.width.toFloat()
             val fh = finalBmp.height.toFloat()
@@ -2919,15 +3094,7 @@ class MainActivity : AppCompatActivity() {
             // Bake Optical, Shutter & Motion Shooting Effects into saved JPEG
             when (currentShootingEffect) {
                 "night_sight" -> {
-                    val nightCm = ColorMatrix().apply {
-                        setSaturation(1.10f)
-                        postConcat(ColorMatrix(floatArrayOf(
-                            1.25f, 0f, 0f, 0f, 22f,
-                            0f, 1.27f, 0f, 0f, 24f,
-                            0f, 0f, 1.25f, 0f, 22f,
-                            0f, 0f, 0f, 1f, 0f
-                        )))
-                    }
+                    val nightCm = ColorMatrix().apply { setSaturation(1.08f) }
                     val copy = finalBmp.copy(Bitmap.Config.ARGB_8888, false)
                     val p = Paint(Paint.ANTI_ALIAS_FLAG).apply { colorFilter = ColorMatrixColorFilter(nightCm) }
                     canvas.drawBitmap(copy, 0f, 0f, p)
@@ -3813,10 +3980,22 @@ class MainActivity : AppCompatActivity() {
             viewBinding.btnAutoLoop.visibility = View.GONE
             viewBinding.recordingDot.setBackgroundResource(R.drawable.bg_green_dot)
             viewBinding.recordingDot.visibility = View.VISIBLE
-            viewBinding.tvRecordingStatus.text = "READY"
-            viewBinding.tvRecordingStatus.setTextColor(Color.parseColor("#10B981"))
-            viewBinding.chronometer.text = "12MP 4:3"
-            viewBinding.chronometer.setTextColor(Color.parseColor("#94A3B8"))
+            if (mode == CameraMode.NIGHT) {
+                viewBinding.tvRecordingStatus.text = "NIGHT"
+                viewBinding.tvRecordingStatus.setTextColor(Color.parseColor("#818CF8"))
+                viewBinding.chronometer.text = "MULTI-EXP · LOW LIGHT"
+                viewBinding.chronometer.setTextColor(Color.parseColor("#A5B4FC"))
+            } else if (mode == CameraMode.PORTRAIT) {
+                viewBinding.tvRecordingStatus.text = "PORTRAIT"
+                viewBinding.tvRecordingStatus.setTextColor(Color.parseColor("#FBBF24"))
+                viewBinding.chronometer.text = "DEPTH · 4:3"
+                viewBinding.chronometer.setTextColor(Color.parseColor("#94A3B8"))
+            } else {
+                viewBinding.tvRecordingStatus.text = "READY"
+                viewBinding.tvRecordingStatus.setTextColor(Color.parseColor("#10B981"))
+                viewBinding.chronometer.text = "12MP 4:3"
+                viewBinding.chronometer.setTextColor(Color.parseColor("#94A3B8"))
+            }
         } else {
             viewBinding.btnCapture.setImageResource(R.drawable.bg_record_button_idle)
             viewBinding.layoutBtnTimer.visibility = View.GONE
@@ -3832,6 +4011,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         updateArtStripModeOrder()
+        applyLivePreviewColorMatrix()
         bindCameraUseCases()
     }
 
