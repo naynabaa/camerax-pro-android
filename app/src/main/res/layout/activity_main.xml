@@ -20,7 +20,7 @@
         app:layout_constraintEnd_toEndOf="parent" />
 
     <!-- Real-Time MediaPipe AR Face Mesh & Lens Overlay View -->
-    <com.example.cameraxdemo.ar.ARFaceOverlayView
+    <com.example.cameraxapp.ar.ARFaceOverlayView
         android:id="@+id/arFaceOverlayView"
         android:layout_width="0dp"
         android:layout_height="0dp"
@@ -30,7 +30,7 @@
         app:layout_constraintEnd_toEndOf="@id/viewFinder" />
 
     <!-- High-Performance 60 FPS Pro Overlay View (Live Filters, Shaders, Effects, Grids) -->
-    <com.example.cameraxdemo.overlay.ProOverlayView
+    <com.example.cameraxapp.overlay.ProOverlayView
         android:id="@+id/proOverlayView"
         android:layout_width="0dp"
         android:layout_height="0dp"
