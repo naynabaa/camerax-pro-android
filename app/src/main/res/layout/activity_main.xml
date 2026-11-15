@@ -3058,7 +3058,63 @@
                         android:layout_marginStart="6dp"
                         android:paddingHorizontal="12dp"
                         android:gravity="center"
-                        android:text="VINTAGE SUPER 8"
+                        android:text="8MM RETRO FILM"
+                        android:textColor="#94A3B8"
+                        android:textSize="10sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+
+                    <TextView
+                        android:id="@+id/btnEffectFilm16mm"
+                        android:layout_width="wrap_content"
+                        android:minWidth="86dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="6dp"
+                        android:paddingHorizontal="12dp"
+                        android:gravity="center"
+                        android:text="16MM DOCU"
+                        android:textColor="#94A3B8"
+                        android:textSize="10sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+
+                    <TextView
+                        android:id="@+id/btnEffectVhsTape"
+                        android:layout_width="wrap_content"
+                        android:minWidth="84dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="6dp"
+                        android:paddingHorizontal="12dp"
+                        android:gravity="center"
+                        android:text="VHS 1990S"
+                        android:textColor="#94A3B8"
+                        android:textSize="10sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+
+                    <TextView
+                        android:id="@+id/btnEffectCrtMonitor"
+                        android:layout_width="wrap_content"
+                        android:minWidth="90dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="6dp"
+                        android:paddingHorizontal="12dp"
+                        android:gravity="center"
+                        android:text="CRT MONITOR"
+                        android:textColor="#94A3B8"
+                        android:textSize="10sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+
+                    <TextView
+                        android:id="@+id/btnEffectStopMotion"
+                        android:layout_width="wrap_content"
+                        android:minWidth="90dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="6dp"
+                        android:paddingHorizontal="12dp"
+                        android:gravity="center"
+                        android:text="STOP-MOTION"
                         android:textColor="#94A3B8"
                         android:textSize="10sp"
                         android:fontFamily="monospace"
@@ -3358,76 +3414,6 @@
                         android:layout_height="wrap_content"
                         android:orientation="horizontal"
                         android:gravity="center_vertical">
-
-                        <TextView
-                            android:id="@+id/btnEffectSuper8Film"
-                            android:layout_width="wrap_content"
-                            android:minWidth="92dp"
-                            android:layout_height="36dp"
-                            android:layout_marginStart="6dp"
-                            android:paddingHorizontal="12dp"
-                            android:gravity="center"
-                            android:text="SUPER 8 FILM"
-                            android:textColor="#94A3B8"
-                            android:textSize="10sp"
-                            android:fontFamily="monospace"
-                            android:background="@drawable/bg_cinema_button_inactive" />
-
-                        <TextView
-                            android:id="@+id/btnEffectFilm16mm"
-                            android:layout_width="wrap_content"
-                            android:minWidth="86dp"
-                            android:layout_height="36dp"
-                            android:layout_marginStart="6dp"
-                            android:paddingHorizontal="12dp"
-                            android:gravity="center"
-                            android:text="16MM DOCU"
-                            android:textColor="#94A3B8"
-                            android:textSize="10sp"
-                            android:fontFamily="monospace"
-                            android:background="@drawable/bg_cinema_button_inactive" />
-
-                        <TextView
-                            android:id="@+id/btnEffectVhsTape"
-                            android:layout_width="wrap_content"
-                            android:minWidth="84dp"
-                            android:layout_height="36dp"
-                            android:layout_marginStart="6dp"
-                            android:paddingHorizontal="12dp"
-                            android:gravity="center"
-                            android:text="VHS 1990S"
-                            android:textColor="#94A3B8"
-                            android:textSize="10sp"
-                            android:fontFamily="monospace"
-                            android:background="@drawable/bg_cinema_button_inactive" />
-
-                        <TextView
-                            android:id="@+id/btnEffectCrtMonitor"
-                            android:layout_width="wrap_content"
-                            android:minWidth="90dp"
-                            android:layout_height="36dp"
-                            android:layout_marginStart="6dp"
-                            android:paddingHorizontal="12dp"
-                            android:gravity="center"
-                            android:text="CRT MONITOR"
-                            android:textColor="#94A3B8"
-                            android:textSize="10sp"
-                            android:fontFamily="monospace"
-                            android:background="@drawable/bg_cinema_button_inactive" />
-
-                        <TextView
-                            android:id="@+id/btnEffectStopMotion"
-                            android:layout_width="wrap_content"
-                            android:minWidth="90dp"
-                            android:layout_height="36dp"
-                            android:layout_marginStart="6dp"
-                            android:paddingHorizontal="12dp"
-                            android:gravity="center"
-                            android:text="STOP-MOTION"
-                            android:textColor="#94A3B8"
-                            android:textSize="10sp"
-                            android:fontFamily="monospace"
-                            android:background="@drawable/bg_cinema_button_inactive" />
 
                         <TextView
                             android:id="@+id/btnEffectNeonEdge"

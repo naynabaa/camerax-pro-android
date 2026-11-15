@@ -196,6 +196,49 @@ class MainActivity : AppCompatActivity() {
     private var flashMode: Int = ImageCapture.FLASH_MODE_OFF
 
     private lateinit var cameraExecutor: ExecutorService
+    private var stylizeExecutor: ExecutorService? = null
+    private val stylizeHandler = Handler(Looper.getMainLooper())
+    @Volatile
+    private var isStylizingFrame = false
+    private val stylizeRunnable = object : Runnable {
+        override fun run() {
+            val useCpuLive = isStylizedLiveEffect(currentShootingEffect) &&
+                ((cameraMode != CameraMode.VIDEO && cameraMode != CameraMode.SLOW_MO) || cameraEffect == null)
+            if (useCpuLive && !isStylizingFrame && !isFinishing && !isDestroyed) {
+                val tv = findTextureView(viewBinding.viewFinder)
+                if (tv != null && tv.isAvailable) {
+                    val vw = tv.width.coerceAtLeast(1)
+                    val vh = tv.height.coerceAtLeast(1)
+                    val maxEdge = 220
+                    val sampleW = if (vw >= vh) maxEdge else Math.max(96, (maxEdge * vw / vh.toFloat()).toInt())
+                    val sampleH = if (vh >= vw) maxEdge else Math.max(96, (maxEdge * vh / vw.toFloat()).toInt())
+                    val frame = tv.getBitmap(sampleW, sampleH)
+                    if (frame != null) {
+                        val activeEffect = currentShootingEffect
+                        isStylizingFrame = true
+                        stylizeExecutor?.execute {
+                            try {
+                                val styled = renderStylizedEffectBitmap(frame, activeEffect, forLivePreview = true)
+                                runOnUiThread {
+                                    if (!isFinishing && !isDestroyed && currentShootingEffect == activeEffect) {
+                                        viewBinding.proOverlayView.updateProcessedEffectBitmap(styled)
+                                    } else if (!styled.isRecycled) {
+                                        styled.recycle()
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Live stylize frame error", e)
+                            } finally {
+                                if (!frame.isRecycled) frame.recycle()
+                                isStylizingFrame = false
+                            }
+                        }
+                    }
+                }
+            }
+            stylizeHandler.postDelayed(this, if (currentShootingEffect == "stop_motion") 145L else 62L)
+        }
+    }
 
     // Runtime Permission Launcher
     private val activityResultLauncher =
@@ -215,6 +258,8 @@ class MainActivity : AppCompatActivity() {
         setContentView(viewBinding.root)
 
         cameraExecutor = Executors.newSingleThreadExecutor()
+        stylizeExecutor = Executors.newSingleThreadExecutor()
+        openGLProcessor = OpenGLSurfaceProcessor()
 
         // Initialize Orientation Sensor for Virtual Horizon Level Gauge
         sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
@@ -230,8 +275,10 @@ class MainActivity : AppCompatActivity() {
         setupExposureSlider()
         setupFilterAndArControls()
         selectCreativeCategory(CreativeTarget.FILTERS, fromUser = false)
+        updateShootingEffectButtons()
         isLastActionCreative = false
         viewBinding.modeScrollView.post { centerModeTab(cameraMode, smooth = false) }
+        stylizeHandler.postDelayed(stylizeRunnable, 120L)
 
         if (allPermissionsGranted()) {
             startCamera()
@@ -269,8 +316,7 @@ class MainActivity : AppCompatActivity() {
         "oil_canvas", "charcoal_sketch", "watercolor_wash", "ink_and_line",
         "pastel_chalk", "halftone_print", "cyanotype", "woodcut_engraving",
         "lithograph", "prism_refraction", "kaleidoscope", "solarize",
-        "super8_film", "film_16mm", "vhs_tape", "crt_monitor",
-        "stop_motion", "neon_edge", "noir_graphic_novel", "thermal_vision"
+        "neon_edge", "noir_graphic_novel", "thermal_vision"
     )
     private val toonEffectIds = setOf(
         "cel_shaded_studio", "graphic_novel_noir", "manga_ink", "pop_art_print",
@@ -286,8 +332,16 @@ class MainActivity : AppCompatActivity() {
         "lithograph", "prism_refraction", "kaleidoscope", "solarize"
     )
     private val videoArtOrder = listOf(
-        "super8_film", "film_16mm", "vhs_tape", "crt_monitor",
-        "stop_motion", "neon_edge", "noir_graphic_novel", "thermal_vision"
+        "neon_edge", "noir_graphic_novel", "thermal_vision"
+    )
+    private val photoOnlyEffectIds = setOf(
+        "portrait_bokeh", "long_exposure", "light_painting", "star_trails",
+        "night_sight", "macro_focus", "double_exposure", "panorama"
+    )
+    private val videoOnlyEffectIds = setOf(
+        "video_bokeh", "slow_motion_120_240", "time_lapse", "hyperlapse",
+        "anamorphic_flare", "dolly_zoom", "motion_blur", "action_stabilization",
+        "vintage_super8", "super8_film", "film_16mm", "vhs_tape", "crt_monitor", "stop_motion"
     )
     private var isLastActionCreative = false
     private var currentTextureEffectIndex = 0
@@ -504,7 +558,6 @@ class MainActivity : AppCompatActivity() {
         viewBinding.btnEffectPrism.setOnClickListener { setShootingEffect("prism_refraction") }
         viewBinding.btnEffectKaleidoscope.setOnClickListener { setShootingEffect("kaleidoscope") }
         viewBinding.btnEffectSolarize.setOnClickListener { setShootingEffect("solarize") }
-        viewBinding.btnEffectSuper8Film.setOnClickListener { setShootingEffect("super8_film") }
         viewBinding.btnEffectFilm16mm.setOnClickListener { setShootingEffect("film_16mm") }
         viewBinding.btnEffectVhsTape.setOnClickListener { setShootingEffect("vhs_tape") }
         viewBinding.btnEffectCrtMonitor.setOnClickListener { setShootingEffect("crt_monitor") }
@@ -971,12 +1024,38 @@ class MainActivity : AppCompatActivity() {
 
         try {
             cameraProvider.unbindAll()
+            cameraEffect = null
 
             val isPhotoType = cameraMode == CameraMode.PHOTO || cameraMode == CameraMode.PORTRAIT || cameraMode == CameraMode.NIGHT
             if (isPhotoType) {
                 camera = cameraProvider.bindToLifecycle(this, effectiveSelector, preview, imageCapture!!, imageAnalysis!!)
             } else {
-                camera = cameraProvider.bindToLifecycle(this, lensFacing, preview, videoCapture!!, imageAnalysis!!)
+                val proc = openGLProcessor ?: OpenGLSurfaceProcessor().also { openGLProcessor = it }
+                proc.setShootingEffect(currentShootingEffect)
+                proc.setAdjustments(
+                    viewBinding.proOverlayView.liveBrightnessPercent,
+                    viewBinding.proOverlayView.liveContrastPercent,
+                    viewBinding.proOverlayView.liveSaturationPercent
+                )
+                proc.setNightBoost(cameraMode == CameraMode.NIGHT || currentShootingEffect == "night_sight")
+                var boundWithEffect = false
+                try {
+                    val effect = OpenGLSurfaceProcessor.createCameraEffect(proc, proc.getExecutor())
+                    val groupBuilder = UseCaseGroup.Builder()
+                        .addUseCase(preview)
+                        .addUseCase(videoCapture!!)
+                        .addUseCase(imageAnalysis!!)
+                        .addEffect(effect)
+                    camera = cameraProvider.bindToLifecycle(this, lensFacing, groupBuilder.build())
+                    cameraEffect = effect
+                    boundWithEffect = true
+                } catch (effectErr: Exception) {
+                    Log.w(TAG, "CameraEffect VideoCapture binding unsupported on HAL, falling back to standard VideoCapture", effectErr)
+                    cameraEffect = null
+                }
+                if (!boundWithEffect) {
+                    camera = cameraProvider.bindToLifecycle(this, lensFacing, preview, videoCapture!!, imageAnalysis!!)
+                }
             }
 
             cameraControl = camera?.cameraControl
@@ -1375,6 +1454,8 @@ class MainActivity : AppCompatActivity() {
 
         if (isArt) {
             updateArtStripModeOrder()
+        } else if (isEffect) {
+            updateShootingEffectButtons()
         }
 
         updateCreativeStatusUI()
@@ -1401,7 +1482,7 @@ class MainActivity : AppCompatActivity() {
         "dolly_zoom" -> "DOLLY ZOOM"
         "motion_blur" -> "MOTION BLUR"
         "action_stabilization" -> "HORIZON LOCK"
-        "vintage_super8" -> "VINTAGE SUPER 8"
+        "vintage_super8", "super8_film" -> "8MM RETRO FILM"
         "oil_canvas" -> "OIL CANVAS"
         "charcoal_sketch" -> "CHARCOAL SKETCH"
         "watercolor_wash" -> "WATERCOLOR WASH"
@@ -1414,7 +1495,6 @@ class MainActivity : AppCompatActivity() {
         "prism_refraction" -> "PRISM REFRACTION"
         "kaleidoscope" -> "KALEIDOSCOPE"
         "solarize" -> "SOLARIZE (SABATTIER)"
-        "super8_film" -> "SUPER 8 VINTAGE"
         "film_16mm" -> "16MM DOCUMENTARY"
         "vhs_tape" -> "VHS TAPE (1990S)"
         "crt_monitor" -> "CRT MONITOR"
@@ -1488,6 +1568,17 @@ class MainActivity : AppCompatActivity() {
         return null
     }
 
+    private fun isStylizedLiveEffect(effectId: String): Boolean = when (effectId) {
+        "oil_canvas", "charcoal_sketch", "watercolor_wash", "ink_and_line",
+        "pastel_chalk", "halftone_print", "cyanotype", "woodcut_engraving",
+        "lithograph", "prism_refraction", "kaleidoscope", "solarize",
+        "neon_edge", "noir_graphic_novel", "thermal_vision",
+        "cel_shaded_studio", "graphic_novel_noir", "manga_ink", "pop_art_print",
+        "line_art_minimalist", "ligne_claire", "clay_vinyl_3d",
+        "portrait_bokeh", "video_bokeh", "tilt_shift" -> true
+        else -> false
+    }
+
     private fun applyLivePreviewColorMatrix() {
         val targetView = findTextureView(viewBinding.viewFinder)
         if (targetView == null) {
@@ -1498,23 +1589,18 @@ class MainActivity : AppCompatActivity() {
         val bri = viewBinding.proOverlayView.liveBrightnessPercent
         val con = viewBinding.proOverlayView.liveContrastPercent
         val sat = viewBinding.proOverlayView.liveSaturationPercent
-        val artColorEffects = setOf(
-            "oil_canvas", "charcoal_sketch", "watercolor_wash", "ink_and_line",
-            "pastel_chalk", "halftone_print", "cyanotype", "woodcut_engraving",
-            "lithograph", "prism_refraction", "kaleidoscope", "solarize",
-            "super8_film", "film_16mm", "vhs_tape", "crt_monitor",
-            "stop_motion", "neon_edge", "noir_graphic_novel", "thermal_vision",
-            "cel_shaded_studio", "graphic_novel_noir", "manga_ink", "pop_art_print",
-            "line_art_minimalist", "ligne_claire", "clay_vinyl_3d"
-        )
+        val stylizedActive = isStylizedLiveEffect(currentShootingEffect)
         val isNightActive = (cameraMode == CameraMode.NIGHT || currentShootingEffect == "night_sight")
-        val isIdentity = currentFilterName == "normal" && bri == 0 && con == 0 && sat == 0 &&
+        val isIdentity = stylizedActive || (currentFilterName == "normal" && bri == 0 && con == 0 && sat == 0 &&
             !isNightActive &&
-            currentShootingEffect != "tilt_shift" &&
             currentShootingEffect != "macro_focus" &&
             currentShootingEffect != "double_exposure" &&
             currentShootingEffect != "vintage_super8" &&
-            !artColorEffects.contains(currentShootingEffect)
+            currentShootingEffect != "super8_film" &&
+            currentShootingEffect != "film_16mm" &&
+            currentShootingEffect != "vhs_tape" &&
+            currentShootingEffect != "crt_monitor" &&
+            currentShootingEffect != "stop_motion")
 
         if (isIdentity) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -2172,6 +2258,7 @@ class MainActivity : AppCompatActivity() {
             else -> FilterManager.FilterPreset.NORMAL
         }
         filterManager.setPreset(filterPreset)
+        openGLProcessor?.setFilterPreset(filterPreset)
         viewBinding.proOverlayView.activeFilterPreset = preset
         applyLivePreviewColorMatrix()
 
@@ -2259,37 +2346,33 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private val allShootingEffects = listOf(
-        "none",
-        "portrait_bokeh",
-        "long_exposure",
-        "light_painting",
-        "star_trails",
-        "night_sight",
-        "macro_focus",
-        "tilt_shift",
-        "double_exposure",
-        "panorama",
-        "film_grain",
-        "soft_halation",
-        "vignette",
-        "video_bokeh",
-        "slow_motion_120_240",
-        "time_lapse",
-        "hyperlapse",
-        "anamorphic_flare",
-        "dolly_zoom",
-        "motion_blur",
-        "action_stabilization",
-        "vintage_super8"
-    )
-
     private fun getModeOrderedArtEffects(): List<String> {
         val isVideoMode = (cameraMode == CameraMode.VIDEO || cameraMode == CameraMode.SLOW_MO)
         return listOf("none") + if (isVideoMode) (videoArtOrder + pictureArtOrder) else (pictureArtOrder + videoArtOrder)
     }
 
+    private fun getModeFilteredShootingEffects(): List<String> {
+        val isVideoMode = (cameraMode == CameraMode.VIDEO || cameraMode == CameraMode.SLOW_MO)
+        return if (isVideoMode) {
+            listOf(
+                "none",
+                "video_bokeh", "slow_motion_120_240", "time_lapse", "hyperlapse",
+                "anamorphic_flare", "dolly_zoom", "motion_blur", "action_stabilization",
+                "vintage_super8", "film_16mm", "vhs_tape", "crt_monitor", "stop_motion",
+                "tilt_shift", "film_grain", "soft_halation", "vignette"
+            )
+        } else {
+            listOf(
+                "none",
+                "portrait_bokeh", "long_exposure", "light_painting", "star_trails",
+                "night_sight", "macro_focus", "tilt_shift", "double_exposure", "panorama",
+                "film_grain", "soft_halation", "vignette"
+            )
+        }
+    }
+
     private fun updateShootingEffectButtons() {
+        val isVideoMode = (cameraMode == CameraMode.VIDEO || cameraMode == CameraMode.SLOW_MO)
         val effectButtons = listOf(
             viewBinding.btnEffectOff to "none",
             viewBinding.btnEffectBokeh to "portrait_bokeh",
@@ -2312,11 +2395,21 @@ class MainActivity : AppCompatActivity() {
             viewBinding.btnEffectDollyZoom to "dolly_zoom",
             viewBinding.btnEffectMotionBlur to "motion_blur",
             viewBinding.btnEffectHorizonLock to "action_stabilization",
-            viewBinding.btnEffectSuper8 to "vintage_super8"
+            viewBinding.btnEffectSuper8 to "vintage_super8",
+            viewBinding.btnEffectFilm16mm to "film_16mm",
+            viewBinding.btnEffectVhsTape to "vhs_tape",
+            viewBinding.btnEffectCrtMonitor to "crt_monitor",
+            viewBinding.btnEffectStopMotion to "stop_motion"
         )
         val activeShootingId = if (artEffectIds.contains(currentShootingEffect) || toonEffectIds.contains(currentShootingEffect)) "none" else currentShootingEffect
         for ((btn, id) in effectButtons) {
-            val isActive = id == activeShootingId
+            val isVisibleForMode = when {
+                id == "none" -> true
+                isVideoMode -> !photoOnlyEffectIds.contains(id)
+                else -> !videoOnlyEffectIds.contains(id)
+            }
+            btn.visibility = if (isVisibleForMode) View.VISIBLE else View.GONE
+            val isActive = isVisibleForMode && id == activeShootingId
             if (isActive) {
                 btn.setBackgroundResource(R.drawable.bg_cinema_button_active)
                 btn.setTextColor(Color.parseColor("#0F172A"))
@@ -2345,11 +2438,6 @@ class MainActivity : AppCompatActivity() {
             viewBinding.btnEffectPrism to "prism_refraction",
             viewBinding.btnEffectKaleidoscope to "kaleidoscope",
             viewBinding.btnEffectSolarize to "solarize",
-            viewBinding.btnEffectSuper8Film to "super8_film",
-            viewBinding.btnEffectFilm16mm to "film_16mm",
-            viewBinding.btnEffectVhsTape to "vhs_tape",
-            viewBinding.btnEffectCrtMonitor to "crt_monitor",
-            viewBinding.btnEffectStopMotion to "stop_motion",
             viewBinding.btnEffectNeonEdge to "neon_edge",
             viewBinding.btnEffectNoirNovel to "noir_graphic_novel",
             viewBinding.btnEffectThermalVision to "thermal_vision"
@@ -2397,7 +2485,7 @@ class MainActivity : AppCompatActivity() {
         currentShootingEffect = effectId
         val isArtEffect = artEffectIds.contains(effectId)
         val isToonEffect = toonEffectIds.contains(effectId)
-        currentTextureEffectIndex = allShootingEffects.indexOf(effectId).coerceAtLeast(0)
+        currentTextureEffectIndex = getModeFilteredShootingEffects().indexOf(effectId).coerceAtLeast(0)
         if (showNotice) {
             if (isToonEffect) {
                 currentCreativeTarget = CreativeTarget.TOON
@@ -2409,6 +2497,11 @@ class MainActivity : AppCompatActivity() {
             isLastActionCreative = true
         }
         viewBinding.proOverlayView.activeShootingEffect = effectId
+        if (!isStylizedLiveEffect(effectId)) {
+            viewBinding.proOverlayView.updateProcessedEffectBitmap(null)
+        }
+        openGLProcessor?.setShootingEffect(effectId)
+        openGLProcessor?.setNightBoost(cameraMode == CameraMode.NIGHT || effectId == "night_sight")
         viewBinding.proOverlayView.enableVignette = (effectId == "vignette")
 
         isUpdatingEffectSwitches = true
@@ -2458,6 +2551,510 @@ class MainActivity : AppCompatActivity() {
         updateCreativeStatusUI()
         if (showNotice) {
             showHudNotice("Effect: ${getShootingEffectLabel(effectId)}")
+        }
+    }
+
+    /**
+     * Fast 3x3 edge-preserving bilateral smoother for authentic Toon, Painterly & Comic shaders
+     */
+    private fun smoothIntArray(src: IntArray, w: Int, h: Int, passes: Int): IntArray {
+        var cur = src
+        var dst = IntArray(w * h)
+        for (pass in 0 until passes) {
+            for (y in 0 until h) {
+                val yOff = y * w
+                for (x in 0 until w) {
+                    val idx = yOff + x
+                    val c = cur[idx]
+                    val cr = (c shr 16) and 0xFF
+                    val cg = (c shr 8) and 0xFF
+                    val cb = c and 0xFF
+                    var sumR = cr * 2.0f
+                    var sumG = cg * 2.0f
+                    var sumB = cb * 2.0f
+                    var wSum = 2.0f
+
+                    for (dy in -1..1) {
+                        val ny = (y + dy).coerceIn(0, h - 1)
+                        val row = ny * w
+                        for (dx in -1..1) {
+                            if (dx == 0 && dy == 0) continue
+                            val nx = (x + dx).coerceIn(0, w - 1)
+                            val nc = cur[row + nx]
+                            val nr = (nc shr 16) and 0xFF
+                            val ng = (nc shr 8) and 0xFF
+                            val nb = nc and 0xFF
+                            val diff = Math.abs(nr - cr) + Math.abs(ng - cg) + Math.abs(nb - cb)
+                            val weight = if (diff < 32) 1.0f else if (diff < 68) 0.45f else 0.06f
+                            sumR += nr * weight
+                            sumG += ng * weight
+                            sumB += nb * weight
+                            wSum += weight
+                        }
+                    }
+                    dst[idx] = Color.rgb(
+                        (sumR / wSum).toInt().coerceIn(0, 255),
+                        (sumG / wSum).toInt().coerceIn(0, 255),
+                        (sumB / wSum).toInt().coerceIn(0, 255)
+                    )
+                }
+            }
+            val tmp = cur
+            cur = dst
+            dst = tmp
+        }
+        return cur
+    }
+
+    /**
+     * Unified pixel-accurate Art, Optical Blur & Toon Renderer used for both Live Viewfinder & Captured JPEG Photos
+     */
+    private fun renderStylizedEffectBitmap(srcBmp: Bitmap, effectId: String, forLivePreview: Boolean): Bitmap {
+        val w = srcBmp.width.coerceAtLeast(1)
+        val h = srcBmp.height.coerceAtLeast(1)
+        val maxSample = if (forLivePreview) 260 else 620
+        val sw: Int
+        val sh: Int
+        if (w >= h) {
+            sw = Math.min(w, maxSample)
+            sh = Math.max(48, (sw * (h / w.toFloat())).toInt())
+        } else {
+            sh = Math.min(h, maxSample)
+            sw = Math.max(48, (sh * (w / h.toFloat())).toInt())
+        }
+
+        if (effectId == "kaleidoscope") {
+            val out = Bitmap.createBitmap(sw, sh, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(out)
+            val small = Bitmap.createScaledBitmap(srcBmp, sw, sh, true)
+            canvas.drawColor(Color.parseColor("#020617"))
+            val cx = sw * 0.5f
+            val cy = sh * 0.5f
+            val rad = Math.hypot(sw.toDouble(), sh.toDouble()).toFloat() * 0.6f
+            val wedge = Path().apply {
+                moveTo(0f, 0f)
+                lineTo(rad, -rad * Math.tan(Math.PI / 8.0).toFloat() * 1.05f)
+                lineTo(rad, rad * Math.tan(Math.PI / 8.0).toFloat() * 1.05f)
+                close()
+            }
+            for (i in 0..7) {
+                canvas.save()
+                canvas.translate(cx, cy)
+                canvas.rotate(i * 45f)
+                canvas.clipPath(wedge)
+                if (i % 2 == 1) canvas.scale(1f, -1f)
+                canvas.drawBitmap(small, -cx, -cy, null)
+                canvas.restore()
+            }
+            if (small != srcBmp) small.recycle()
+            return if (forLivePreview) out else Bitmap.createScaledBitmap(out, w, h, true).also { if (it != out) out.recycle() }
+        }
+
+        val small = Bitmap.createScaledBitmap(srcBmp, sw, sh, true)
+        val rawArr = IntArray(sw * sh)
+        small.getPixels(rawArr, 0, sw, 0, 0, sw, sh)
+        if (small != srcBmp) small.recycle()
+
+        val smoothPasses = when (effectId) {
+            "cel_shaded_studio", "ligne_claire", "pop_art_print", "clay_vinyl_3d", "oil_canvas", "watercolor_wash", "pastel_chalk" -> if (forLivePreview) 2 else 4
+            "graphic_novel_noir", "manga_ink", "line_art_minimalist", "noir_graphic_novel", "ink_and_line", "charcoal_sketch" -> if (forLivePreview) 2 else 3
+            else -> 0
+        }
+        val pxArr = if (smoothPasses > 0) smoothIntArray(rawArr, sw, sh, smoothPasses) else rawArr
+        val outArr = IntArray(sw * sh)
+
+        fun lumArr(arr: IntArray, px: Int, py: Int): Float {
+            val cx = px.coerceIn(0, sw - 1)
+            val cy = py.coerceIn(0, sh - 1)
+            val c = arr[cy * sw + cx]
+            return 0.299f * ((c shr 16) and 0xFF) + 0.587f * ((c shr 8) and 0xFF) + 0.114f * (c and 0xFF)
+        }
+
+        fun colorSobelAt(arr: IntArray, x: Int, y: Int): Float {
+            val x0 = (x - 1).coerceIn(0, sw - 1)
+            val x1 = (x + 1).coerceIn(0, sw - 1)
+            val y0 = (y - 1).coerceIn(0, sh - 1)
+            val y1 = (y + 1).coerceIn(0, sh - 1)
+            val tl = arr[y0 * sw + x0]; val tc = arr[y0 * sw + x]; val tr = arr[y0 * sw + x1]
+            val ml = arr[y * sw + x0];  val mc = arr[y * sw + x];  val mr = arr[y * sw + x1]
+            val bl = arr[y1 * sw + x0]; val bc = arr[y1 * sw + x]; val br = arr[y1 * sw + x1]
+
+            fun chanMag(shift: Int): Float {
+                val gx = -((tl shr shift) and 0xFF) + ((tr shr shift) and 0xFF) - 2 * ((ml shr shift) and 0xFF) + 2 * ((mr shr shift) and 0xFF) - ((bl shr shift) and 0xFF) + ((br shr shift) and 0xFF)
+                val gy = -((tl shr shift) and 0xFF) - 2 * ((tc shr shift) and 0xFF) - ((tr shr shift) and 0xFF) + ((bl shr shift) and 0xFF) + 2 * ((bc shr shift) and 0xFF) + ((br shr shift) and 0xFF)
+                return (gx * gx + gy * gy).toFloat()
+            }
+            val vecEdge = Math.sqrt((0.30f * chanMag(16) + 0.52f * chanMag(8) + 0.18f * chanMag(0)).toDouble()).toFloat()
+            val cL = 0.299f * ((mc shr 16) and 0xFF) + 0.587f * ((mc shr 8) and 0xFF) + 0.114f * (mc and 0xFF)
+            val avgL = 0.25f * (lumArr(arr, x, y0) + lumArr(arr, x, y1) + lumArr(arr, x0, y) + lumArr(arr, x1, y))
+            val crease = Math.max(0f, avgL - cL) * 1.4f
+            return vecEdge + crease
+        }
+
+        fun smoothstep(e0: Float, e1: Float, v: Float): Float {
+            val t = ((v - e0) / Math.max(0.001f, e1 - e0)).coerceIn(0f, 1f)
+            return t * t * (3f - 2f * t)
+        }
+
+        fun softCelBand(lum: Float, bands: Int = 5): Float {
+            val norm = (lum / 255f).coerceIn(0f, 1f)
+            val scaled = norm * bands
+            val b = Math.floor(scaled.toDouble()).toFloat()
+            val f = scaled - b
+            val q = (b + smoothstep(0.36f, 0.64f, f)) / bands
+            return (q * 240f + 10f).coerceIn(12f, 252f)
+        }
+
+        fun sobelAt(arr: IntArray, x: Int, y: Int): Float = colorSobelAt(arr, x, y)
+
+        when (effectId) {
+            "portrait_bokeh", "video_bokeh", "tilt_shift" -> {
+                val blurred = smoothIntArray(rawArr, sw, sh, if (forLivePreview) 3 else 5)
+                val isTilt = effectId == "tilt_shift"
+                for (y in 0 until sh) {
+                    val ny = y / sh.toFloat()
+                    for (x in 0 until sw) {
+                        val idx = y * sw + x
+                        val nx = x / sw.toFloat()
+                        val mask = if (isTilt) {
+                            (Math.abs(ny - 0.5f) - 0.14f) / 0.24f
+                        } else {
+                            val d = Math.hypot((nx - 0.5).toDouble(), ((ny - 0.45) * 1.15).toDouble()).toFloat()
+                            (d - 0.22f) / 0.28f
+                        }.coerceIn(0f, 1f)
+                        val o = rawArr[idx]
+                        val b = blurred[idx]
+                        val r = (((o shr 16) and 0xFF) * (1f - mask) + ((b shr 16) and 0xFF) * mask).toInt()
+                        val g = (((o shr 8) and 0xFF) * (1f - mask) + ((b shr 8) and 0xFF) * mask).toInt()
+                        val bl = ((o and 0xFF) * (1f - mask) + (b and 0xFF) * mask).toInt()
+                        outArr[idx] = Color.rgb(r.coerceIn(0, 255), g.coerceIn(0, 255), bl.coerceIn(0, 255))
+                    }
+                }
+            }
+            "prism_refraction" -> {
+                val shift = Math.max(3, sw / 48)
+                for (y in 0 until sh) {
+                    for (x in 0 until sw) {
+                        val idx = y * sw + x
+                        val cL = rawArr[y * sw + (x - shift).coerceIn(0, sw - 1)]
+                        val cC = rawArr[idx]
+                        val cR = rawArr[y * sw + (x + shift).coerceIn(0, sw - 1)]
+                        outArr[idx] = Color.rgb((cL shr 16) and 0xFF, (cC shr 8) and 0xFF, cR and 0xFF)
+                    }
+                }
+            }
+            "cel_shaded_studio" -> {
+                for (y in 0 until sh) {
+                    for (x in 0 until sw) {
+                        val idx = y * sw + x
+                        val edge = colorSobelAt(pxArr, x, y)
+                        val ink = smoothstep(38f, 76f, edge)
+                        val c = pxArr[idx]
+                        val r = (c shr 16) and 0xFF
+                        val g = (c shr 8) and 0xFF
+                        val b = c and 0xFF
+                        val l = Math.max(1f, 0.299f * r + 0.587f * g + 0.114f * b)
+                        val bandLum = softCelBand(l, 5)
+                        val sc = bandLum / l
+                        val shadowMix = smoothstep(105f, 38f, bandLum)
+                        val hiMix = smoothstep(192f, 245f, bandLum)
+                        val baseR = ((l + (r - l) * 1.34f) * sc - shadowMix * 8f + hiMix * 8f).coerceIn(0f, 255f)
+                        val baseG = ((l + (g - l) * 1.34f) * sc - shadowMix * 4f + hiMix * 5f).coerceIn(0f, 255f)
+                        val baseB = ((l + (b - l) * 1.34f) * sc + shadowMix * 10f - hiMix * 2f).coerceIn(0f, 255f)
+                        outArr[idx] = Color.rgb(
+                            (baseR * (1f - ink) + 11f * ink).toInt().coerceIn(0, 255),
+                            (baseG * (1f - ink) + 13f * ink).toInt().coerceIn(0, 255),
+                            (baseB * (1f - ink) + 22f * ink).toInt().coerceIn(0, 255)
+                        )
+                    }
+                }
+            }
+            "ligne_claire" -> {
+                for (y in 0 until sh) {
+                    for (x in 0 until sw) {
+                        val idx = y * sw + x
+                        val edge = colorSobelAt(pxArr, x, y)
+                        val ink = smoothstep(36f, 70f, edge)
+                        val c = pxArr[idx]
+                        val r = (c shr 16) and 0xFF
+                        val g = (c shr 8) and 0xFF
+                        val b = c and 0xFF
+                        val l = Math.max(1f, 0.299f * r + 0.587f * g + 0.114f * b)
+                        val flatL = softCelBand(l, 5) * 0.78f + 52f
+                        val sc = flatL / l
+                        val baseR = ((l + (r - l) * 0.92f) * sc).coerceIn(0f, 250f)
+                        val baseG = ((l + (g - l) * 0.92f) * sc).coerceIn(0f, 248f)
+                        val baseB = ((l + (b - l) * 0.92f) * sc).coerceIn(0f, 245f)
+                        outArr[idx] = Color.rgb(
+                            (baseR * (1f - ink) + 24f * ink).toInt().coerceIn(0, 255),
+                            (baseG * (1f - ink) + 22f * ink).toInt().coerceIn(0, 255),
+                            (baseB * (1f - ink) + 20f * ink).toInt().coerceIn(0, 255)
+                        )
+                    }
+                }
+            }
+            "graphic_novel_noir", "noir_graphic_novel" -> {
+                for (y in 0 until sh) {
+                    for (x in 0 until sw) {
+                        val idx = y * sw + x
+                        val edge = colorSobelAt(pxArr, x, y)
+                        val l = lumArr(pxArr, x, y)
+                        val ink = smoothstep(36f, 72f, edge)
+                        val shadow = smoothstep(88f, 60f, l)
+                        val mid = smoothstep(154f, 126f, l)
+                        val dot = ((x + (y % 2) * 2) % 4 == 0 && y % 3 == 0)
+                        val midShade = if (dot) 42f else 138f
+                        var v = 250f * (1f - mid) + midShade * mid
+                        v = v * (1f - shadow) + 10f * shadow
+                        v = v * (1f - ink) + 8f * ink
+                        val iv = v.toInt().coerceIn(0, 255)
+                        outArr[idx] = Color.rgb(iv, iv, iv)
+                    }
+                }
+            }
+            "manga_ink" -> {
+                for (y in 0 until sh) {
+                    for (x in 0 until sw) {
+                        val idx = y * sw + x
+                        val edge = colorSobelAt(pxArr, x, y)
+                        val l = lumArr(pxArr, x, y)
+                        val ink = smoothstep(34f, 66f, edge)
+                        val darkFill = smoothstep(46f, 26f, l)
+                        val dot1 = l < 150f && ((x + (y % 2) * 2) % 4 == 0 && y % 3 == 0)
+                        val dot2 = l < 96f && ((x + y) % 2 == 0)
+                        val tone = if (dot1 || dot2) 0.72f else 0f
+                        val shade = Math.max(ink, Math.max(darkFill, tone))
+                        val iv = (252f * (1f - shade) + 14f * shade).toInt().coerceIn(0, 255)
+                        outArr[idx] = Color.rgb(iv, iv, iv)
+                    }
+                }
+            }
+            "line_art_minimalist" -> {
+                for (y in 0 until sh) {
+                    for (x in 0 until sw) {
+                        val idx = y * sw + x
+                        val edge = colorSobelAt(pxArr, x, y)
+                        val ink = smoothstep(30f, 62f, edge)
+                        outArr[idx] = Color.rgb(
+                            (252f * (1f - ink) + 14f * ink).toInt().coerceIn(0, 255),
+                            (251f * (1f - ink) + 16f * ink).toInt().coerceIn(0, 255),
+                            (246f * (1f - ink) + 20f * ink).toInt().coerceIn(0, 255)
+                        )
+                    }
+                }
+            }
+            "pop_art_print" -> {
+                for (y in 0 until sh) {
+                    for (x in 0 until sw) {
+                        val idx = y * sw + x
+                        val edge = colorSobelAt(pxArr, x, y)
+                        val ink = smoothstep(36f, 72f, edge)
+                        val c = pxArr[idx]
+                        val r = (c shr 16) and 0xFF
+                        val g = (c shr 8) and 0xFF
+                        val b = c and 0xFF
+                        val l = 0.299f * r + 0.587f * g + 0.114f * b
+                        val isDot = (x % 4 == 0 && y % 4 == 0)
+                        val pr: Int
+                        val pg: Int
+                        val pb: Int
+                        when {
+                            l > 190f -> { pr = 254; pg = if (isDot) 196 else 240; pb = if (isDot) 36 else 92 }
+                            l < 62f -> { pr = if (isDot) 37 else 18; pg = if (isDot) 99 else 24; pb = if (isDot) 235 else 58 }
+                            r >= g && r >= b -> { pr = 242; pg = if (isDot) 48 else 34; pb = if (isDot) 168 else 66 }
+                            b >= r && b >= g -> { pr = if (isDot) 245 else 37; pg = if (isDot) 60 else 105; pb = 238 }
+                            else -> { pr = 14; pg = if (isDot) 225 else 188; pb = 224 }
+                        }
+                        outArr[idx] = Color.rgb(
+                            (pr * (1f - ink) + 10f * ink).toInt().coerceIn(0, 255),
+                            (pg * (1f - ink) + 10f * ink).toInt().coerceIn(0, 255),
+                            (pb * (1f - ink) + 14f * ink).toInt().coerceIn(0, 255)
+                        )
+                    }
+                }
+            }
+            "clay_vinyl_3d" -> {
+                for (y in 0 until sh) {
+                    val ny = y / sh.toFloat()
+                    for (x in 0 until sw) {
+                        val idx = y * sw + x
+                        val nx = x / sw.toFloat()
+                        val c = pxArr[idx]
+                        val edge = sobelAt(pxArr, x, y)
+                        val r = ((c shr 16) and 0xFF)
+                        val g = ((c shr 8) and 0xFF)
+                        val b = (c and 0xFF)
+                        val spec = Math.max(0f, 1f - Math.hypot((nx - 0.36).toDouble(), (ny - 0.28).toDouble()).toFloat() * 2.2f) * 44f
+                        val rim = (edge * 0.28f).coerceAtMost(36f)
+                        outArr[idx] = Color.rgb(
+                            (r * 0.94f + 16f + spec + rim).toInt().coerceIn(0, 255),
+                            (g * 0.94f + 16f + spec + rim).toInt().coerceIn(0, 255),
+                            (b * 0.94f + 18f + spec + rim).toInt().coerceIn(0, 255)
+                        )
+                    }
+                }
+            }
+            "oil_canvas" -> {
+                for (y in 0 until sh) {
+                    for (x in 0 until sw) {
+                        val idx = y * sw + x
+                        val sx = (x + ((y % 4) - 2)).coerceIn(0, sw - 1)
+                        val sy = (y + ((x % 3) - 1)).coerceIn(0, sh - 1)
+                        val c = pxArr[sy * sw + sx]
+                        val weave = if ((x + y) % 3 == 0) 8 else -6
+                        val r = ((((c shr 16) and 0xFF) / 26) * 26 + 14 + weave).coerceIn(0, 255)
+                        val g = ((((c shr 8) and 0xFF) / 26) * 26 + 14 + weave).coerceIn(0, 255)
+                        val b = (((c and 0xFF) / 26) * 26 + 14 + weave).coerceIn(0, 255)
+                        outArr[idx] = Color.rgb(r, g, b)
+                    }
+                }
+            }
+            "charcoal_sketch" -> {
+                for (y in 0 until sh) {
+                    for (x in 0 until sw) {
+                        val idx = y * sw + x
+                        val edge = sobelAt(pxArr, x, y)
+                        val base = lumArr(pxArr, x, y)
+                        val hatch = if (base < 95f && (x + y) % 3 == 0) 68f else base * 0.30f + 164f
+                        val ink = (hatch - edge * 0.96f).toInt().coerceIn(18, 244)
+                        outArr[idx] = Color.rgb((ink + 4).coerceAtMost(248), (ink + 1).coerceAtMost(244), (ink - 6).coerceAtLeast(16))
+                    }
+                }
+            }
+            "ink_and_line" -> {
+                for (y in 0 until sh) {
+                    for (x in 0 until sw) {
+                        val idx = y * sw + x
+                        val edge = sobelAt(pxArr, x, y)
+                        val base = lumArr(pxArr, x, y)
+                        val v = if (edge > 56f || base < 38f) 14 else 250
+                        outArr[idx] = Color.rgb(v, v, (v - 4).coerceAtLeast(12))
+                    }
+                }
+            }
+            "watercolor_wash" -> {
+                for (y in 0 until sh) {
+                    for (x in 0 until sw) {
+                        val idx = y * sw + x
+                        val c = pxArr[idx]
+                        val edge = sobelAt(pxArr, x, y) * 0.25f
+                        val r = (((c shr 16) and 0xFF) * 0.88f + 28f - edge).toInt().coerceIn(0, 255)
+                        val g = (((c shr 8) and 0xFF) * 0.88f + 26f - edge).toInt().coerceIn(0, 255)
+                        val b = ((c and 0xFF) * 0.88f + 28f - edge).toInt().coerceIn(0, 255)
+                        outArr[idx] = Color.rgb(r, g, b)
+                    }
+                }
+            }
+            "pastel_chalk" -> {
+                for (y in 0 until sh) {
+                    for (x in 0 until sw) {
+                        val idx = y * sw + x
+                        val c = pxArr[idx]
+                        val tooth = (((x * 37 + y * 53) % 19) - 9)
+                        val r = (((c shr 16) and 0xFF) * 0.72f + 68f + tooth).toInt().coerceIn(0, 255)
+                        val g = (((c shr 8) and 0xFF) * 0.72f + 66f + tooth).toInt().coerceIn(0, 255)
+                        val b = ((c and 0xFF) * 0.72f + 68f + tooth).toInt().coerceIn(0, 255)
+                        outArr[idx] = Color.rgb(r, g, b)
+                    }
+                }
+            }
+            "halftone_print" -> {
+                val cell = Math.max(4, sw / 48)
+                for (y in 0 until sh) {
+                    for (x in 0 until sw) {
+                        val cx = (x / cell) * cell + cell / 2
+                        val cy = (y / cell) * cell + cell / 2
+                        val l = lumArr(pxArr, cx, cy) / 255f
+                        val dx = x - cx
+                        val dy = y - cy
+                        val dist = Math.sqrt((dx * dx + dy * dy).toDouble()).toFloat()
+                        val rad = (1f - l) * (cell * 0.56f)
+                        outArr[y * sw + x] = if (dist < rad) Color.rgb(18, 22, 28) else Color.rgb(246, 241, 228)
+                    }
+                }
+            }
+            "cyanotype" -> {
+                for (i in pxArr.indices) {
+                    val c = pxArr[i]
+                    val l = (0.299f * ((c shr 16) and 0xFF) + 0.587f * ((c shr 8) and 0xFF) + 0.114f * (c and 0xFF)) / 255f
+                    outArr[i] = Color.rgb((8 + l * 216).toInt(), (34 + l * 208).toInt(), (78 + l * 176).toInt())
+                }
+            }
+            "woodcut_engraving" -> {
+                for (y in 0 until sh) {
+                    val groove = if (y % 3 == 0) 20f else 0f
+                    for (x in 0 until sw) {
+                        val idx = y * sw + x
+                        val l = lumArr(pxArr, x, y)
+                        val v = if (l + groove > 120f) 244 else 12
+                        outArr[idx] = Color.rgb(v, (v - 4).coerceAtLeast(10), (v - 10).coerceAtLeast(8))
+                    }
+                }
+            }
+            "lithograph" -> {
+                for (y in 0 until sh) {
+                    for (x in 0 until sw) {
+                        val idx = y * sw + x
+                        val l = lumArr(pxArr, x, y)
+                        val grain = (((x * 19 + y * 31) % 21) - 10)
+                        val v = (l * 0.88f + 18f + grain).toInt().coerceIn(16, 240)
+                        outArr[idx] = Color.rgb(v, (v - 3).coerceAtLeast(14), (v - 10).coerceAtLeast(12))
+                    }
+                }
+            }
+            "solarize" -> {
+                for (i in pxArr.indices) {
+                    val c = pxArr[i]
+                    val r = (c shr 16) and 0xFF
+                    val g = (c shr 8) and 0xFF
+                    val b = c and 0xFF
+                    val sr = if (r > 128) (255 - ((r - 128) * 1.9f).toInt()).coerceIn(0, 255) else r
+                    val sg = if (g > 128) (255 - ((g - 128) * 1.85f).toInt()).coerceIn(0, 255) else g
+                    val sb = if (b > 128) (255 - ((b - 128) * 1.75f).toInt()).coerceIn(0, 255) else b
+                    outArr[i] = Color.rgb(sr, sg, sb)
+                }
+            }
+            "neon_edge" -> {
+                for (y in 0 until sh) {
+                    val vy = y / sh.toFloat()
+                    for (x in 0 until sw) {
+                        val vx = x / sw.toFloat()
+                        val edge = ((sobelAt(pxArr, x, y) - 20f) / 105f).coerceIn(0f, 1f)
+                        val nr = (6f + edge * (24f + vx * 225f)).toInt().coerceIn(0, 255)
+                        val ng = (8f + edge * (240f - vy * 145f)).toInt().coerceIn(0, 255)
+                        val nb = (18f + edge * 237f).toInt().coerceIn(0, 255)
+                        outArr[y * sw + x] = Color.rgb(nr, ng, nb)
+                    }
+                }
+            }
+            "thermal_vision" -> {
+                for (i in pxArr.indices) {
+                    val c = pxArr[i]
+                    val t = (0.299f * ((c shr 16) and 0xFF) + 0.587f * ((c shr 8) and 0xFF) + 0.114f * (c and 0xFF)) / 255f
+                    val r: Int; val g: Int; val b: Int
+                    if (t < 0.25f) {
+                        val k = t / 0.25f
+                        r = (14f + k * 78f).toInt(); g = (8f + k * 14f).toInt(); b = (68f + k * 130f).toInt()
+                    } else if (t < 0.5f) {
+                        val k = (t - 0.25f) / 0.25f
+                        r = (92f + k * 148f).toInt(); g = (22f + k * 18f).toInt(); b = (198f - k * 110f).toInt()
+                    } else if (t < 0.78f) {
+                        val k = (t - 0.5f) / 0.28f
+                        r = (240f + k * 15f).toInt(); g = (40f + k * 165f).toInt(); b = (88f - k * 78f).toInt()
+                    } else {
+                        val k = (t - 0.78f) / 0.22f
+                        r = 255; g = (205f + k * 50f).toInt(); b = (10f + k * 235f).toInt()
+                    }
+                    outArr[i] = Color.rgb(r.coerceIn(0, 255), g.coerceIn(0, 255), b.coerceIn(0, 255))
+                }
+            }
+            else -> System.arraycopy(pxArr, 0, outArr, 0, outArr.size)
+        }
+
+        val artBmp = Bitmap.createBitmap(outArr, sw, sh, Bitmap.Config.ARGB_8888)
+        if (forLivePreview) return artBmp
+        return Bitmap.createScaledBitmap(artBmp, w, h, true).also {
+            if (it != artBmp) artBmp.recycle()
         }
     }
 
@@ -3248,247 +3845,15 @@ class MainActivity : AppCompatActivity() {
                     canvas.drawRect(0f, 0f, railW, fh, gatePaint)
                     canvas.drawRect(fw - fw * 0.015f, 0f, fw, fh, gatePaint)
                 }
-                "oil_canvas" -> {
-                    // Impasto painterly brushstrokes sampled from photo grid + canvas weave
-                    val cols = 38
-                    val rows = 50
-                    val sample = Bitmap.createScaledBitmap(finalBmp, cols, rows, true)
-                    val cellW = fw / cols
-                    val cellH = fh / rows
-                    val brushP = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; alpha = 155 }
-                    for (sy in 0 until rows) {
-                        for (sx in 0 until cols) {
-                            val px = sample.getPixel(sx, sy)
-                            val r = ((Color.red(px) / 28) * 28 + 14).coerceIn(0, 255)
-                            val g = ((Color.green(px) / 28) * 28 + 14).coerceIn(0, 255)
-                            val b = ((Color.blue(px) / 28) * 28 + 14).coerceIn(0, 255)
-                            brushP.color = Color.argb(165, r, g, b)
-                            val ang = ((r * 3 + g * 5 + sx * 17 + sy * 23) % 180).toFloat()
-                            canvas.save()
-                            canvas.translate((sx + 0.5f) * cellW, (sy + 0.5f) * cellH)
-                            canvas.rotate(ang)
-                            canvas.drawOval(RectF(-cellW * 0.9f, -cellH * 0.42f, cellW * 0.9f, cellH * 0.42f), brushP)
-                            canvas.restore()
-                        }
-                    }
-                    sample.recycle()
-                }
-                "charcoal_sketch", "ink_and_line" -> {
-                    // Sobel contour edge detection on paper base
-                    val sw = 240
-                    val sh = (240f * (fh / fw)).toInt().coerceIn(120, 420)
-                    val small = Bitmap.createScaledBitmap(finalBmp, sw, sh, true)
-                    val pxArr = IntArray(sw * sh)
-                    small.getPixels(pxArr, 0, sw, 0, 0, sw, sh)
-                    val outArr = IntArray(sw * sh)
-                    val isInk = currentShootingEffect == "ink_and_line"
-                    fun lumAt(px: Int, py: Int): Float {
-                        val cx = px.coerceIn(0, sw - 1)
-                        val cy = py.coerceIn(0, sh - 1)
-                        val c = pxArr[cy * sw + cx]
-                        return 0.299f * Color.red(c) + 0.587f * Color.green(c) + 0.114f * Color.blue(c)
-                    }
-                    for (y in 0 until sh) {
-                        for (x in 0 until sw) {
-                            val gx = -lumAt(x - 1, y - 1) + lumAt(x + 1, y - 1) - 2f * lumAt(x - 1, y) + 2f * lumAt(x + 1, y) - lumAt(x - 1, y + 1) + lumAt(x + 1, y + 1)
-                            val gy = -lumAt(x - 1, y - 1) - 2f * lumAt(x, y - 1) - lumAt(x + 1, y - 1) + lumAt(x - 1, y + 1) + 2f * lumAt(x, y + 1) + lumAt(x + 1, y + 1)
-                            val edge = Math.sqrt((gx * gx + gy * gy).toDouble()).toFloat()
-                            val base = lumAt(x, y)
-                            if (isInk) {
-                                val v = if (edge > 66f || base < 38f) 16 else 252
-                                outArr[y * sw + x] = Color.rgb(v, v, v)
-                            } else {
-                                val shade = if (base < 88f && (x + y) % 4 == 0) 70f else base * 0.28f + 165f
-                                val ink = (shade - edge * 0.92f).toInt().coerceIn(22, 244)
-                                outArr[y * sw + x] = Color.rgb((ink + 4).coerceAtMost(248), (ink + 1).coerceAtMost(244), (ink - 6).coerceAtLeast(18))
-                            }
-                        }
-                    }
-                    val artBmp = Bitmap.createBitmap(outArr, sw, sh, Bitmap.Config.ARGB_8888)
-                    val up = Bitmap.createScaledBitmap(artBmp, finalBmp.width, finalBmp.height, true)
-                    canvas.drawBitmap(up, 0f, 0f, null)
-                    artBmp.recycle()
-                    up.recycle()
-                    small.recycle()
-                }
-                "watercolor_wash", "pastel_chalk" -> {
-                    // Soft downsampled pigment bleed wash + warm matte paper/chalk finish
-                    val smallW = (finalBmp.width / 18).coerceAtLeast(24)
-                    val smallH = (finalBmp.height / 18).coerceAtLeast(24)
-                    val down = Bitmap.createScaledBitmap(finalBmp, smallW, smallH, true)
-                    val soft = Bitmap.createScaledBitmap(down, finalBmp.width, finalBmp.height, true)
-                    down.recycle()
-                    val blendP = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                        alpha = if (currentShootingEffect == "watercolor_wash") 145 else 135
-                    }
-                    canvas.drawBitmap(soft, 0f, 0f, blendP)
-                    soft.recycle()
-                    val washP = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                        shader = LinearGradient(
-                            0f, 0f, fw, fh,
-                            if (currentShootingEffect == "watercolor_wash")
-                                intArrayOf(Color.parseColor("#24FBBF24"), Color.parseColor("#2238BDF8"), Color.parseColor("#2CF472B6"))
-                            else
-                                intArrayOf(Color.parseColor("#32FBCFE8"), Color.parseColor("#24FEF08A"), Color.parseColor("#32BAE6FD")),
-                            floatArrayOf(0f, 0.5f, 1f),
-                            Shader.TileMode.CLAMP
-                        )
-                    }
-                    canvas.drawRect(0f, 0f, fw, fh, washP)
-                }
-                "halftone_print" -> {
-                    // Newspaper / graphic novel dot grid sampled from luminance
-                    val cols = 52
-                    val rows = (52f * (fh / fw)).toInt().coerceIn(36, 90)
-                    val sample = Bitmap.createScaledBitmap(finalBmp, cols, rows, true)
-                    canvas.drawColor(Color.parseColor("#F6F1E4"))
-                    val cellW = fw / cols
-                    val cellH = fh / rows
-                    val dotP = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                        style = Paint.Style.FILL
-                        color = Color.parseColor("#12161C")
-                    }
-                    for (sy in 0 until rows) {
-                        val xOff = if (sy % 2 == 0) 0f else cellW * 0.25f
-                        for (sx in 0 until cols) {
-                            val px = sample.getPixel(sx, sy)
-                            val luma = (0.299f * Color.red(px) + 0.587f * Color.green(px) + 0.114f * Color.blue(px)) / 255f
-                            val rad = (1f - luma) * (Math.min(cellW, cellH) * 0.54f)
-                            if (rad > 0.8f) {
-                                canvas.drawCircle((sx + 0.5f) * cellW + xOff, (sy + 0.5f) * cellH, rad, dotP)
-                            }
-                        }
-                    }
-                    sample.recycle()
-                }
-                "cyanotype" -> {
-                    // Deep Prussian-blue architectural blueprint conversion (#08224A -> #E0F2FE)
-                    val sw = 320
-                    val sh = (320f * (fh / fw)).toInt().coerceIn(180, 560)
-                    val small = Bitmap.createScaledBitmap(finalBmp, sw, sh, true)
-                    val pxArr = IntArray(sw * sh)
-                    small.getPixels(pxArr, 0, sw, 0, 0, sw, sh)
-                    for (i in pxArr.indices) {
-                        val c = pxArr[i]
-                        val l = (0.299f * Color.red(c) + 0.587f * Color.green(c) + 0.114f * Color.blue(c)) / 255f
-                        pxArr[i] = Color.rgb((8 + l * 216).toInt(), (34 + l * 208).toInt(), (78 + l * 176).toInt())
-                    }
-                    val artBmp = Bitmap.createBitmap(pxArr, sw, sh, Bitmap.Config.ARGB_8888)
-                    val up = Bitmap.createScaledBitmap(artBmp, finalBmp.width, finalBmp.height, true)
-                    canvas.drawBitmap(up, 0f, 0f, null)
-                    artBmp.recycle(); up.recycle(); small.recycle()
-                    val bpPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                        style = Paint.Style.STROKE
-                        strokeWidth = (fw * 0.003f).coerceAtLeast(3f)
-                        color = Color.parseColor("#88E0F2FE")
-                    }
-                    canvas.drawRect(fw * 0.025f, fh * 0.025f, fw * 0.975f, fh * 0.975f, bpPaint)
-                }
-                "woodcut_engraving" -> {
-                    // Carved high-contrast relief ink block with horizontal woodcut grooves
-                    val sw = 300
-                    val sh = (300f * (fh / fw)).toInt().coerceIn(160, 520)
-                    val small = Bitmap.createScaledBitmap(finalBmp, sw, sh, true)
-                    val pxArr = IntArray(sw * sh)
-                    small.getPixels(pxArr, 0, sw, 0, 0, sw, sh)
-                    for (y in 0 until sh) {
-                        val groove = if (y % 3 == 0) 18f else 0f
-                        for (x in 0 until sw) {
-                            val c = pxArr[y * sw + x]
-                            val l = 0.299f * Color.red(c) + 0.587f * Color.green(c) + 0.114f * Color.blue(c)
-                            val v = if (l + groove > 122f) 242 else 12
-                            pxArr[y * sw + x] = Color.rgb(v, (v - 4).coerceAtLeast(10), (v - 10).coerceAtLeast(8))
-                        }
-                    }
-                    val artBmp = Bitmap.createBitmap(pxArr, sw, sh, Bitmap.Config.ARGB_8888)
-                    val up = Bitmap.createScaledBitmap(artBmp, finalBmp.width, finalBmp.height, true)
-                    canvas.drawBitmap(up, 0f, 0f, null)
-                    artBmp.recycle(); up.recycle(); small.recycle()
-                }
-                "lithograph" -> {
-                    // Muted museum ink tones + fine limestone stipple grain
-                    val lithoCm = ColorMatrix().apply {
-                        setSaturation(0.36f)
-                        postConcat(ColorMatrix(floatArrayOf(
-                            1.28f, 0f, 0f, 0f, -24f,
-                            0f, 1.26f, 0f, 0f, -26f,
-                            0f, 0f, 1.22f, 0f, -30f,
-                            0f, 0f, 0f, 1f, 0f
-                        )))
-                    }
-                    val copy = finalBmp.copy(Bitmap.Config.ARGB_8888, false)
-                    val p = Paint(Paint.ANTI_ALIAS_FLAG).apply { colorFilter = ColorMatrixColorFilter(lithoCm) }
-                    canvas.drawBitmap(copy, 0f, 0f, p)
-                    copy.recycle()
-                    val stipP = Paint(Paint.ANTI_ALIAS_FLAG)
-                    val rng = java.util.Random(77L)
-                    for (i in 0..900) {
-                        stipP.color = Color.argb(48, 38, 35, 32)
-                        canvas.drawCircle(rng.nextFloat() * fw, rng.nextFloat() * fh, (fw * 0.0014f).coerceAtLeast(1.5f), stipP)
-                    }
-                }
-                "prism_refraction" -> {
-                    // Spectral edge chromatic dispersion ghosting + rainbow corner caustics
-                    val srcCopy = finalBmp.copy(Bitmap.Config.ARGB_8888, false)
-                    val p = Paint(Paint.ANTI_ALIAS_FLAG).apply { alpha = 78 }
-                    canvas.drawBitmap(srcCopy, -fw * 0.018f, -fh * 0.01f, p)
-                    canvas.drawBitmap(srcCopy, fw * 0.018f, fh * 0.01f, p)
-                    srcCopy.recycle()
-                    val prismP = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                        shader = LinearGradient(
-                            0f, 0f, fw * 0.5f, fh * 0.5f,
-                            intArrayOf(Color.parseColor("#66F43F5E"), Color.parseColor("#44FACC15"), Color.parseColor("#5522D3EE"), Color.TRANSPARENT),
-                            floatArrayOf(0f, 0.35f, 0.7f, 1f),
-                            Shader.TileMode.CLAMP
-                        )
-                    }
-                    canvas.drawRect(0f, 0f, fw, fh, prismP)
-                }
-                "kaleidoscope" -> {
-                    // 8-fold radial symmetrical mandala mirrored around center
-                    val srcCopy = finalBmp.copy(Bitmap.Config.ARGB_8888, false)
-                    canvas.drawColor(Color.parseColor("#020617"))
-                    val cx = fw * 0.5f
-                    val cy = fh * 0.5f
-                    val rad = Math.hypot(fw.toDouble(), fh.toDouble()).toFloat() * 0.6f
-                    val wedge = Path().apply {
-                        moveTo(0f, 0f)
-                        lineTo(rad, -rad * Math.tan(Math.PI / 8.0).toFloat() * 1.05f)
-                        lineTo(rad, rad * Math.tan(Math.PI / 8.0).toFloat() * 1.05f)
-                        close()
-                    }
-                    for (i in 0..7) {
-                        canvas.save()
-                        canvas.translate(cx, cy)
-                        canvas.rotate(i * 45f)
-                        canvas.clipPath(wedge)
-                        if (i % 2 == 1) canvas.scale(1f, -1f)
-                        canvas.drawBitmap(srcCopy, -cx, -cy, null)
-                        canvas.restore()
-                    }
-                    srcCopy.recycle()
-                }
-                "solarize" -> {
-                    // Authentic Sabattier darkroom curve reversing bright highlights into metallic silver tones
-                    val sw = 360
-                    val sh = (360f * (fh / fw)).toInt().coerceIn(200, 620)
-                    val small = Bitmap.createScaledBitmap(finalBmp, sw, sh, true)
-                    val pxArr = IntArray(sw * sh)
-                    small.getPixels(pxArr, 0, sw, 0, 0, sw, sh)
-                    for (i in pxArr.indices) {
-                        val c = pxArr[i]
-                        val r = Color.red(c)
-                        val g = Color.green(c)
-                        val b = Color.blue(c)
-                        val sr = if (r > 128) (255 - ((r - 128) * 1.9f).toInt()).coerceIn(0, 255) else r
-                        val sg = if (g > 128) (255 - ((g - 128) * 1.85f).toInt()).coerceIn(0, 255) else g
-                        val sb = if (b > 128) (255 - ((b - 128) * 1.75f).toInt()).coerceIn(0, 255) else b
-                        pxArr[i] = Color.rgb(sr, sg, sb)
-                    }
-                    val artBmp = Bitmap.createBitmap(pxArr, sw, sh, Bitmap.Config.ARGB_8888)
-                    val up = Bitmap.createScaledBitmap(artBmp, finalBmp.width, finalBmp.height, true)
-                    canvas.drawBitmap(up, 0f, 0f, null)
-                    artBmp.recycle(); up.recycle(); small.recycle()
+                "oil_canvas", "charcoal_sketch", "watercolor_wash", "ink_and_line",
+                "pastel_chalk", "halftone_print", "cyanotype", "woodcut_engraving",
+                "lithograph", "prism_refraction", "kaleidoscope", "solarize",
+                "neon_edge", "noir_graphic_novel", "thermal_vision",
+                "cel_shaded_studio", "graphic_novel_noir", "manga_ink", "pop_art_print",
+                "line_art_minimalist", "ligne_claire", "clay_vinyl_3d" -> {
+                    val styledBmp = renderStylizedEffectBitmap(finalBmp, currentShootingEffect, forLivePreview = false)
+                    canvas.drawBitmap(styledBmp, 0f, 0f, null)
+                    if (styledBmp != finalBmp && !styledBmp.isRecycled) styledBmp.recycle()
                 }
                 "super8_film" -> {
                     val s8Cm = ColorMatrix().apply {
@@ -3575,233 +3940,6 @@ class MainActivity : AppCompatActivity() {
                     val copy = finalBmp.copy(Bitmap.Config.ARGB_8888, false)
                     canvas.drawBitmap(copy, 0f, 0f, Paint(Paint.ANTI_ALIAS_FLAG).apply { colorFilter = ColorMatrixColorFilter(smCm) })
                     copy.recycle()
-                }
-                "neon_edge" -> {
-                    val sw = 260
-                    val sh = (260f * (fh / fw)).toInt().coerceIn(140, 460)
-                    val small = Bitmap.createScaledBitmap(finalBmp, sw, sh, true)
-                    val pxArr = IntArray(sw * sh)
-                    small.getPixels(pxArr, 0, sw, 0, 0, sw, sh)
-                    val outArr = IntArray(sw * sh)
-                    fun edgeLum(px: Int, py: Int): Float {
-                        val cx = px.coerceIn(0, sw - 1)
-                        val cy = py.coerceIn(0, sh - 1)
-                        val c = pxArr[cy * sw + cx]
-                        return 0.299f * Color.red(c) + 0.587f * Color.green(c) + 0.114f * Color.blue(c)
-                    }
-                    for (y in 0 until sh) {
-                        val vy = y.toFloat() / sh
-                        for (x in 0 until sw) {
-                            val vx = x.toFloat() / sw
-                            val gx = -edgeLum(x - 1, y - 1) + edgeLum(x + 1, y - 1) - 2f * edgeLum(x - 1, y) + 2f * edgeLum(x + 1, y) - edgeLum(x - 1, y + 1) + edgeLum(x + 1, y + 1)
-                            val gy = -edgeLum(x - 1, y - 1) - 2f * edgeLum(x, y - 1) - edgeLum(x + 1, y - 1) + edgeLum(x - 1, y + 1) + 2f * edgeLum(x, y + 1) + edgeLum(x + 1, y + 1)
-                            val edge = (((Math.sqrt((gx * gx + gy * gy).toDouble()).toFloat()) - 22f) / 110f).coerceIn(0f, 1f)
-                            val nr = (6f + edge * (24f + vx * 225f)).toInt().coerceIn(0, 255)
-                            val ng = (8f + edge * (240f - vy * 145f)).toInt().coerceIn(0, 255)
-                            val nb = (18f + edge * 237f).toInt().coerceIn(0, 255)
-                            outArr[y * sw + x] = Color.rgb(nr, ng, nb)
-                        }
-                    }
-                    val artBmp = Bitmap.createBitmap(outArr, sw, sh, Bitmap.Config.ARGB_8888)
-                    val up = Bitmap.createScaledBitmap(artBmp, finalBmp.width, finalBmp.height, true)
-                    canvas.drawBitmap(up, 0f, 0f, null)
-                    artBmp.recycle(); up.recycle(); small.recycle()
-                }
-                "noir_graphic_novel" -> {
-                    val sw = 260
-                    val sh = (260f * (fh / fw)).toInt().coerceIn(140, 460)
-                    val small = Bitmap.createScaledBitmap(finalBmp, sw, sh, true)
-                    val pxArr = IntArray(sw * sh)
-                    small.getPixels(pxArr, 0, sw, 0, 0, sw, sh)
-                    val outArr = IntArray(sw * sh)
-                    fun comicLum(px: Int, py: Int): Float {
-                        val cx = px.coerceIn(0, sw - 1)
-                        val cy = py.coerceIn(0, sh - 1)
-                        val c = pxArr[cy * sw + cx]
-                        return 0.299f * Color.red(c) + 0.587f * Color.green(c) + 0.114f * Color.blue(c)
-                    }
-                    for (y in 0 until sh) {
-                        for (x in 0 until sw) {
-                            val gx = -comicLum(x - 1, y - 1) + comicLum(x + 1, y - 1) - 2f * comicLum(x - 1, y) + 2f * comicLum(x + 1, y) - comicLum(x - 1, y + 1) + comicLum(x + 1, y + 1)
-                            val gy = -comicLum(x - 1, y - 1) - 2f * comicLum(x, y - 1) - comicLum(x + 1, y - 1) + comicLum(x - 1, y + 1) + 2f * comicLum(x, y + 1) + comicLum(x + 1, y + 1)
-                            val edge = Math.sqrt((gx * gx + gy * gy).toDouble()).toFloat()
-                            val l = comicLum(x, y)
-                            val v = if (edge > 64f || l < 76f) 10 else if (l < 138f) 112 else 246
-                            outArr[y * sw + x] = Color.rgb(v, v, v)
-                        }
-                    }
-                    val artBmp = Bitmap.createBitmap(outArr, sw, sh, Bitmap.Config.ARGB_8888)
-                    val up = Bitmap.createScaledBitmap(artBmp, finalBmp.width, finalBmp.height, true)
-                    canvas.drawBitmap(up, 0f, 0f, null)
-                    artBmp.recycle(); up.recycle(); small.recycle()
-                }
-                "thermal_vision" -> {
-                    val sw = 320
-                    val sh = (320f * (fh / fw)).toInt().coerceIn(180, 560)
-                    val small = Bitmap.createScaledBitmap(finalBmp, sw, sh, true)
-                    val pxArr = IntArray(sw * sh)
-                    small.getPixels(pxArr, 0, sw, 0, 0, sw, sh)
-                    for (i in pxArr.indices) {
-                        val c = pxArr[i]
-                        val t = (0.299f * Color.red(c) + 0.587f * Color.green(c) + 0.114f * Color.blue(c)) / 255f
-                        val r: Int
-                        val g: Int
-                        val b: Int
-                        if (t < 0.25f) {
-                            val k = t / 0.25f
-                            r = (14f + k * 78f).toInt(); g = (8f + k * 14f).toInt(); b = (68f + k * 130f).toInt()
-                        } else if (t < 0.5f) {
-                            val k = (t - 0.25f) / 0.25f
-                            r = (92f + k * 148f).toInt(); g = (22f + k * 18f).toInt(); b = (198f - k * 110f).toInt()
-                        } else if (t < 0.78f) {
-                            val k = (t - 0.5f) / 0.28f
-                            r = (240f + k * 15f).toInt(); g = (40f + k * 165f).toInt(); b = (88f - k * 78f).toInt()
-                        } else {
-                            val k = (t - 0.78f) / 0.22f
-                            r = 255; g = (205f + k * 50f).toInt(); b = (10f + k * 235f).toInt()
-                        }
-                        pxArr[i] = Color.rgb(r.coerceIn(0, 255), g.coerceIn(0, 255), b.coerceIn(0, 255))
-                    }
-                    val artBmp = Bitmap.createBitmap(pxArr, sw, sh, Bitmap.Config.ARGB_8888)
-                    val up = Bitmap.createScaledBitmap(artBmp, finalBmp.width, finalBmp.height, true)
-                    canvas.drawBitmap(up, 0f, 0f, null)
-                    artBmp.recycle(); up.recycle(); small.recycle()
-                }
-                "cel_shaded_studio", "ligne_claire" -> {
-                    val sw = 320
-                    val sh = (320f * (fh / fw)).toInt().coerceIn(180, 560)
-                    val small = Bitmap.createScaledBitmap(finalBmp, sw, sh, true)
-                    val pxArr = IntArray(sw * sh)
-                    small.getPixels(pxArr, 0, sw, 0, 0, sw, sh)
-                    val outArr = IntArray(sw * sh)
-                    val isLigne = currentShootingEffect == "ligne_claire"
-                    fun tLum(px: Int, py: Int): Float {
-                        val cx = px.coerceIn(0, sw - 1)
-                        val cy = py.coerceIn(0, sh - 1)
-                        val c = pxArr[cy * sw + cx]
-                        return 0.299f * Color.red(c) + 0.587f * Color.green(c) + 0.114f * Color.blue(c)
-                    }
-                    for (y in 0 until sh) {
-                        for (x in 0 until sw) {
-                            val gx = -tLum(x - 1, y - 1) + tLum(x + 1, y - 1) - 2f * tLum(x - 1, y) + 2f * tLum(x + 1, y) - tLum(x - 1, y + 1) + tLum(x + 1, y + 1)
-                            val gy = -tLum(x - 1, y - 1) - 2f * tLum(x, y - 1) - tLum(x + 1, y - 1) + tLum(x - 1, y + 1) + 2f * tLum(x, y + 1) + tLum(x + 1, y + 1)
-                            val edge = Math.sqrt((gx * gx + gy * gy).toDouble()).toFloat()
-                            val c = pxArr[y * sw + x]
-                            if (edge > if (isLigne) 58f else 62f) {
-                                outArr[y * sw + x] = if (isLigne) Color.rgb(24, 24, 30) else Color.rgb(12, 15, 24)
-                            } else if (isLigne) {
-                                val pr = (Color.red(c) / 36) * 36
-                                val pg = (Color.green(c) / 36) * 36
-                                val pb = (Color.blue(c) / 36) * 36
-                                outArr[y * sw + x] = Color.rgb(
-                                    (pr * 0.72f + 72f).toInt().coerceIn(0, 248),
-                                    (pg * 0.72f + 70f).toInt().coerceIn(0, 246),
-                                    (pb * 0.72f + 66f).toInt().coerceIn(0, 244)
-                                )
-                            } else {
-                                outArr[y * sw + x] = Color.rgb(
-                                    ((Color.red(c) / 52) * 52 + 12).coerceIn(0, 255),
-                                    ((Color.green(c) / 52) * 52 + 12).coerceIn(0, 255),
-                                    ((Color.blue(c) / 52) * 52 + 12).coerceIn(0, 255)
-                                )
-                            }
-                        }
-                    }
-                    val artBmp = Bitmap.createBitmap(outArr, sw, sh, Bitmap.Config.ARGB_8888)
-                    val up = Bitmap.createScaledBitmap(artBmp, finalBmp.width, finalBmp.height, true)
-                    canvas.drawBitmap(up, 0f, 0f, null)
-                    artBmp.recycle(); up.recycle(); small.recycle()
-                }
-                "graphic_novel_noir", "manga_ink", "line_art_minimalist" -> {
-                    val sw = 320
-                    val sh = (320f * (fh / fw)).toInt().coerceIn(180, 560)
-                    val small = Bitmap.createScaledBitmap(finalBmp, sw, sh, true)
-                    val pxArr = IntArray(sw * sh)
-                    small.getPixels(pxArr, 0, sw, 0, 0, sw, sh)
-                    val outArr = IntArray(sw * sh)
-                    fun mLum(px: Int, py: Int): Float {
-                        val cx = px.coerceIn(0, sw - 1)
-                        val cy = py.coerceIn(0, sh - 1)
-                        val c = pxArr[cy * sw + cx]
-                        return 0.299f * Color.red(c) + 0.587f * Color.green(c) + 0.114f * Color.blue(c)
-                    }
-                    for (y in 0 until sh) {
-                        for (x in 0 until sw) {
-                            val gx = -mLum(x - 1, y - 1) + mLum(x + 1, y - 1) - 2f * mLum(x - 1, y) + 2f * mLum(x + 1, y) - mLum(x - 1, y + 1) + mLum(x + 1, y + 1)
-                            val gy = -mLum(x - 1, y - 1) - 2f * mLum(x, y - 1) - mLum(x + 1, y - 1) + mLum(x - 1, y + 1) + 2f * mLum(x, y + 1) + mLum(x + 1, y + 1)
-                            val edge = Math.sqrt((gx * gx + gy * gy).toDouble()).toFloat()
-                            val l = mLum(x, y)
-                            val v = when (currentShootingEffect) {
-                                "line_art_minimalist" -> if (edge > 54f) 12 else 254
-                                "manga_ink" -> {
-                                    val screenDot = l < 155f && ((x + (y % 2) * 2) % 4 == 0 && y % 3 == 0)
-                                    val denseDot = l < 104f && ((x + y) % 2 == 0)
-                                    if (edge > 56f || l < 40f || screenDot || denseDot) 14 else 250
-                                }
-                                else -> if (edge > 58f || l < 82f) 8 else if (l < 138f) 116 else 248
-                            }
-                            outArr[y * sw + x] = Color.rgb(v, v, v)
-                        }
-                    }
-                    val artBmp = Bitmap.createBitmap(outArr, sw, sh, Bitmap.Config.ARGB_8888)
-                    val up = Bitmap.createScaledBitmap(artBmp, finalBmp.width, finalBmp.height, true)
-                    canvas.drawBitmap(up, 0f, 0f, null)
-                    artBmp.recycle(); up.recycle(); small.recycle()
-                }
-                "pop_art_print" -> {
-                    val sw = 300
-                    val sh = (300f * (fh / fw)).toInt().coerceIn(160, 520)
-                    val small = Bitmap.createScaledBitmap(finalBmp, sw, sh, true)
-                    val pxArr = IntArray(sw * sh)
-                    small.getPixels(pxArr, 0, sw, 0, 0, sw, sh)
-                    val outArr = IntArray(sw * sh)
-                    fun pLum(px: Int, py: Int): Float {
-                        val cx = px.coerceIn(0, sw - 1)
-                        val cy = py.coerceIn(0, sh - 1)
-                        val c = pxArr[cy * sw + cx]
-                        return 0.299f * Color.red(c) + 0.587f * Color.green(c) + 0.114f * Color.blue(c)
-                    }
-                    for (y in 0 until sh) {
-                        for (x in 0 until sw) {
-                            val gx = -pLum(x - 1, y - 1) + pLum(x + 1, y - 1) - 2f * pLum(x - 1, y) + 2f * pLum(x + 1, y) - pLum(x - 1, y + 1) + pLum(x + 1, y + 1)
-                            val gy = -pLum(x - 1, y - 1) - 2f * pLum(x, y - 1) - pLum(x + 1, y - 1) + pLum(x - 1, y + 1) + 2f * pLum(x, y + 1) + pLum(x + 1, y + 1)
-                            val edge = Math.sqrt((gx * gx + gy * gy).toDouble()).toFloat()
-                            val c = pxArr[y * sw + x]
-                            outArr[y * sw + x] = if (edge > 56f) {
-                                Color.rgb(10, 10, 14)
-                            } else {
-                                val r = Color.red(c); val g = Color.green(c); val b = Color.blue(c)
-                                val l = 0.299f * r + 0.587f * g + 0.114f * b
-                                val isDot = (x % 4 == 0 && y % 4 == 0)
-                                if (l > 190f) Color.rgb(252, if (isDot) 210 else 238, if (isDot) 35 else 88)
-                                else if (r >= g && r >= b) Color.rgb(239, if (isDot) 48 else 35, if (isDot) 168 else 68)
-                                else if (b >= r && b >= g) Color.rgb(if (isDot) 245 else 37, if (isDot) 55 else 99, 235)
-                                else Color.rgb(14, if (isDot) 225 else 185, 224)
-                            }
-                        }
-                    }
-                    val artBmp = Bitmap.createBitmap(outArr, sw, sh, Bitmap.Config.ARGB_8888)
-                    val up = Bitmap.createScaledBitmap(artBmp, finalBmp.width, finalBmp.height, true)
-                    canvas.drawBitmap(up, 0f, 0f, null)
-                    artBmp.recycle(); up.recycle(); small.recycle()
-                }
-                "clay_vinyl_3d" -> {
-                    val smallW = (finalBmp.width / 14).coerceAtLeast(28)
-                    val smallH = (finalBmp.height / 14).coerceAtLeast(28)
-                    val down = Bitmap.createScaledBitmap(finalBmp, smallW, smallH, true)
-                    val soft = Bitmap.createScaledBitmap(down, finalBmp.width, finalBmp.height, true)
-                    down.recycle()
-                    canvas.drawBitmap(soft, 0f, 0f, Paint(Paint.ANTI_ALIAS_FLAG).apply { alpha = 155 })
-                    soft.recycle()
-                    val sheenP = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                        shader = RadialGradient(
-                            fw * 0.36f, fh * 0.28f, Math.max(fw, fh) * 0.46f,
-                            intArrayOf(Color.parseColor("#54FFFFFF"), Color.parseColor("#22E0F2FE"), Color.TRANSPARENT),
-                            floatArrayOf(0f, 0.45f, 1f),
-                            Shader.TileMode.CLAMP
-                        )
-                    }
-                    canvas.drawRect(0f, 0f, fw, fh, sheenP)
                 }
             }
 
@@ -4010,6 +4148,15 @@ class MainActivity : AppCompatActivity() {
             updateAutoLoopHud()
         }
 
+        if (!isVideoType && videoOnlyEffectIds.contains(currentShootingEffect)) {
+            setShootingEffect("none")
+        } else if (isVideoType && photoOnlyEffectIds.contains(currentShootingEffect)) {
+            setShootingEffect("none")
+        } else {
+            updateShootingEffectButtons()
+        }
+
+        openGLProcessor?.setNightBoost(mode == CameraMode.NIGHT || currentShootingEffect == "night_sight")
         updateArtStripModeOrder()
         applyLivePreviewColorMatrix()
         bindCameraUseCases()
@@ -4185,10 +4332,11 @@ class MainActivity : AppCompatActivity() {
                 setArLens(lensList[nextIdx])
             }
             CreativeTarget.EFFECTS -> {
-                val currentIdx = allShootingEffects.indexOf(currentShootingEffect)
+                val modeEffects = getModeFilteredShootingEffects()
+                val currentIdx = modeEffects.indexOf(currentShootingEffect)
                 val safeIdx = if (currentIdx >= 0) currentIdx else 0
-                val nextIdx = (safeIdx + 1) % allShootingEffects.size
-                setShootingEffect(allShootingEffects[nextIdx])
+                val nextIdx = (safeIdx + 1) % modeEffects.size
+                setShootingEffect(modeEffects[nextIdx])
             }
             CreativeTarget.ART -> {
                 val artList = getModeOrderedArtEffects()
@@ -4249,10 +4397,11 @@ class MainActivity : AppCompatActivity() {
                 setArLens(lensList[prevIdx])
             }
             CreativeTarget.EFFECTS -> {
-                val currentIdx = allShootingEffects.indexOf(currentShootingEffect)
+                val modeEffects = getModeFilteredShootingEffects()
+                val currentIdx = modeEffects.indexOf(currentShootingEffect)
                 val safeIdx = if (currentIdx >= 0) currentIdx else 0
-                val prevIdx = if (safeIdx <= 0) allShootingEffects.size - 1 else safeIdx - 1
-                setShootingEffect(allShootingEffects[prevIdx])
+                val prevIdx = if (safeIdx <= 0) modeEffects.size - 1 else safeIdx - 1
+                setShootingEffect(modeEffects[prevIdx])
             }
             CreativeTarget.ART -> {
                 val artList = getModeOrderedArtEffects()
@@ -4304,8 +4453,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun applyTextureEffectPreset(index: Int) {
-        val safeIdx = ((index % allShootingEffects.size) + allShootingEffects.size) % allShootingEffects.size
-        setShootingEffect(allShootingEffects[safeIdx])
+        val modeEffects = getModeFilteredShootingEffects()
+        val safeIdx = ((index % modeEffects.size) + modeEffects.size) % modeEffects.size
+        setShootingEffect(modeEffects[safeIdx])
     }
 
     private fun switchCamera() {
@@ -4406,6 +4556,7 @@ class MainActivity : AppCompatActivity() {
                     val pct = progress - 100
                     filterManager.setBrightnessPercent(pct)
                     viewBinding.proOverlayView.liveBrightnessPercent = pct
+                    openGLProcessor?.setAdjustments(pct, viewBinding.proOverlayView.liveContrastPercent, viewBinding.proOverlayView.liveSaturationPercent)
                     applyLivePreviewColorMatrix()
                 }
             }
@@ -4419,6 +4570,7 @@ class MainActivity : AppCompatActivity() {
                     val pct = progress - 100
                     filterManager.setContrastPercent(pct)
                     viewBinding.proOverlayView.liveContrastPercent = pct
+                    openGLProcessor?.setAdjustments(viewBinding.proOverlayView.liveBrightnessPercent, pct, viewBinding.proOverlayView.liveSaturationPercent)
                     applyLivePreviewColorMatrix()
                 }
             }
@@ -4432,6 +4584,7 @@ class MainActivity : AppCompatActivity() {
                     val pct = progress - 100
                     filterManager.setSaturationPercent(pct)
                     viewBinding.proOverlayView.liveSaturationPercent = pct
+                    openGLProcessor?.setAdjustments(viewBinding.proOverlayView.liveBrightnessPercent, viewBinding.proOverlayView.liveContrastPercent, pct)
                     applyLivePreviewColorMatrix()
                 }
             }
@@ -4595,6 +4748,9 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         super.onDestroy()
         dollyZoomAnimator?.cancel()
+        stylizeHandler.removeCallbacksAndMessages(null)
+        stylizeExecutor?.shutdownNow()
+        openGLProcessor?.release()
         sensorManager.unregisterListener(sensorEventListener)
         faceMeshHelper?.clear()
         cameraExecutor.shutdown()

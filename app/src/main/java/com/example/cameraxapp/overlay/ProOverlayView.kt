@@ -1,12 +1,14 @@
 package com.example.cameraxapp.overlay
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RadialGradient
+import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.Shader
 import android.graphics.Typeface
@@ -203,8 +205,27 @@ class ProOverlayView @JvmOverloads constructor(
     var activeShootingEffect: String = "none"
         set(value) {
             field = value
-            invalidate()
+            if (value == "none") {
+                updateProcessedEffectBitmap(null)
+            } else {
+                invalidate()
+            }
         }
+
+    private var processedEffectBitmap: Bitmap? = null
+    private val effectSrcRect = Rect()
+    private val effectDstRect = Rect()
+    private val effectBitmapPaint = Paint(Paint.FILTER_BITMAP_FLAG)
+
+    fun updateProcessedEffectBitmap(bmp: Bitmap?) {
+        val prev = processedEffectBitmap
+        if (bmp != null && bmp.isRecycled) return
+        processedEffectBitmap = bmp
+        if (prev != null && prev != bmp && !prev.isRecycled) {
+            prev.recycle()
+        }
+        invalidate()
+    }
 
     var customDateStampText: String? = null
         set(value) {
@@ -722,7 +743,13 @@ class ProOverlayView @JvmOverloads constructor(
         val heightF = height.toFloat()
         if (widthF <= 0 || heightF <= 0) return
 
-        // 0. Live Visual Color Preset Grading & Texture Effects over Viewfinder
+        // 0. Live Stylized Art / Toon Frame Buffer + Color Preset Grading & Texture Effects over Viewfinder
+        val effBmp = processedEffectBitmap
+        if (effBmp != null && !effBmp.isRecycled) {
+            effectSrcRect.set(0, 0, effBmp.width, effBmp.height)
+            effectDstRect.set(0, 0, width, height)
+            canvas.drawBitmap(effBmp, effectSrcRect, effectDstRect, effectBitmapPaint)
+        }
         drawLiveFilterGrading(canvas, widthF, heightF)
         drawLiveTextureEffects(canvas, widthF, heightF)
 
