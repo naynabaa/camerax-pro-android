@@ -39,6 +39,55 @@
         app:layout_constraintStart_toStartOf="@id/viewFinder"
         app:layout_constraintEnd_toEndOf="@id/viewFinder" />
 
+    <!-- Real Multi-Cam Picture-in-Picture (PiP) Draggable Secondary Preview Card -->
+    <FrameLayout
+        android:id="@+id/pipCardContainer"
+        android:layout_width="112dp"
+        android:layout_height="156dp"
+        android:layout_marginTop="92dp"
+        android:layout_marginEnd="14dp"
+        android:background="#0F172A"
+        android:padding="2dp"
+        android:elevation="18dp"
+        android:visibility="gone"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <androidx.camera.view.PreviewView
+            android:id="@+id/pipViewFinder"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            app:implementationMode="compatible"
+            app:scaleType="fillCenter" />
+
+        <TextView
+            android:id="@+id/tvPipBadge"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="top|start"
+            android:layout_margin="4dp"
+            android:paddingHorizontal="5dp"
+            android:paddingVertical="2dp"
+            android:background="#AA000000"
+            android:text="PIP · FRONT"
+            android:textColor="#FACC15"
+            android:textSize="8sp"
+            android:textStyle="bold"
+            android:fontFamily="monospace" />
+
+        <ImageButton
+            android:id="@+id/btnPipSwap"
+            android:layout_width="24dp"
+            android:layout_height="24dp"
+            android:layout_gravity="bottom|end"
+            android:layout_margin="4dp"
+            android:padding="4dp"
+            android:background="@drawable/bg_circle_icon_button"
+            android:src="@drawable/ic_camera_switch"
+            app:tint="#FFFFFF"
+            android:contentDescription="Swap Main and PiP Cameras" />
+    </FrameLayout>
+
     <!-- Tap-to-Focus Reticle -->
     <View
         android:id="@+id/focusRing"
@@ -266,12 +315,17 @@
             android:fontFamily="monospace" />
 
         <TextView
+            android:id="@+id/tvVideoQualityPill"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="4K 60FPS"
-            android:textColor="#64748B"
+            android:text="HD 30FPS"
+            android:textColor="#38BDF8"
             android:textSize="10sp"
+            android:textStyle="bold"
             android:fontFamily="monospace"
+            android:paddingHorizontal="6dp"
+            android:paddingVertical="2dp"
+            android:background="@drawable/bg_cinema_button_inactive"
             android:layout_marginStart="8dp" />
 
         <TextView
@@ -549,6 +603,7 @@
             <TextView android:id="@+id/tabPhoto" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="PHOTO" />
             <TextView android:id="@+id/tabPortrait" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="PORTRAIT" />
             <TextView android:id="@+id/tabNight" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="NIGHT" />
+            <TextView android:id="@+id/tabPanorama" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="PANORAMA" />
         </LinearLayout>
     </FrameLayout>
 
@@ -1399,12 +1454,132 @@
                             android:fontFamily="monospace" />
                     </LinearLayout>
 
+                    <TextView
+                        android:id="@+id/btnHistogramMode"
+                        android:layout_width="wrap_content"
+                        android:layout_height="26dp"
+                        android:gravity="center"
+                        android:paddingHorizontal="8dp"
+                        android:text="LUMA"
+                        android:textColor="#38BDF8"
+                        android:textSize="10sp"
+                        android:fontFamily="monospace"
+                        android:textStyle="bold"
+                        android:background="@drawable/bg_cinema_button_inactive"
+                        android:layout_marginEnd="8dp" />
+
                     <androidx.appcompat.widget.SwitchCompat
                         android:id="@+id/switchHistogram"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         app:thumbTint="#FACC15"
                         app:trackTint="#475569" />
+                </LinearLayout>
+
+                <!-- Focus Peaking Highlight Card -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:padding="12dp"
+                    android:background="@drawable/bg_card_cinema"
+                    android:layout_marginTop="6dp">
+
+                    <ImageView
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:src="@drawable/ic_crosshair"
+                        app:tint="#22D3EE"
+                        android:layout_marginEnd="10dp" />
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Focus Peaking Highlight"
+                            android:textColor="#F8FAFC"
+                            android:textSize="11.5sp"
+                            android:fontFamily="monospace"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:id="@+id/tvFocusPeakingStatus"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Focus Peaking: Inactive"
+                            android:textColor="#94A3B8"
+                            android:textSize="9.5sp"
+                            android:fontFamily="monospace" />
+                    </LinearLayout>
+
+                    <androidx.appcompat.widget.SwitchCompat
+                        android:id="@+id/switchFocusPeaking"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        app:thumbTint="#22D3EE"
+                        app:trackTint="#475569" />
+                </LinearLayout>
+
+                <!-- Burst Buffer Limit Card -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:padding="12dp"
+                    android:background="@drawable/bg_card_cinema"
+                    android:layout_marginTop="6dp">
+
+                    <ImageView
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:src="@drawable/ic_repeat"
+                        app:tint="#FACC15"
+                        android:layout_marginEnd="10dp" />
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Burst Shot Limit"
+                            android:textColor="#F8FAFC"
+                            android:textSize="11.5sp"
+                            android:fontFamily="monospace"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:id="@+id/tvBurstLimitStatus"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Buffer limit: 30 RAW/JPEG frames"
+                            android:textColor="#94A3B8"
+                            android:textSize="9.5sp"
+                            android:fontFamily="monospace" />
+                    </LinearLayout>
+
+                    <TextView
+                        android:id="@+id/btnBurstLimit"
+                        android:layout_width="wrap_content"
+                        android:layout_height="28dp"
+                        android:gravity="center"
+                        android:paddingHorizontal="10dp"
+                        android:text="30 SHOTS"
+                        android:textColor="#0F172A"
+                        android:textSize="10sp"
+                        android:fontFamily="monospace"
+                        android:textStyle="bold"
+                        android:background="@drawable/bg_cinema_button_active" />
                 </LinearLayout>
 
                 <!-- Vector Scope Card -->
@@ -1926,9 +2101,10 @@
                             android:textStyle="bold" />
 
                         <TextView
+                            android:id="@+id/tvMultiCamPipStatus"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="Live miniature director preview for all 4 camera lenses"
+                            android:text="Live concurrent dual-camera PiP director view"
                             android:textColor="#94A3B8"
                             android:textSize="9.5sp"
                             android:fontFamily="monospace" />
@@ -1939,6 +2115,70 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         app:thumbTint="#FACC15"
+                        app:trackTint="#475569" />
+                </LinearLayout>
+
+                <!-- Studio Watermark & Typography Banner Card -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:padding="12dp"
+                    android:background="@drawable/bg_card_cinema"
+                    android:layout_marginTop="6dp">
+
+                    <ImageView
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:src="@drawable/ic_sparkles"
+                        app:tint="#38BDF8"
+                        android:layout_marginEnd="10dp" />
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Studio Watermark &amp; Font"
+                            android:textColor="#F8FAFC"
+                            android:textSize="11.5sp"
+                            android:fontFamily="monospace"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:id="@+id/tvWatermarkFontStatus"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Font: CYBER ORBITRON"
+                            android:textColor="#94A3B8"
+                            android:textSize="9.5sp"
+                            android:fontFamily="monospace" />
+                    </LinearLayout>
+
+                    <TextView
+                        android:id="@+id/btnCycleFont"
+                        android:layout_width="wrap_content"
+                        android:layout_height="26dp"
+                        android:gravity="center"
+                        android:paddingHorizontal="8dp"
+                        android:text="FONT"
+                        android:textColor="#38BDF8"
+                        android:textSize="10sp"
+                        android:fontFamily="monospace"
+                        android:textStyle="bold"
+                        android:background="@drawable/bg_cinema_button_inactive"
+                        android:layout_marginEnd="8dp" />
+
+                    <androidx.appcompat.widget.SwitchCompat
+                        android:id="@+id/switchWatermark"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        app:thumbTint="#38BDF8"
                         app:trackTint="#475569" />
                 </LinearLayout>
             </LinearLayout>
@@ -2310,7 +2550,7 @@
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
                     android:layout_marginStart="8dp"
-                    android:text="FILTER: NORMAL (0/23)"
+                    android:text="FILTER: NORMAL (0/33)"
                     android:textColor="#FFC107"
                     android:textSize="10.5sp"
                     android:textStyle="bold"
@@ -2319,6 +2559,47 @@
                     android:singleLine="true"
                     android:ellipsize="marquee"
                     android:marqueeRepeatLimit="marquee_forever" />
+            </LinearLayout>
+
+            <!-- Effect Intensity Slider Row (Shown dynamically when an Effect / Art / Toon shader is active) -->
+            <LinearLayout
+                android:id="@+id/layoutEffectIntensity"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:layout_marginTop="4dp"
+                android:visibility="gone">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="INTENSITY"
+                    android:textColor="#38BDF8"
+                    android:textSize="9sp"
+                    android:textStyle="bold"
+                    android:fontFamily="monospace" />
+
+                <SeekBar
+                    android:id="@+id/sbEffectIntensity"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:max="100"
+                    android:progress="85"
+                    android:progressTint="#38BDF8"
+                    android:thumbTint="#38BDF8" />
+
+                <TextView
+                    android:id="@+id/tvEffectIntensityVal"
+                    android:layout_width="36dp"
+                    android:layout_height="wrap_content"
+                    android:gravity="end"
+                    android:text="85%"
+                    android:textColor="#F8FAFC"
+                    android:textSize="9.5sp"
+                    android:fontFamily="monospace"
+                    android:textStyle="bold" />
             </LinearLayout>
         </LinearLayout>
 
@@ -2345,6 +2626,7 @@
                 android:visibility="visible">
 
                 <LinearLayout
+                    android:id="@+id/layoutFiltersContainer"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:orientation="horizontal"
@@ -2699,6 +2981,132 @@
                         android:textSize="10.5sp"
                         android:fontFamily="monospace"
                         android:background="@drawable/bg_cinema_button_inactive" />
+
+                    <TextView
+                        android:id="@+id/btnFilterPortra400"
+                        android:layout_width="wrap_content"
+                        android:minWidth="96dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="6dp"
+                        android:paddingHorizontal="12dp"
+                        android:gravity="center"
+                        android:text="PORTRA 400"
+                        android:textColor="#94A3B8"
+                        android:textSize="10.5sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+
+                    <TextView
+                        android:id="@+id/btnFilterFuji400h"
+                        android:layout_width="wrap_content"
+                        android:minWidth="92dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="6dp"
+                        android:paddingHorizontal="12dp"
+                        android:gravity="center"
+                        android:text="FUJI 400H"
+                        android:textColor="#94A3B8"
+                        android:textSize="10.5sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+
+                    <TextView
+                        android:id="@+id/btnFilterTealOrange"
+                        android:layout_width="wrap_content"
+                        android:minWidth="98dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="6dp"
+                        android:paddingHorizontal="12dp"
+                        android:gravity="center"
+                        android:text="TEAL ORANGE"
+                        android:textColor="#94A3B8"
+                        android:textSize="10.5sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+
+                    <TextView
+                        android:id="@+id/btnFilterNoirContrast"
+                        android:layout_width="wrap_content"
+                        android:minWidth="100dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="6dp"
+                        android:paddingHorizontal="12dp"
+                        android:gravity="center"
+                        android:text="NOIR CONTRAST"
+                        android:textColor="#94A3B8"
+                        android:textSize="10.5sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+
+                    <TextView
+                        android:id="@+id/btnFilterSunsetWarmth"
+                        android:layout_width="wrap_content"
+                        android:minWidth="102dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="6dp"
+                        android:paddingHorizontal="12dp"
+                        android:gravity="center"
+                        android:text="SUNSET WARMTH"
+                        android:textColor="#94A3B8"
+                        android:textSize="10.5sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+
+                    <TextView
+                        android:id="@+id/btnFilterMatrixCode"
+                        android:layout_width="wrap_content"
+                        android:minWidth="96dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="6dp"
+                        android:paddingHorizontal="12dp"
+                        android:gravity="center"
+                        android:text="MATRIX CODE"
+                        android:textColor="#94A3B8"
+                        android:textSize="10.5sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+
+                    <TextView
+                        android:id="@+id/btnFilterPastelDream"
+                        android:layout_width="wrap_content"
+                        android:minWidth="100dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="6dp"
+                        android:paddingHorizontal="12dp"
+                        android:gravity="center"
+                        android:text="PASTEL DREAM"
+                        android:textColor="#94A3B8"
+                        android:textSize="10.5sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+
+                    <TextView
+                        android:id="@+id/btnFilterNordicBlue"
+                        android:layout_width="wrap_content"
+                        android:minWidth="96dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="6dp"
+                        android:paddingHorizontal="12dp"
+                        android:gravity="center"
+                        android:text="NORDIC BLUE"
+                        android:textColor="#94A3B8"
+                        android:textSize="10.5sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+
+                    <TextView
+                        android:id="@+id/btnFilterSuper8Vintage"
+                        android:layout_width="wrap_content"
+                        android:minWidth="104dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="6dp"
+                        android:paddingHorizontal="12dp"
+                        android:gravity="center"
+                        android:text="SUPER 8 RETRO"
+                        android:textColor="#94A3B8"
+                        android:textSize="10.5sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
                 </LinearLayout>
             </HorizontalScrollView>
 
@@ -2711,6 +3119,7 @@
                 android:visibility="gone">
 
                 <LinearLayout
+                    android:id="@+id/layoutLensesContainer"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:orientation="horizontal"
@@ -2810,6 +3219,50 @@
                         android:gravity="center"
                         android:text="POW! COMIC"
                         android:textColor="#FACC15"
+                        android:textSize="10sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+
+                    <TextView
+                        android:id="@+id/btnArTextStudio"
+                        android:layout_width="wrap_content"
+                        android:minWidth="86dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="6dp"
+                        android:paddingHorizontal="12dp"
+                        android:gravity="center"
+                        android:text="Aa TEXT"
+                        android:textColor="#34D399"
+                        android:textSize="10sp"
+                        android:textStyle="bold"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+
+                    <TextView
+                        android:id="@+id/btnArCalibrate"
+                        android:layout_width="wrap_content"
+                        android:minWidth="96dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="6dp"
+                        android:paddingHorizontal="12dp"
+                        android:gravity="center"
+                        android:text="CALIBRATE AR"
+                        android:textColor="#38BDF8"
+                        android:textSize="10sp"
+                        android:textStyle="bold"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+
+                    <TextView
+                        android:id="@+id/btnArBatch"
+                        android:layout_width="wrap_content"
+                        android:minWidth="88dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="6dp"
+                        android:paddingHorizontal="12dp"
+                        android:gravity="center"
+                        android:text="BATCH: OFF"
+                        android:textColor="#94A3B8"
                         android:textSize="10sp"
                         android:fontFamily="monospace"
                         android:background="@drawable/bg_cinema_button_inactive" />
@@ -3664,5 +4117,251 @@
             </HorizontalScrollView>
         </FrameLayout>
     </androidx.constraintlayout.widget.ConstraintLayout>
+
+    <!-- AR Calibration, Comic Studio & Batch Queue Drawer -->
+    <LinearLayout
+        android:id="@+id/arCalibrationDrawer"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:layout_marginHorizontal="12dp"
+        android:layout_marginBottom="145dp"
+        android:padding="12dp"
+        android:background="@drawable/bg_pro_drawer"
+        android:elevation="34dp"
+        android:visibility="gone"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="AR CALIBRATION &amp; COMIC STUDIO"
+                android:textColor="#38BDF8"
+                android:textSize="11sp"
+                android:textStyle="bold"
+                android:fontFamily="monospace" />
+
+            <TextView
+                android:id="@+id/btnArCalibReset"
+                android:layout_width="wrap_content"
+                android:layout_height="26dp"
+                android:gravity="center"
+                android:paddingHorizontal="8dp"
+                android:text="RESET"
+                android:textColor="#FACC15"
+                android:textSize="9.5sp"
+                android:fontFamily="monospace"
+                android:background="@drawable/bg_cinema_button_inactive"
+                android:layout_marginEnd="6dp" />
+
+            <ImageButton
+                android:id="@+id/btnCloseArCalibDrawer"
+                android:layout_width="28dp"
+                android:layout_height="28dp"
+                android:src="@drawable/ic_close"
+                android:background="@drawable/bg_circle_icon_button"
+                app:tint="#94A3B8"
+                android:contentDescription="Close AR Calibration" />
+        </LinearLayout>
+
+        <ScrollView
+            android:layout_width="match_parent"
+            android:layout_height="290dp"
+            android:layout_marginTop="8dp"
+            android:scrollbars="none">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+                <!-- 1. 3D Mesh Alignment Card -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="10dp"
+                    android:background="@drawable/bg_card_cinema">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="3D LANDMARK ALIGNMENT"
+                        android:textColor="#F8FAFC"
+                        android:textSize="10sp"
+                        android:textStyle="bold"
+                        android:fontFamily="monospace" />
+
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical" android:layout_marginTop="4dp">
+                        <TextView android:layout_width="68dp" android:layout_height="wrap_content" android:text="OFFSET X" android:textColor="#94A3B8" android:textSize="9sp" android:fontFamily="monospace" />
+                        <SeekBar android:id="@+id/sbCalibOffsetX" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:max="300" android:progress="150" android:progressTint="#38BDF8" android:thumbTint="#38BDF8" />
+                        <TextView android:id="@+id/tvCalibOffsetX" android:layout_width="42dp" android:layout_height="wrap_content" android:gravity="end" android:text="0px" android:textColor="#E2E8F0" android:textSize="9sp" android:fontFamily="monospace" />
+                    </LinearLayout>
+
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical">
+                        <TextView android:layout_width="68dp" android:layout_height="wrap_content" android:text="OFFSET Y" android:textColor="#94A3B8" android:textSize="9sp" android:fontFamily="monospace" />
+                        <SeekBar android:id="@+id/sbCalibOffsetY" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:max="300" android:progress="150" android:progressTint="#38BDF8" android:thumbTint="#38BDF8" />
+                        <TextView android:id="@+id/tvCalibOffsetY" android:layout_width="42dp" android:layout_height="wrap_content" android:gravity="end" android:text="0px" android:textColor="#E2E8F0" android:textSize="9sp" android:fontFamily="monospace" />
+                    </LinearLayout>
+
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical">
+                        <TextView android:layout_width="68dp" android:layout_height="wrap_content" android:text="SCALE" android:textColor="#94A3B8" android:textSize="9sp" android:fontFamily="monospace" />
+                        <SeekBar android:id="@+id/sbCalibScale" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:max="100" android:progress="33" android:progressTint="#38BDF8" android:thumbTint="#38BDF8" />
+                        <TextView android:id="@+id/tvCalibScale" android:layout_width="42dp" android:layout_height="wrap_content" android:gravity="end" android:text="1.00x" android:textColor="#E2E8F0" android:textSize="9sp" android:fontFamily="monospace" />
+                    </LinearLayout>
+
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical">
+                        <TextView android:layout_width="68dp" android:layout_height="wrap_content" android:text="ROTATION" android:textColor="#94A3B8" android:textSize="9sp" android:fontFamily="monospace" />
+                        <SeekBar android:id="@+id/sbCalibRotation" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:max="90" android:progress="45" android:progressTint="#38BDF8" android:thumbTint="#38BDF8" />
+                        <TextView android:id="@+id/tvCalibRotation" android:layout_width="42dp" android:layout_height="wrap_content" android:gravity="end" android:text="0°" android:textColor="#E2E8F0" android:textSize="9sp" android:fontFamily="monospace" />
+                    </LinearLayout>
+
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical">
+                        <TextView android:layout_width="68dp" android:layout_height="wrap_content" android:text="EYE SPACE" android:textColor="#94A3B8" android:textSize="9sp" android:fontFamily="monospace" />
+                        <SeekBar android:id="@+id/sbCalibEyeSpace" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:max="100" android:progress="40" android:progressTint="#38BDF8" android:thumbTint="#38BDF8" />
+                        <TextView android:id="@+id/tvCalibEyeSpace" android:layout_width="42dp" android:layout_height="wrap_content" android:gravity="end" android:text="1.00x" android:textColor="#E2E8F0" android:textSize="9sp" android:fontFamily="monospace" />
+                    </LinearLayout>
+
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical">
+                        <TextView android:layout_width="68dp" android:layout_height="wrap_content" android:text="FOREHEAD" android:textColor="#94A3B8" android:textSize="9sp" android:fontFamily="monospace" />
+                        <SeekBar android:id="@+id/sbCalibForehead" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:max="160" android:progress="80" android:progressTint="#38BDF8" android:thumbTint="#38BDF8" />
+                        <TextView android:id="@+id/tvCalibForehead" android:layout_width="42dp" android:layout_height="wrap_content" android:gravity="end" android:text="0px" android:textColor="#E2E8F0" android:textSize="9sp" android:fontFamily="monospace" />
+                    </LinearLayout>
+
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical">
+                        <TextView android:layout_width="68dp" android:layout_height="wrap_content" android:text="CHIN" android:textColor="#94A3B8" android:textSize="9sp" android:fontFamily="monospace" />
+                        <SeekBar android:id="@+id/sbCalibChin" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:max="160" android:progress="80" android:progressTint="#38BDF8" android:thumbTint="#38BDF8" />
+                        <TextView android:id="@+id/tvCalibChin" android:layout_width="42dp" android:layout_height="wrap_content" android:gravity="end" android:text="0px" android:textColor="#E2E8F0" android:textSize="9sp" android:fontFamily="monospace" />
+                    </LinearLayout>
+
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical" android:layout_marginTop="4dp">
+                        <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="Show Debug Reticle &amp; Mesh Anchors" android:textColor="#CBD5E1" android:textSize="10sp" android:fontFamily="monospace" />
+                        <androidx.appcompat.widget.SwitchCompat android:id="@+id/switchArMeshDebug" android:layout_width="wrap_content" android:layout_height="wrap_content" app:thumbTint="#38BDF8" app:trackTint="#475569" />
+                    </LinearLayout>
+                </LinearLayout>
+
+                <!-- 2. Comic & Halftone Shader Studio Card -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="10dp"
+                    android:layout_marginTop="6dp"
+                    android:background="@drawable/bg_card_cinema">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="COMIC SHADER, HALFTONE &amp; SPEECH STUDIO"
+                        android:textColor="#FACC15"
+                        android:textSize="10sp"
+                        android:textStyle="bold"
+                        android:fontFamily="monospace" />
+
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical" android:layout_marginTop="4dp">
+                        <TextView android:layout_width="76dp" android:layout_height="wrap_content" android:text="HALFTONE" android:textColor="#94A3B8" android:textSize="9sp" android:fontFamily="monospace" />
+                        <SeekBar android:id="@+id/sbHalftoneDensity" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:max="100" android:progress="33" android:progressTint="#FACC15" android:thumbTint="#FACC15" />
+                        <TextView android:id="@+id/tvHalftoneDensity" android:layout_width="42dp" android:layout_height="wrap_content" android:gravity="end" android:text="1.00x" android:textColor="#FACC15" android:textSize="9sp" android:fontFamily="monospace" />
+                    </LinearLayout>
+
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical">
+                        <TextView android:layout_width="76dp" android:layout_height="wrap_content" android:text="DOT SIZE" android:textColor="#94A3B8" android:textSize="9sp" android:fontFamily="monospace" />
+                        <SeekBar android:id="@+id/sbHalftoneDotSize" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:max="100" android:progress="47" android:progressTint="#FACC15" android:thumbTint="#FACC15" />
+                        <TextView android:id="@+id/tvHalftoneDotSize" android:layout_width="42dp" android:layout_height="wrap_content" android:gravity="end" android:text="1.00x" android:textColor="#FACC15" android:textSize="9sp" android:fontFamily="monospace" />
+                    </LinearLayout>
+
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical">
+                        <TextView android:layout_width="76dp" android:layout_height="wrap_content" android:text="LABEL DEPTH" android:textColor="#94A3B8" android:textSize="9sp" android:fontFamily="monospace" />
+                        <SeekBar android:id="@+id/sbComicLabelDepth" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:max="100" android:progress="40" android:progressTint="#FACC15" android:thumbTint="#FACC15" />
+                        <TextView android:id="@+id/tvComicLabelDepth" android:layout_width="42dp" android:layout_height="wrap_content" android:gravity="end" android:text="1.00x" android:textColor="#FACC15" android:textSize="9sp" android:fontFamily="monospace" />
+                    </LinearLayout>
+
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:layout_marginTop="6dp">
+                        <TextView
+                            android:id="@+id/btnComicPalette"
+                            android:layout_width="0dp"
+                            android:layout_height="30dp"
+                            android:layout_weight="1"
+                            android:gravity="center"
+                            android:text="PALETTE: SILVER AGE"
+                            android:textColor="#E2E8F0"
+                            android:textSize="9.5sp"
+                            android:fontFamily="monospace"
+                            android:background="@drawable/bg_cinema_button_inactive" />
+
+                        <TextView
+                            android:id="@+id/btnComicRandomize"
+                            android:layout_width="wrap_content"
+                            android:layout_height="30dp"
+                            android:layout_marginStart="6dp"
+                            android:paddingHorizontal="10dp"
+                            android:gravity="center"
+                            android:text="RANDOMIZE"
+                            android:textColor="#0F172A"
+                            android:textSize="9.5sp"
+                            android:textStyle="bold"
+                            android:fontFamily="monospace"
+                            android:background="@drawable/bg_cinema_button_active" />
+                    </LinearLayout>
+
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical" android:layout_marginTop="6dp">
+                        <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="Face-Tracked Speech Bubble" android:textColor="#CBD5E1" android:textSize="10sp" android:fontFamily="monospace" />
+                        <androidx.appcompat.widget.SwitchCompat android:id="@+id/switchComicSpeechBubble" android:layout_width="wrap_content" android:layout_height="wrap_content" app:thumbTint="#FACC15" app:trackTint="#475569" />
+                    </LinearLayout>
+
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:layout_marginTop="4dp">
+                        <TextView android:id="@+id/btnBubbleSpeech" android:layout_width="0dp" android:layout_height="28dp" android:layout_weight="1" android:gravity="center" android:text="SPEECH" android:textColor="#0F172A" android:textSize="9sp" android:textStyle="bold" android:fontFamily="monospace" android:background="@drawable/bg_cinema_button_active" />
+                        <TextView android:id="@+id/btnBubbleThought" android:layout_width="0dp" android:layout_height="28dp" android:layout_weight="1" android:layout_marginStart="4dp" android:gravity="center" android:text="THOUGHT" android:textColor="#94A3B8" android:textSize="9sp" android:fontFamily="monospace" android:background="@drawable/bg_cinema_button_inactive" />
+                        <TextView android:id="@+id/btnBubbleShout" android:layout_width="0dp" android:layout_height="28dp" android:layout_weight="1" android:layout_marginStart="4dp" android:gravity="center" android:text="SHOUT" android:textColor="#94A3B8" android:textSize="9sp" android:fontFamily="monospace" android:background="@drawable/bg_cinema_button_inactive" />
+                    </LinearLayout>
+
+                    <TextView
+                        android:id="@+id/btnCycleBubblePhrase"
+                        android:layout_width="match_parent"
+                        android:layout_height="28dp"
+                        android:layout_marginTop="4dp"
+                        android:gravity="center"
+                        android:text="TEXT: HERO MODE!"
+                        android:textColor="#38BDF8"
+                        android:textSize="9.5sp"
+                        android:fontFamily="monospace"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+                </LinearLayout>
+
+                <!-- 3. AR Batch Queue & Auto-Adapt Card -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="10dp"
+                    android:layout_marginTop="6dp"
+                    android:background="@drawable/bg_card_cinema">
+
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical">
+                        <TextView android:id="@+id/tvBatchQueueStatus" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="QUEUE: 0/0 · PAUSED" android:textColor="#34D399" android:textSize="9.5sp" android:textStyle="bold" android:fontFamily="monospace" />
+                        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="AUTO-ADAPT" android:textColor="#94A3B8" android:textSize="9sp" android:fontFamily="monospace" android:layout_marginEnd="4dp" />
+                        <androidx.appcompat.widget.SwitchCompat android:id="@+id/switchArAutoAdapt" android:layout_width="wrap_content" android:layout_height="wrap_content" app:thumbTint="#34D399" app:trackTint="#475569" />
+                    </LinearLayout>
+
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:layout_marginTop="6dp">
+                        <TextView android:id="@+id/btnBatchPrev" android:layout_width="0dp" android:layout_height="28dp" android:layout_weight="1" android:gravity="center" android:text="PREV" android:textColor="#CBD5E1" android:textSize="9sp" android:fontFamily="monospace" android:background="@drawable/bg_cinema_button_inactive" />
+                        <TextView android:id="@+id/btnBatchPlayPause" android:layout_width="0dp" android:layout_height="28dp" android:layout_weight="1" android:layout_marginStart="4dp" android:gravity="center" android:text="PLAY" android:textColor="#0F172A" android:textSize="9sp" android:textStyle="bold" android:fontFamily="monospace" android:background="@drawable/bg_cinema_button_active" />
+                        <TextView android:id="@+id/btnBatchNext" android:layout_width="0dp" android:layout_height="28dp" android:layout_weight="1" android:layout_marginStart="4dp" android:gravity="center" android:text="NEXT" android:textColor="#CBD5E1" android:textSize="9sp" android:fontFamily="monospace" android:background="@drawable/bg_cinema_button_inactive" />
+                        <TextView android:id="@+id/btnBatchSelectAll" android:layout_width="0dp" android:layout_height="28dp" android:layout_weight="1" android:layout_marginStart="4dp" android:gravity="center" android:text="ALL" android:textColor="#38BDF8" android:textSize="9sp" android:fontFamily="monospace" android:background="@drawable/bg_cinema_button_inactive" />
+                        <TextView android:id="@+id/btnBatchClear" android:layout_width="0dp" android:layout_height="28dp" android:layout_weight="1" android:layout_marginStart="4dp" android:gravity="center" android:text="CLEAR" android:textColor="#F87171" android:textSize="9sp" android:fontFamily="monospace" android:background="@drawable/bg_cinema_button_inactive" />
+                    </LinearLayout>
+                </LinearLayout>
+            </LinearLayout>
+        </ScrollView>
+    </LinearLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>

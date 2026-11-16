@@ -3,10 +3,12 @@ package com.example.cameraxapp
 import android.Manifest
 import android.content.ContentValues
 import android.content.Context
+import android.graphics.Bitmap
 import android.os.Build
 import android.provider.MediaStore
 import android.widget.Toast
 import androidx.camera.core.CameraSelector
+import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.Preview
@@ -16,7 +18,10 @@ import androidx.camera.view.PreviewView
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -26,21 +31,46 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.core.content.PermissionChecker
-import kotlinx.coroutines.delay
+import com.example.cameraxapp.panorama.PanoramaStitcher
+import com.example.cameraxapp.power.ThermalGuardManager
 import java.text.SimpleDateFormat
 import java.util.Locale
+import java.util.concurrent.Executors
+import kotlin.math.roundToInt
 
-enum class CameraMode { PHOTO, VIDEO }
+data class ComposeArTextItem(
+    val id: String,
+    val text: String,
+    val offsetX: Float = 0f,
+    val offsetY: Float = -120f,
+    val fontSizeSp: Float = 22f,
+    val rotationDeg: Float = 0f,
+    val color: Color = Color(0xFFFACC15)
+)
+
+enum class CameraMode(val label: String) {
+    SLOW_MO("SLOW-MO"),
+    VIDEO("VIDEO"),
+    PHOTO("PHOTO"),
+    PORTRAIT("PORTRAIT"),
+    NIGHT("NIGHT"),
+    PANORAMA("PANORAMA")
+}
 
 /**
- * Jetpack Compose Camera Screen with Video Pause/Resume & Photo Pro Mode
+ * Jetpack Compose Camera Screen with Multi-Mode Carousel (SLOW-MO, VIDEO, PHOTO, PORTRAIT, NIGHT, PANORAMA),
+ * Automated CameraX ImageAnalysis Panorama Guidance & Stitching, and Video Pause/Resume.
  */
 @Composable
 fun CameraXScreen(modifier: Modifier = Modifier) {
@@ -55,41 +85,140 @@ fun CameraXScreen(modifier: Modifier = Modifier) {
     var isPaused by remember { mutableStateOf(false) }
     var recordingSession by remember { mutableStateOf<Recording?>(null) }
 
-    // Pro Mode States
+    // Pro & Panorama States
     var showGrid by remember { mutableStateOf(true) }
     var countdownDuration by remember { mutableStateOf(0) }
-    var exposureCompensation by remember { mutableStateOf(0f) }
+    var isPanoramaCapturing by remember { mutableStateOf(false) }
+    var panoramaGuidance by remember { mutableStateOf("READY · TAP TO SWEEP") }
+    var panoramaProgress by remember { mutableStateOf(0f) }
+    var panoramaOverlapPct by remember { mutableStateOf(100) }
+    var panoramaSliceCount by remember { mutableStateOf(0) }
+    var thermalStatusLabel by remember { mutableStateOf("NOMINAL") }
+    var thermalTier by remember { mutableStateOf(ThermalGuardManager.ThermalTier.NOMINAL) }
+    val isThermalThrottled = thermalTier.severityRank >= ThermalGuardManager.ThermalTier.MODERATE.severityRank
+    val arTextItems = remember { mutableStateListOf<ComposeArTextItem>() }
+    var showArTextDialog by remember { mutableStateOf(false) }
+    var arTextDraft by remember { mutableStateOf("HELLO AR!") }
+    var arTextSizeSp by remember { mutableStateOf(24f) }
 
-    val recorder = remember {
-        Recorder.Builder().setQualitySelector(QualitySelector.from(Quality.HD)).build()
+    val analysisExecutor = remember { Executors.newSingleThreadExecutor() }
+    val panoramaStitcher = remember { PanoramaStitcher() }
+    val panoramaSlices = remember { mutableStateListOf<PanoramaStitcher.PanoramaSlice>() }
+    val thermalGuard = remember {
+        ThermalGuardManager(context) { policy ->
+            thermalStatusLabel = policy.statusLabel
+            thermalTier = policy.tier
+        }
     }
-    val videoCapture = remember { VideoCapture.withOutput(recorder) }
-    val imageCapture = remember { ImageCapture.Builder().setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY).build() }
+
+    var videoCapture by remember {
+        mutableStateOf(
+            VideoCapture.withOutput(
+                Recorder.Builder().setQualitySelector(QualitySelector.from(Quality.HD)).build()
+            )
+        )
+    }
+    var imageCapture by remember {
+        mutableStateOf(ImageCapture.Builder().setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY).build())
+    }
+    val previewView = remember { PreviewView(context) }
+
+    DisposableEffect(Unit) {
+        thermalGuard.register()
+        onDispose {
+            thermalGuard.unregister()
+            panoramaStitcher.reset()
+            panoramaSlices.forEach { if (!it.bitmap.isRecycled) it.bitmap.recycle() }
+            panoramaSlices.clear()
+            analysisExecutor.shutdown()
+        }
+    }
+
+    LaunchedEffect(cameraMode, lensFacing, thermalTier) {
+        val provider = ProcessCameraProvider.getInstance(context).get()
+        val preview = Preview.Builder().build().also {
+            it.setSurfaceProvider(previewView.surfaceProvider)
+        }
+        val policy = thermalGuard.currentPolicy
+        val nextCaptureBuilder = ImageCapture.Builder()
+            .setCaptureMode(thermalGuard.effectiveCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY))
+        policy.maxImageCaptureResolution?.let { capRes ->
+            nextCaptureBuilder.setTargetResolution(capRes)
+        }
+        val nextImageCapture = nextCaptureBuilder.build()
+        val nextVideoQuality = thermalGuard.constrainVideoQuality(Quality.HD)
+        val nextVideoCapture = VideoCapture.withOutput(
+            Recorder.Builder().setQualitySelector(QualitySelector.from(nextVideoQuality)).build()
+        )
+        imageCapture = nextImageCapture
+        videoCapture = nextVideoCapture
+
+        val imageAnalysis = ImageAnalysis.Builder()
+            .setTargetResolution(policy.targetAnalysisResolution)
+            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+            .build()
+        val isFront = (lensFacing == CameraSelector.DEFAULT_FRONT_CAMERA)
+
+        imageAnalysis.setAnalyzer(analysisExecutor) { imageProxy ->
+            if (!thermalGuard.shouldProcessAnalysisFrame()) {
+                imageProxy.close()
+                return@setAnalyzer
+            }
+            if (cameraMode == CameraMode.PANORAMA && isPanoramaCapturing) {
+                val align = panoramaStitcher.analyzeFrame(imageProxy, isFront, 0f)
+                if (align.shouldAutoCapture && panoramaSlices.size < 14) {
+                    val sliceBmp = panoramaStitcher.imageProxyToBitmap(imageProxy, isFront, 960)
+                    if (sliceBmp != null) {
+                        panoramaSlices.add(
+                            PanoramaStitcher.PanoramaSlice(
+                                bitmap = sliceBmp,
+                                yawOffsetDeg = align.dxNorm * 110f,
+                                pitchDriftDeg = align.dyNorm * 18f,
+                                stepDxNorm = align.dxNorm
+                            )
+                        )
+                        panoramaStitcher.lockCurrentFrameAsAnchor(align.dxNorm * 110f, kotlin.math.abs(align.dxNorm))
+                    }
+                }
+                val count = panoramaSlices.size
+                val prog = (count / 14f).coerceIn(0f, 1f)
+                val overlap = (align.overlapRatio * 100f).toInt()
+                ContextCompat.getMainExecutor(context).execute {
+                    panoramaGuidance = align.guidance.name.replace('_', ' ')
+                    panoramaProgress = prog
+                    panoramaOverlapPct = overlap
+                    panoramaSliceCount = count
+                    if (isPanoramaCapturing && count >= 14) {
+                        isPanoramaCapturing = false
+                        saveStitchedPanoramaCompose(context, panoramaStitcher, panoramaSlices) {
+                            panoramaProgress = 0f
+                            panoramaSliceCount = 0
+                            panoramaGuidance = "READY · TAP TO SWEEP"
+                        }
+                    }
+                }
+            }
+            imageProxy.close()
+        }
+
+        provider.unbindAll()
+        val isPhotoStyle = cameraMode != CameraMode.VIDEO && cameraMode != CameraMode.SLOW_MO
+        if (isPhotoStyle) {
+            provider.bindToLifecycle(lifecycleOwner, lensFacing, preview, nextImageCapture, imageAnalysis)
+        } else {
+            provider.bindToLifecycle(lifecycleOwner, lensFacing, preview, nextVideoCapture)
+        }
+    }
 
     Box(modifier = modifier.fillMaxSize().background(Color.Black)) {
         // CameraX Preview
         AndroidView(
             modifier = Modifier.fillMaxSize(),
-            factory = { ctx ->
-                val previewView = PreviewView(ctx)
-                ProcessCameraProvider.getInstance(ctx).addListener({
-                    val provider = ProcessCameraProvider.getInstance(ctx).get()
-                    val preview = Preview.Builder().build().also {
-                        it.setSurfaceProvider(previewView.surfaceProvider)
-                    }
-                    provider.unbindAll()
-                    if (cameraMode == CameraMode.PHOTO) {
-                        provider.bindToLifecycle(lifecycleOwner, lensFacing, preview, imageCapture)
-                    } else {
-                        provider.bindToLifecycle(lifecycleOwner, lensFacing, preview, videoCapture)
-                    }
-                }, ContextCompat.getMainExecutor(ctx))
-                previewView
-            }
+            factory = { previewView }
         )
 
-        // Pro Mode Top Toolbar: Timer, Grid, Exposure EV
-        if (cameraMode == CameraMode.PHOTO) {
+        // Pro Mode Top Toolbar: Timer, Grid
+        if (cameraMode != CameraMode.VIDEO && cameraMode != CameraMode.SLOW_MO) {
             Row(
                 modifier = Modifier
                     .align(Alignment.TopCenter)
@@ -107,6 +236,13 @@ fun CameraXScreen(modifier: Modifier = Modifier) {
                     Text(if (countdownDuration == 0) "Timer Off" else "${countdownDuration}s", fontSize = 12.sp)
                 }
 
+                Button(
+                    onClick = { showArTextDialog = true },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0x88000000))
+                ) {
+                    Text(if (arTextItems.isEmpty()) "Aa TEXT" else "TEXT (${arTextItems.size})", fontSize = 12.sp, color = Color(0xFF34D399))
+                }
+
                 IconButton(
                     onClick = { showGrid = !showGrid },
                     modifier = Modifier.background(Color(0x66000000), CircleShape)
@@ -116,25 +252,134 @@ fun CameraXScreen(modifier: Modifier = Modifier) {
             }
         }
 
-        // Mode Switcher Bar (PHOTO | VIDEO)
+        // Freehand Draggable, Pinch-Scalable & Rotatable AR Text Overlay Layer (isolated from other AR lenses)
+        arTextItems.forEachIndexed { idx, item ->
+            Text(
+                text = item.text,
+                color = item.color,
+                fontSize = item.fontSizeSp.sp,
+                fontWeight = FontWeight.ExtraBold,
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .offset { IntOffset(item.offsetX.roundToInt(), item.offsetY.roundToInt()) }
+                    .graphicsLayer { rotationZ = item.rotationDeg }
+                    .pointerInput(item.id) {
+                        detectTransformGestures { _, pan, zoom, rotation ->
+                            arTextItems[idx] = arTextItems[idx].copy(
+                                offsetX = item.offsetX + pan.x,
+                                offsetY = item.offsetY + pan.y,
+                                fontSizeSp = (item.fontSizeSp * zoom).coerceIn(14f, 64f),
+                                rotationDeg = (item.rotationDeg + rotation).coerceIn(-45f, 45f)
+                            )
+                        }
+                    }
+                    .background(Color(0x88060A14), RoundedCornerShape(10.dp))
+                    .border(1.dp, item.color.copy(alpha = 0.7f), RoundedCornerShape(10.dp))
+                    .padding(horizontal = 12.dp, vertical = 6.dp)
+            )
+        }
+
+        if (showArTextDialog) {
+            AlertDialog(
+                onDismissRequest = { showArTextDialog = false },
+                title = { Text("Freehand AR Text") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(value = arTextDraft, onValueChange = { arTextDraft = it }, singleLine = true)
+                        Text("Size: ${arTextSizeSp.roundToInt()}sp", fontSize = 12.sp)
+                        Slider(value = arTextSizeSp, onValueChange = { arTextSizeSp = it }, valueRange = 14f..44f)
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        arTextItems.add(ComposeArTextItem("txt_${arTextItems.size}", arTextDraft.ifBlank { "HELLO AR!" }, fontSizeSp = arTextSizeSp))
+                        showArTextDialog = false
+                    }) { Text("Place") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showArTextDialog = false }) { Text("Close") }
+                }
+            )
+        }
+
+        // Thermal Throttling HUD Badge (Compose)
+        if (isThermalThrottled) {
+            Text(
+                text = "THERMAL ${thermalStatusLabel} · ANALYSIS SCALED",
+                color = Color(0xFFFEF3C7),
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = 92.dp)
+                    .background(Color(0xCC7F1D1D), RoundedCornerShape(8.dp))
+                    .border(1.dp, Color(0xFFF87171), RoundedCornerShape(8.dp))
+                    .padding(horizontal = 12.dp, vertical = 4.dp)
+            )
+        }
+
+        // Automated Panorama Mode Real-Time Alignment & Sweep Guidance HUD
+        if (cameraMode == CameraMode.PANORAMA) {
+            Column(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .padding(horizontal = 24.dp)
+                    .background(Color(0xB30F172A), RoundedCornerShape(16.dp))
+                    .border(1.dp, Color(0x9938BDF8), RoundedCornerShape(16.dp))
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Icon(
+                        imageVector = if (panoramaGuidance.contains("LEFT")) Icons.Default.ArrowBack else Icons.Default.ArrowForward,
+                        contentDescription = "Sweep Direction",
+                        tint = Color(0xFF38BDF8)
+                    )
+                    Text(
+                        text = if (isPanoramaCapturing) "${panoramaGuidance} · ${panoramaSliceCount}/14 · ${panoramaOverlapPct}% OVERLAP"
+                        else "PANORAMA 110° · TAP SHUTTER & PAN",
+                        color = Color.White,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                LinearProgressIndicator(
+                    progress = panoramaProgress,
+                    modifier = Modifier.fillMaxWidth().height(5.dp),
+                    color = Color(0xFF38BDF8),
+                    trackColor = Color(0x33FFFFFF)
+                )
+            }
+        }
+
+        // Mode Switcher Bar (SLOW-MO | VIDEO | PHOTO | PORTRAIT | NIGHT | PANORAMA)
         Row(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .padding(bottom = 120.dp),
-            horizontalArrangement = Arrangement.spacedBy(24.dp)
+                .padding(bottom = 124.dp, start = 16.dp, end = 16.dp)
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(18.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
-                text = "PHOTO",
-                color = if (cameraMode == CameraMode.PHOTO) Color.White else Color.Gray,
-                style = MaterialTheme.typography.labelLarge,
-                modifier = Modifier.clickable { if (!isRecording) cameraMode = CameraMode.PHOTO }
-            )
-            Text(
-                text = "VIDEO",
-                color = if (cameraMode == CameraMode.VIDEO) Color.White else Color.Gray,
-                style = MaterialTheme.typography.labelLarge,
-                modifier = Modifier.clickable { if (!isRecording) cameraMode = CameraMode.VIDEO }
-            )
+            CameraMode.entries.forEach { mode ->
+                val isSelected = (cameraMode == mode)
+                Text(
+                    text = mode.label,
+                    color = when {
+                        isSelected && mode == CameraMode.PANORAMA -> Color(0xFF38BDF8)
+                        isSelected -> Color.White
+                        else -> Color.Gray
+                    },
+                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                    style = MaterialTheme.typography.labelLarge,
+                    modifier = Modifier.clickable {
+                        if (!isRecording && !isPanoramaCapturing) {
+                            cameraMode = mode
+                        }
+                    }
+                )
+            }
         }
 
         // Bottom Controls: Pause/Resume (when recording), Shutter, Lens Switch
@@ -147,7 +392,7 @@ fun CameraXScreen(modifier: Modifier = Modifier) {
             verticalAlignment = Alignment.CenterVertically
         ) {
             // Video Pause/Resume Button
-            if (cameraMode == CameraMode.VIDEO && isRecording) {
+            if ((cameraMode == CameraMode.VIDEO || cameraMode == CameraMode.SLOW_MO) && isRecording) {
                 IconButton(
                     onClick = {
                         if (isPaused) {
@@ -170,40 +415,71 @@ fun CameraXScreen(modifier: Modifier = Modifier) {
                 Spacer(modifier = Modifier.size(54.dp))
             }
 
-            // Capture / Record Button
+            // Capture / Record / Panorama Sweep Button
+            val isVideoType = (cameraMode == CameraMode.VIDEO || cameraMode == CameraMode.SLOW_MO)
             IconButton(
                 onClick = {
-                    if (cameraMode == CameraMode.PHOTO) {
-                        capturePhotoToGallery(context, imageCapture)
-                    } else {
-                        if (isRecording) {
-                            recordingSession?.stop()
-                            recordingSession = null
-                            isRecording = false
-                            isPaused = false
-                        } else {
-                            recordingSession = startVideoRecording(context, videoCapture) {
+                    when (cameraMode) {
+                        CameraMode.PANORAMA -> {
+                            if (!isPanoramaCapturing) {
+                                panoramaStitcher.reset()
+                                panoramaSlices.clear()
+                                panoramaProgress = 0f
+                                panoramaSliceCount = 0
+                                isPanoramaCapturing = true
+                            } else {
+                                isPanoramaCapturing = false
+                                saveStitchedPanoramaCompose(context, panoramaStitcher, panoramaSlices) {
+                                    panoramaProgress = 0f
+                                    panoramaSliceCount = 0
+                                    panoramaGuidance = "READY · TAP TO SWEEP"
+                                }
+                            }
+                        }
+                        CameraMode.VIDEO, CameraMode.SLOW_MO -> {
+                            if (isRecording) {
+                                recordingSession?.stop()
+                                recordingSession = null
                                 isRecording = false
                                 isPaused = false
+                            } else {
+                                recordingSession = startVideoRecording(context, videoCapture) {
+                                    isRecording = false
+                                    isPaused = false
+                                }
+                                isRecording = true
                             }
-                            isRecording = true
                         }
+                        else -> capturePhotoToGallery(context, imageCapture)
                     }
                 },
                 modifier = Modifier
                     .size(80.dp)
-                    .border(4.dp, if (cameraMode == CameraMode.VIDEO) Color.Red else Color.White, CircleShape)
+                    .border(
+                        4.dp,
+                        when {
+                            cameraMode == CameraMode.PANORAMA -> Color(0xFF38BDF8)
+                            isVideoType -> Color.Red
+                            else -> Color.White
+                        },
+                        CircleShape
+                    )
                     .padding(6.dp)
                     .background(
-                        if (cameraMode == CameraMode.VIDEO) Color.Red else Color.White,
-                        if (cameraMode == CameraMode.VIDEO && isRecording) RoundedCornerShape(8.dp) else CircleShape
+                        when {
+                            cameraMode == CameraMode.PANORAMA && isPanoramaCapturing -> Color(0xFF38BDF8)
+                            isVideoType -> Color.Red
+                            else -> Color.White
+                        },
+                        if ((isVideoType && isRecording) || (cameraMode == CameraMode.PANORAMA && isPanoramaCapturing))
+                            RoundedCornerShape(8.dp) else CircleShape
                     )
             ) {}
 
             // Lens Switch
             IconButton(
                 onClick = {
-                    if (!isRecording) {
+                    if (!isRecording && !isPanoramaCapturing) {
                         lensFacing = if (lensFacing == CameraSelector.DEFAULT_BACK_CAMERA)
                             CameraSelector.DEFAULT_FRONT_CAMERA else CameraSelector.DEFAULT_BACK_CAMERA
                     }
@@ -214,6 +490,43 @@ fun CameraXScreen(modifier: Modifier = Modifier) {
             }
         }
     }
+}
+
+private fun saveStitchedPanoramaCompose(
+    context: Context,
+    stitcher: PanoramaStitcher,
+    slices: MutableList<PanoramaStitcher.PanoramaSlice>,
+    onDone: () -> Unit
+) {
+    val snapshot = slices.toList()
+    slices.clear()
+    if (snapshot.isEmpty()) {
+        stitcher.reset()
+        onDone()
+        return
+    }
+    val stitched = stitcher.stitchSlices(snapshot)
+    if (stitched != null) {
+        val name = "PANO_" + SimpleDateFormat("yyyy-MM-dd-HH-mm-ss-SSS", Locale.US).format(System.currentTimeMillis())
+        val contentValues = ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, name)
+            put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/CameraX-Image")
+            }
+        }
+        val uri = context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
+        if (uri != null) {
+            context.contentResolver.openOutputStream(uri, "wt")?.use { out ->
+                stitched.compress(Bitmap.CompressFormat.JPEG, 95, out)
+            }
+            Toast.makeText(context, "Panorama stitched (${snapshot.size} frames)", Toast.LENGTH_SHORT).show()
+        }
+        if (!stitched.isRecycled) stitched.recycle()
+    }
+    snapshot.forEach { if (!it.bitmap.isRecycled) it.bitmap.recycle() }
+    stitcher.reset()
+    onDone()
 }
 
 private fun startVideoRecording(

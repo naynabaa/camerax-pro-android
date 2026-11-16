@@ -1,15 +1,21 @@
 package com.example.cameraxapp.ar
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.DashPathEffect
 import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.RectF
 import android.graphics.Shader
 import android.graphics.Typeface
 import android.util.AttributeSet
+import android.view.GestureDetector
+import android.view.HapticFeedbackConstants
+import android.view.MotionEvent
+import android.view.ScaleGestureDetector
 import android.view.View
 import com.google.mediapipe.tasks.components.containers.NormalizedLandmark
 import com.google.mediapipe.tasks.vision.facelandmarker.FaceLandmarkerResult
@@ -92,6 +98,7 @@ class ARFaceOverlayView @JvmOverloads constructor(
 
     private var comicEntryStartMs: Long = 0L
     private var wasFaceDetectedForComic: Boolean = false
+    var onComicFaceAcquired: (() -> Unit)? = null
 
     enum class ComicSpeechBubbleStyle {
         SPEECH,
@@ -151,6 +158,265 @@ class ARFaceOverlayView @JvmOverloads constructor(
                 invalidate()
             }
         }
+
+    // Freehand Adjustable & Touch-Draggable Screen AR Text Overlays (Independent of Other Lenses)
+    enum class ArTextStyle {
+        NEON,
+        COMIC,
+        PILL,
+        OUTLINE
+    }
+
+    data class ArTextItem(
+        val id: String,
+        var text: String,
+        var normX: Float = 0.5f,
+        var normY: Float = 0.34f,
+        var scale: Float = 1.0f,
+        var colorHex: String = "#FACC15",
+        var style: ArTextStyle = ArTextStyle.NEON,
+        var rotationDeg: Float = 0f
+    )
+
+    val arTextItems: MutableList<ArTextItem> = mutableListOf()
+    var selectedTextId: String? = null
+        set(value) {
+            if (field != value) {
+                field = value
+                invalidate()
+            }
+        }
+    var onTextItemSelected: ((ArTextItem?) -> Unit)? = null
+    var onTextItemEditRequested: ((ArTextItem) -> Unit)? = null
+    var onOverlayDirty: (() -> Unit)? = null
+
+    private var draggingTextId: String? = null
+    private var isDraggingText: Boolean = false
+    private var isScalingText: Boolean = false
+
+    fun hasArTextItems(): Boolean = arTextItems.isNotEmpty()
+
+    fun hasAnyVisibleOverlay(): Boolean =
+        currentLens != ArLensMode.NONE ||
+            showDebugReticle ||
+            enableComicOnomatopoeia ||
+            enableComicSpeechBubble ||
+            arTextItems.isNotEmpty()
+
+    fun addOrSelectArText(
+        text: String,
+        scale: Float = 1.0f,
+        colorHex: String = "#FACC15",
+        style: ArTextStyle = ArTextStyle.NEON,
+        rotationDeg: Float = 0f
+    ): ArTextItem {
+        val clean = text.trim().ifEmpty { "HELLO AR!" }
+        val idx = arTextItems.size
+        val item = ArTextItem(
+            id = "ar_txt_${System.currentTimeMillis()}_${idx}",
+            text = clean,
+            normX = (0.5f + ((idx % 3) - 1) * 0.08f).coerceIn(0.16f, 0.84f),
+            normY = (0.28f + (idx % 4) * 0.11f).coerceIn(0.16f, 0.84f),
+            scale = scale.coerceIn(0.55f, 2.4f),
+            colorHex = colorHex,
+            style = style,
+            rotationDeg = rotationDeg.coerceIn(-35f, 35f)
+        )
+        arTextItems.add(item)
+        selectedTextId = item.id
+        onTextItemSelected?.invoke(item)
+        onOverlayDirty?.invoke()
+        invalidate()
+        return item
+    }
+
+    fun updateSelectedArText(
+        text: String? = null,
+        scale: Float? = null,
+        colorHex: String? = null,
+        style: ArTextStyle? = null,
+        rotationDeg: Float? = null
+    ): Boolean {
+        val target = arTextItems.firstOrNull { it.id == selectedTextId } ?: arTextItems.lastOrNull() ?: return false
+        text?.let { target.text = it.trim().ifEmpty { target.text } }
+        scale?.let { target.scale = it.coerceIn(0.55f, 2.4f) }
+        colorHex?.let { target.colorHex = it }
+        style?.let { target.style = it }
+        rotationDeg?.let { target.rotationDeg = it.coerceIn(-35f, 35f) }
+        selectedTextId = target.id
+        onOverlayDirty?.invoke()
+        invalidate()
+        return true
+    }
+
+    fun removeSelectedArText(): Boolean {
+        val id = selectedTextId ?: arTextItems.lastOrNull()?.id ?: return false
+        val removed = arTextItems.removeAll { it.id == id }
+        if (removed) {
+            selectedTextId = arTextItems.lastOrNull()?.id
+            onTextItemSelected?.invoke(arTextItems.firstOrNull { it.id == selectedTextId })
+            onOverlayDirty?.invoke()
+            invalidate()
+        }
+        return removed
+    }
+
+    fun clearArTextItems() {
+        if (arTextItems.isEmpty()) return
+        arTextItems.clear()
+        selectedTextId = null
+        draggingTextId = null
+        onTextItemSelected?.invoke(null)
+        onOverlayDirty?.invoke()
+        invalidate()
+    }
+
+    private fun findHitArTextItem(x: Float, y: Float): ArTextItem? {
+        if (arTextItems.isEmpty() || width <= 0 || height <= 0) return null
+        val viewW = width.toFloat()
+        val viewH = height.toFloat()
+        val hitPad = 42f
+        for (i in arTextItems.indices.reversed()) {
+            val item = arTextItems[i]
+            val bounds = computeTextItemBounds(item, viewW, viewH)
+            val cx = item.normX * viewW
+            val cy = item.normY * viewH
+            val rad = -Math.toRadians(item.rotationDeg.toDouble())
+            val dx = x - cx
+            val dy = y - cy
+            val lx = (dx * Math.cos(rad) - dy * Math.sin(rad)).toFloat()
+            val ly = (dx * Math.sin(rad) + dy * Math.cos(rad)).toFloat()
+            if (Math.abs(lx) <= bounds.width() * 0.5f + hitPad && Math.abs(ly) <= bounds.height() * 0.5f + hitPad) {
+                return item
+            }
+        }
+        return null
+    }
+
+    private val textScaleDetector = ScaleGestureDetector(
+        context,
+        object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
+            override fun onScaleBegin(detector: ScaleGestureDetector): Boolean {
+                val target = arTextItems.firstOrNull { it.id == draggingTextId }
+                    ?: findHitArTextItem(detector.focusX, detector.focusY)
+                    ?: return false
+                draggingTextId = target.id
+                selectedTextId = target.id
+                isScalingText = true
+                onTextItemSelected?.invoke(target)
+                invalidate()
+                return true
+            }
+
+            override fun onScale(detector: ScaleGestureDetector): Boolean {
+                val activeId = draggingTextId ?: selectedTextId ?: return false
+                val item = arTextItems.firstOrNull { it.id == activeId } ?: return false
+                item.scale = (item.scale * detector.scaleFactor).coerceIn(0.55f, 2.4f)
+                onOverlayDirty?.invoke()
+                invalidate()
+                return true
+            }
+
+            override fun onScaleEnd(detector: ScaleGestureDetector) {
+                isScalingText = false
+                onOverlayDirty?.invoke()
+                invalidate()
+            }
+        }
+    )
+
+    private val textGestureDetector = GestureDetector(
+        context,
+        object : GestureDetector.SimpleOnGestureListener() {
+            override fun onDown(e: MotionEvent): Boolean {
+                val hit = findHitArTextItem(e.x, e.y)
+                if (hit != null) {
+                    draggingTextId = hit.id
+                    selectedTextId = hit.id
+                    isDraggingText = true
+                    onTextItemSelected?.invoke(hit)
+                    invalidate()
+                    return true
+                }
+                draggingTextId = null
+                isDraggingText = false
+                if (selectedTextId != null) {
+                    selectedTextId = null
+                    invalidate()
+                }
+                return false
+            }
+
+            override fun onScroll(
+                e1: MotionEvent?,
+                e2: MotionEvent,
+                distanceX: Float,
+                distanceY: Float
+            ): Boolean {
+                if (isScalingText || textScaleDetector.isInProgress) return false
+                val activeId = draggingTextId ?: return false
+                val item = arTextItems.firstOrNull { it.id == activeId } ?: return false
+                val viewW = width.toFloat().coerceAtLeast(1f)
+                val viewH = height.toFloat().coerceAtLeast(1f)
+                // distanceX/Y are previous - current, so subtracting moves text smoothly with finger
+                item.normX = (item.normX - distanceX / viewW).coerceIn(0.06f, 0.94f)
+                item.normY = (item.normY - distanceY / viewH).coerceIn(0.06f, 0.94f)
+                onOverlayDirty?.invoke()
+                invalidate()
+                return true
+            }
+
+            override fun onLongPress(e: MotionEvent) {
+                val hit = findHitArTextItem(e.x, e.y) ?: return
+                draggingTextId = hit.id
+                selectedTextId = hit.id
+                isDraggingText = true
+                performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                onTextItemSelected?.invoke(hit)
+                invalidate()
+            }
+
+            override fun onDoubleTap(e: MotionEvent): Boolean {
+                val hit = findHitArTextItem(e.x, e.y) ?: return false
+                selectedTextId = hit.id
+                onTextItemEditRequested?.invoke(hit)
+                invalidate()
+                return true
+            }
+        }
+    )
+
+    /**
+     * GestureDetector + ScaleGestureDetector touch handler for AR text objects.
+     * Captures drag (onScroll) and pinch-to-resize (onScale) ONLY when touching an AR text box,
+     * allowing tap-to-focus, camera zoom, and all other AR lenses to work seamlessly elsewhere.
+     */
+    fun handleArTextTouch(event: MotionEvent): Boolean {
+        if (arTextItems.isEmpty() || width <= 0 || height <= 0) return false
+        val scaleHandled = textScaleDetector.onTouchEvent(event)
+        val gestureHandled = if (!textScaleDetector.isInProgress) {
+            textGestureDetector.onTouchEvent(event)
+        } else {
+            false
+        }
+        val wasManipulating = isDraggingText || isScalingText || draggingTextId != null
+
+        if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) {
+            if (wasManipulating) {
+                draggingTextId = null
+                isDraggingText = false
+                isScalingText = false
+                onOverlayDirty?.invoke()
+                invalidate()
+                return true
+            }
+        }
+        return gestureHandled || (scaleHandled && isScalingText) || isDraggingText || isScalingText
+    }
+
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        return handleArTextTouch(event) || super.onTouchEvent(event)
+    }
 
     // 3D Landmark Mesh Calibration Offsets (for real-time alignment tuning)
     var calibrationOffsetX: Float = 0f // Normalized -0.25f to +0.25f
@@ -271,11 +537,21 @@ class ARFaceOverlayView @JvmOverloads constructor(
         isFrontFacing: Boolean
     ) {
         val faces = result.faceLandmarks()
-        landmarks = if (faces.isNotEmpty()) faces[0] else null
-        imageWidth = inputWidth
-        imageHeight = inputHeight
+        if (faces.isNotEmpty()) {
+            landmarks = faces[0]
+            hasSimpleFace = false
+        } else {
+            landmarks = null
+        }
+        imageWidth = inputWidth.coerceAtLeast(1)
+        imageHeight = inputHeight.coerceAtLeast(1)
         isFrontCamera = isFrontFacing
         animTick++
+        postInvalidate()
+    }
+
+    fun clearLandmarksOnly() {
+        landmarks = null
         postInvalidate()
     }
 
@@ -287,12 +563,20 @@ class ARFaceOverlayView @JvmOverloads constructor(
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
-        if (currentLens == ArLensMode.NONE && !showDebugReticle && !enableComicOnomatopoeia && !enableComicSpeechBubble) return
+        drawCompositeOverlay(canvas, width.toFloat(), height.toFloat(), includeSelectionOutline = true)
+    }
 
-        val viewW = width.toFloat()
-        val viewH = height.toFloat()
+    fun drawCompositeOverlay(
+        canvas: Canvas,
+        viewW: Float,
+        viewH: Float,
+        includeSelectionOutline: Boolean = false
+    ) {
         if (viewW <= 0f || viewH <= 0f) return
+        val hasText = arTextItems.isNotEmpty()
+        if (currentLens == ArLensMode.NONE && !showDebugReticle && !enableComicOnomatopoeia && !enableComicSpeechBubble && !hasText) return
 
+        var skipFaceLayer = false
         if (currentLens == ArLensMode.COMIC_FRAME) {
             if (isCartoonShaderActive) {
                 drawComicFrameBorders(canvas, viewW, viewH)
@@ -306,10 +590,149 @@ class ARFaceOverlayView @JvmOverloads constructor(
                 canvas.drawRect(18f, 18f, viewW - 18f, viewH - 18f, standbyPaint)
                 canvas.drawText("COMIC FRAME // STANDBY (ENABLE TOON/COMIC SHADER)", 28f, 52f, textHudPaint)
             }
-            if (!showDebugReticle && !enableComicOnomatopoeia && !enableComicSpeechBubble) return
+            if (!showDebugReticle && !enableComicOnomatopoeia && !enableComicSpeechBubble) {
+                skipFaceLayer = true
+            }
         }
 
-        drawFaceTrackedOverlays(canvas, viewW, viewH)
+        if (!skipFaceLayer && (currentLens != ArLensMode.NONE || showDebugReticle || enableComicOnomatopoeia || enableComicSpeechBubble)) {
+            drawFaceTrackedOverlays(canvas, viewW, viewH)
+        }
+
+        if (hasText) {
+            drawCustomArTextItems(canvas, viewW, viewH, includeSelectionOutline)
+        }
+    }
+
+    fun renderExportOverlayBitmap(targetW: Int, targetH: Int): Bitmap? {
+        if (!hasAnyVisibleOverlay() || targetW <= 0 || targetH <= 0) return null
+        val bmp = Bitmap.createBitmap(targetW, targetH, Bitmap.Config.ARGB_8888)
+        val c = Canvas(bmp)
+        drawCompositeOverlay(c, targetW.toFloat(), targetH.toFloat(), includeSelectionOutline = false)
+        return bmp
+    }
+
+    private fun computeTextItemBounds(item: ArTextItem, viewW: Float, viewH: Float): RectF {
+        val minDim = Math.max(240f, Math.min(viewW, viewH))
+        val fontSize = (minDim * 0.056f * item.scale.coerceIn(0.55f, 2.4f)).coerceAtLeast(22f)
+        val p = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            textSize = fontSize
+            typeface = Typeface.create(Typeface.DEFAULT_BOLD, Typeface.BOLD)
+        }
+        val label = item.text.trim().ifEmpty { "TEXT" }
+        val textW = Math.max(fontSize * 1.8f, p.measureText(label))
+        val padX = Math.max(18f, fontSize * 0.48f)
+        val padY = Math.max(12f, fontSize * 0.34f)
+        val halfW = (textW + padX * 2f) * 0.5f
+        val halfH = (fontSize + padY * 2f) * 0.5f
+        return RectF(-halfW, -halfH, halfW, halfH)
+    }
+
+    fun drawCustomArTextItems(
+        canvas: Canvas,
+        viewW: Float,
+        viewH: Float,
+        includeSelectionOutline: Boolean = false
+    ) {
+        if (arTextItems.isEmpty() || viewW <= 0f || viewH <= 0f) return
+        val minDim = Math.max(240f, Math.min(viewW, viewH))
+        val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            textAlign = Paint.Align.CENTER
+            typeface = Typeface.create(Typeface.DEFAULT_BOLD, Typeface.BOLD)
+        }
+        val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            textAlign = Paint.Align.CENTER
+            typeface = Typeface.create(Typeface.DEFAULT_BOLD, Typeface.BOLD)
+            style = Paint.Style.STROKE
+            strokeJoin = Paint.Join.ROUND
+        }
+        val boxPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+        val boxBorderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
+
+        for (item in arTextItems) {
+            val label = item.text.trim()
+            if (label.isEmpty()) continue
+            val fontSize = (minDim * 0.056f * item.scale.coerceIn(0.55f, 2.4f)).coerceAtLeast(22f)
+            textPaint.textSize = fontSize
+            strokePaint.textSize = fontSize
+
+            val rect = computeTextItemBounds(item, viewW, viewH)
+            val cx = item.normX.coerceIn(0.06f, 0.94f) * viewW
+            val cy = item.normY.coerceIn(0.06f, 0.94f) * viewH
+            val parsedColor = try { Color.parseColor(item.colorHex) } catch (_: Exception) { Color.parseColor("#FACC15") }
+            val cornerR = Math.min(24f, Math.max(10f, fontSize * 0.34f))
+            val textBaselineY = -(textPaint.descent() + textPaint.ascent()) * 0.5f
+
+            canvas.save()
+            canvas.translate(cx, cy)
+            if (item.rotationDeg != 0f) {
+                canvas.rotate(item.rotationDeg)
+            }
+
+            when (item.style) {
+                ArTextStyle.COMIC -> {
+                    val shadowRect = RectF(rect.left + 6f, rect.top + 7f, rect.right + 6f, rect.bottom + 7f)
+                    boxPaint.color = Color.parseColor("#06080D")
+                    canvas.drawRoundRect(shadowRect, cornerR * 0.6f, cornerR * 0.6f, boxPaint)
+                    boxPaint.color = parsedColor
+                    canvas.drawRoundRect(rect, cornerR * 0.6f, cornerR * 0.6f, boxPaint)
+                    boxBorderPaint.color = Color.parseColor("#06080D")
+                    boxBorderPaint.strokeWidth = Math.max(4f, fontSize * 0.11f)
+                    canvas.drawRoundRect(rect, cornerR * 0.6f, cornerR * 0.6f, boxBorderPaint)
+                    textPaint.clearShadowLayer()
+                    textPaint.color = Color.parseColor("#06080D")
+                    canvas.drawText(label, 0f, textBaselineY, textPaint)
+                }
+                ArTextStyle.PILL -> {
+                    boxPaint.color = Color.argb(200, 6, 10, 20)
+                    canvas.drawRoundRect(rect, rect.height() * 0.5f, rect.height() * 0.5f, boxPaint)
+                    boxBorderPaint.color = parsedColor
+                    boxBorderPaint.strokeWidth = Math.max(3f, fontSize * 0.08f)
+                    canvas.drawRoundRect(rect, rect.height() * 0.5f, rect.height() * 0.5f, boxBorderPaint)
+                    textPaint.clearShadowLayer()
+                    textPaint.color = Color.WHITE
+                    canvas.drawText(label, 0f, textBaselineY, textPaint)
+                }
+                ArTextStyle.OUTLINE -> {
+                    strokePaint.color = Color.parseColor("#06080D")
+                    strokePaint.strokeWidth = Math.max(6f, fontSize * 0.18f)
+                    canvas.drawText(label, 0f, textBaselineY, strokePaint)
+                    textPaint.clearShadowLayer()
+                    textPaint.color = parsedColor
+                    canvas.drawText(label, 0f, textBaselineY, textPaint)
+                }
+                ArTextStyle.NEON -> {
+                    strokePaint.color = Color.argb(215, 4, 8, 16)
+                    strokePaint.strokeWidth = Math.max(4f, fontSize * 0.10f)
+                    canvas.drawText(label, 0f, textBaselineY, strokePaint)
+                    textPaint.color = parsedColor
+                    textPaint.setShadowLayer(Math.max(12f, fontSize * 0.45f), 0f, 0f, parsedColor)
+                    canvas.drawText(label, 0f, textBaselineY, textPaint)
+                    textPaint.clearShadowLayer()
+                }
+            }
+
+            if (includeSelectionOutline && item.id == selectedTextId) {
+                val guidePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.parseColor("#22D3EE")
+                    strokeWidth = 3f
+                    style = Paint.Style.STROKE
+                    pathEffect = DashPathEffect(floatArrayOf(12f, 8f), 0f)
+                }
+                val guideRect = RectF(rect.left - 10f, rect.top - 10f, rect.right + 10f, rect.bottom + 10f)
+                canvas.drawRect(guideRect, guidePaint)
+                val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.parseColor("#22D3EE")
+                    style = Paint.Style.FILL
+                }
+                canvas.drawCircle(guideRect.left, guideRect.top, 7f, dotPaint)
+                canvas.drawCircle(guideRect.right, guideRect.top, 7f, dotPaint)
+                canvas.drawCircle(guideRect.left, guideRect.bottom, 7f, dotPaint)
+                canvas.drawCircle(guideRect.right, guideRect.bottom, 7f, dotPaint)
+            }
+
+            canvas.restore()
+        }
     }
 
     fun drawFaceTrackedOverlays(canvas: Canvas, viewW: Float, viewH: Float) {
@@ -319,21 +742,35 @@ class ARFaceOverlayView @JvmOverloads constructor(
         val hasReal = landmarks != null && landmarks!!.size >= 468
         val hasSimple = !hasReal && hasSimpleFace && (now - lastSimpleFaceTime < 1500L)
 
+        // Match PreviewView scaleType="fillCenter" aspect ratio crop so landmarks align on tall displays (e.g. 20:9 Moto Edge)
+        val inW = imageWidth.toFloat().coerceAtLeast(1f)
+        val inH = imageHeight.toFloat().coerceAtLeast(1f)
+        val cropScale = if (inW > 1f && inH > 1f) Math.max(viewW / inW, viewH / inH) else 1f
+        val scaledImgW = if (inW > 1f && inH > 1f) inW * cropScale else viewW
+        val scaledImgH = if (inW > 1f && inH > 1f) inH * cropScale else viewH
+        val cropOffX = (scaledImgW - viewW) * 0.5f
+        val cropOffY = (scaledImgH - viewH) * 0.5f
+
+        fun projectNormX(normX: Float): Float {
+            val mx = if (isFrontCamera) (1.0f - normX) else normX
+            return mx * scaledImgW - cropOffX
+        }
+        fun projectNormY(normY: Float): Float {
+            return normY * scaledImgH - cropOffY
+        }
+
         // Gentle breathing motion animation tick when using portrait anchor fallback
         val floatOffset = if (!hasReal && !hasSimple) (Math.sin(now / 550.0) * (viewH * 0.005f)).toFloat() else 0f
 
         val rawCenterX = when {
-            hasReal -> {
-                val normX = landmarks!![1].x()
-                if (isFrontCamera) (1.0f - normX) * viewW else normX * viewW
-            }
+            hasReal -> projectNormX(landmarks!![1].x())
             hasSimple -> {
                 if (isFrontCamera) (1.0f - simpleFaceCenterX) * viewW else simpleFaceCenterX * viewW
             }
             else -> viewW * 0.5f
         }
         val rawCenterY = when {
-            hasReal -> landmarks!![1].y() * viewH
+            hasReal -> projectNormY(landmarks!![1].y())
             hasSimple -> (simpleFaceCenterY * viewH) + (simpleFaceEyeDist * viewW * 0.35f)
             else -> viewH * 0.44f + floatOffset
         }
@@ -353,8 +790,7 @@ class ARFaceOverlayView @JvmOverloads constructor(
 
         fun getX(idx: Int): Float {
             if (hasReal) {
-                val normX = landmarks!![idx].x()
-                val base = if (isFrontCamera) (1.0f - normX) * viewW else normX * viewW
+                val base = projectNormX(landmarks!![idx].x())
                 val dist = base - rawCenterX
                 val isEye = idx == 33 || idx == 263 || idx == 133 || idx == 362
                 val spacing = if (isEye) eyeSpacingFactor else 1.0f
@@ -387,7 +823,7 @@ class ARFaceOverlayView @JvmOverloads constructor(
 
         fun getY(idx: Int): Float {
             if (hasReal) {
-                val base = landmarks!![idx].y() * viewH
+                val base = projectNormY(landmarks!![idx].y())
                 val dist = base - rawCenterY
                 var extraY = 0f
                 if (idx == 10 || idx == 338 || idx == 297) extraY = foreheadOffset * viewH
@@ -429,6 +865,7 @@ class ARFaceOverlayView @JvmOverloads constructor(
         if (anyComicGraphicActive) {
             if (hasAnyTrackedFace && !wasFaceDetectedForComic) {
                 comicEntryStartMs = now
+                post { onComicFaceAcquired?.invoke() }
             }
             wasFaceDetectedForComic = hasAnyTrackedFace
         } else {

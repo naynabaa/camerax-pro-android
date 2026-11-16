@@ -1,0 +1,221 @@
+package com.example.cameraxapp.power;
+
+import android.content.Context;
+import android.os.Build;
+import android.os.PowerManager;
+import android.os.SystemClock;
+import android.util.Size;
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+import androidx.camera.core.ImageCapture;
+import androidx.camera.video.Quality;
+import androidx.core.content.ContextCompat;
+
+/**
+ * Java Reference: Thermal Monitoring Utility using PowerManager.OnThermalStatusChangedListener
+ * to automatically reduce CameraX ImageAnalysis complexity and capture resolution before critical
+ * overheating causes thermal watchdog crashes.
+ */
+public class ThermalGuardManager {
+
+    public enum ThermalTier {
+        NOMINAL(0),
+        MODERATE(1),
+        SEVERE(2),
+        CRITICAL(3),
+        EMERGENCY(4);
+
+        public final int severityRank;
+        ThermalTier(int rank) { this.severityRank = rank; }
+    }
+
+    public static class ThermalPolicy {
+        public final ThermalTier tier;
+        public final int rawStatusCode;
+        public final String statusLabel;
+        public final float thermalHeadroom;
+        public final int targetAnalysisFps;
+        public final long minAnalysisIntervalMs;
+        public final Size targetAnalysisResolution;
+        @Nullable public final Size maxImageCaptureResolution;
+        public final boolean forceMinimizeCaptureLatency;
+        @Nullable public final Quality maxVideoQuality;
+        public final boolean reduceAnalysisComplexity;
+        public final boolean disableHeavyAr;
+        public final boolean disableMultiCamPip;
+
+        public ThermalPolicy(
+                ThermalTier tier,
+                int rawStatusCode,
+                String statusLabel,
+                float thermalHeadroom,
+                int targetAnalysisFps,
+                long minAnalysisIntervalMs,
+                Size targetAnalysisResolution,
+                @Nullable Size maxImageCaptureResolution,
+                boolean forceMinimizeCaptureLatency,
+                @Nullable Quality maxVideoQuality,
+                boolean reduceAnalysisComplexity,
+                boolean disableHeavyAr,
+                boolean disableMultiCamPip
+        ) {
+            this.tier = tier;
+            this.rawStatusCode = rawStatusCode;
+            this.statusLabel = statusLabel;
+            this.thermalHeadroom = thermalHeadroom;
+            this.targetAnalysisFps = targetAnalysisFps;
+            this.minAnalysisIntervalMs = minAnalysisIntervalMs;
+            this.targetAnalysisResolution = targetAnalysisResolution;
+            this.maxImageCaptureResolution = maxImageCaptureResolution;
+            this.forceMinimizeCaptureLatency = forceMinimizeCaptureLatency;
+            this.maxVideoQuality = maxVideoQuality;
+            this.reduceAnalysisComplexity = reduceAnalysisComplexity;
+            this.disableHeavyAr = disableHeavyAr;
+            this.disableMultiCamPip = disableMultiCamPip;
+        }
+    }
+
+    public interface Listener {
+        void onPolicyChanged(@NonNull ThermalPolicy policy);
+    }
+
+    private final Context context;
+    private final Listener listener;
+    private volatile ThermalPolicy currentPolicy = buildPolicy(ThermalTier.NOMINAL, 0, "NOMINAL", 0f);
+    private volatile long lastAnalyzedMs = 0L;
+    private boolean isRegistered = false;
+    @Nullable private Object thermalListener = null;
+
+    public ThermalGuardManager(@NonNull Context context, @NonNull Listener listener) {
+        this.context = context.getApplicationContext();
+        this.listener = listener;
+    }
+
+    public void register() {
+        PowerManager pm = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
+        if (pm == null) return;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            evaluateSystemThermalStatus(pm, pm.getCurrentThermalStatus());
+            if (!isRegistered) {
+                PowerManager.OnThermalStatusChangedListener cb = status -> evaluateSystemThermalStatus(pm, status);
+                thermalListener = cb;
+                try {
+                    pm.addThermalStatusListener(ContextCompat.getMainExecutor(context), cb);
+                    isRegistered = true;
+                } catch (SecurityException ignored) {
+                    thermalListener = null;
+                }
+            }
+        } else {
+            isRegistered = true;
+        }
+    }
+
+    public void unregister() {
+        if (!isRegistered) return;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && thermalListener != null) {
+            PowerManager pm = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
+            if (pm != null) {
+                try {
+                    pm.removeThermalStatusListener((PowerManager.OnThermalStatusChangedListener) thermalListener);
+                } catch (IllegalArgumentException ignored) {
+                }
+            }
+        }
+        thermalListener = null;
+        isRegistered = false;
+    }
+
+    @NonNull
+    public ThermalPolicy getCurrentPolicy() {
+        return currentPolicy;
+    }
+
+    public boolean shouldReduceComplexity() {
+        return currentPolicy.reduceAnalysisComplexity;
+    }
+
+    public boolean shouldProcessAnalysisFrame() {
+        long minInterval = currentPolicy.minAnalysisIntervalMs;
+        if (minInterval <= 0L) return true;
+        long now = SystemClock.elapsedRealtime();
+        if ((now - lastAnalyzedMs) >= minInterval) {
+            lastAnalyzedMs = now;
+            return true;
+        }
+        return false;
+    }
+
+    public int effectiveCaptureMode(int requestedMode) {
+        return currentPolicy.forceMinimizeCaptureLatency
+                ? ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY
+                : requestedMode;
+    }
+
+    @NonNull
+    public Quality constrainVideoQuality(@NonNull Quality requested) {
+        Quality cap = currentPolicy.maxVideoQuality;
+        if (cap == null) return requested;
+        return qualityRank(requested) > qualityRank(cap) ? cap : requested;
+    }
+
+    private int qualityRank(Quality q) {
+        if (q == Quality.UHD) return 3;
+        if (q == Quality.FHD) return 2;
+        if (q == Quality.HD) return 1;
+        return 0;
+    }
+
+    private void evaluateSystemThermalStatus(@NonNull PowerManager pm, int status) {
+        float headroom = 0f;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            try {
+                float h = pm.getThermalHeadroom(10);
+                if (!Float.isNaN(h) && !Float.isInfinite(h) && h >= 0f) headroom = h;
+            } catch (Throwable ignored) {
+            }
+        }
+
+        ThermalTier tier;
+        String label;
+        if (status >= PowerManager.THERMAL_STATUS_EMERGENCY) {
+            tier = ThermalTier.EMERGENCY;
+            label = "EMERGENCY";
+        } else if (status == PowerManager.THERMAL_STATUS_CRITICAL) {
+            tier = ThermalTier.CRITICAL;
+            label = "CRITICAL";
+        } else if (status == PowerManager.THERMAL_STATUS_SEVERE || headroom >= 1.0f) {
+            tier = ThermalTier.SEVERE;
+            label = "SEVERE";
+        } else if (status == PowerManager.THERMAL_STATUS_MODERATE || headroom >= 0.85f) {
+            tier = ThermalTier.MODERATE;
+            label = "MODERATE";
+        } else {
+            tier = ThermalTier.NOMINAL;
+            label = (status == PowerManager.THERMAL_STATUS_LIGHT) ? "LIGHT" : "NOMINAL";
+        }
+
+        ThermalPolicy next = buildPolicy(tier, status, label, headroom);
+        boolean changed = (next.tier != currentPolicy.tier) || (next.rawStatusCode != currentPolicy.rawStatusCode);
+        currentPolicy = next;
+        if (changed) {
+            listener.onPolicyChanged(next);
+        }
+    }
+
+    private static ThermalPolicy buildPolicy(ThermalTier tier, int rawCode, String label, float headroom) {
+        switch (tier) {
+            case EMERGENCY:
+                return new ThermalPolicy(tier, rawCode, label, headroom, 2, 500L, new Size(240, 180), new Size(960, 720), true, Quality.SD, true, true, true);
+            case CRITICAL:
+                return new ThermalPolicy(tier, rawCode, label, headroom, 3, 333L, new Size(320, 240), new Size(1280, 720), true, Quality.HD, true, true, true);
+            case SEVERE:
+                return new ThermalPolicy(tier, rawCode, label, headroom, 8, 125L, new Size(320, 240), new Size(1920, 1080), true, Quality.FHD, true, true, true);
+            case MODERATE:
+                return new ThermalPolicy(tier, rawCode, label, headroom, 15, 66L, new Size(480, 360), null, false, null, true, false, false);
+            case NOMINAL:
+            default:
+                return new ThermalPolicy(tier, rawCode, label, headroom, 30, 0L, new Size(640, 480), null, false, null, false, false, false);
+        }
+    }
+}

@@ -62,7 +62,16 @@ class FilterManager(private val context: Context) {
         BLACK_AND_WHITE,
         HDR,
         CYBERPUNK,
-        COMIC_BOOK
+        COMIC_BOOK,
+        PORTRA_400,
+        FUJI_400H,
+        TEAL_ORANGE,
+        NOIR_CONTRAST,
+        SUNSET_WARMTH,
+        MATRIX_CODE,
+        PASTEL_DREAM,
+        NORDIC_BLUE,
+        SUPER8_VINTAGE
     }
 
     data class LiveAdjustments(
@@ -74,7 +83,17 @@ class FilterManager(private val context: Context) {
     private val gpuImage = GPUImage(context)
     private val toonGpuImage = GPUImage(context)
     private var currentPreset = FilterPreset.NORMAL
+    var halftoneDensity: Float = 1.0f
+    var halftoneDotSize: Float = 1.0f
     val adjustments = LiveAdjustments()
+
+    fun setComicHalftoneParams(density: Float, dotSize: Float) {
+        halftoneDensity = density.coerceIn(0.4f, 2.2f)
+        halftoneDotSize = dotSize.coerceIn(0.3f, 1.8f)
+        if (currentPreset == FilterPreset.COMIC_BOOK) {
+            gpuImage.setFilter(buildActiveFilterGroup())
+        }
+    }
 
     /**
      * Multi-Pass GPUImage Comic-Book & Cartoon Shader Filter.
@@ -727,9 +746,58 @@ class FilterManager(private val context: Context) {
                         style = GPUImageComicBookFilter.ComicStyle.COMIC_BOOK,
                         quantizeLevels = 4.0f,
                         edgeThreshold = 0.17f,
-                        intensity = 0.92f
+                        intensity = 0.92f,
+                        halftoneDensity = halftoneDensity,
+                        halftoneDotSize = halftoneDotSize
                     )
                 )
+            }
+            FilterPreset.PORTRA_400 -> {
+                filters.add(GPUImageSepiaToneFilter(0.24f))
+                filters.add(GPUImageSaturationFilter(1.16f))
+                filters.add(GPUImageContrastFilter(1.06f))
+                filters.add(GPUImageBrightnessFilter(0.03f))
+            }
+            FilterPreset.FUJI_400H -> {
+                filters.add(GPUImageSaturationFilter(0.88f))
+                filters.add(GPUImageContrastFilter(0.92f))
+                filters.add(GPUImageBrightnessFilter(0.05f))
+            }
+            FilterPreset.TEAL_ORANGE -> {
+                filters.add(GPUImageFilter(GPUImageFilter.NO_FILTER_VERTEX_SHADER, CINEMATIC_FRAGMENT_SHADER))
+                filters.add(GPUImageContrastFilter(1.26f))
+                filters.add(GPUImageSaturationFilter(1.32f))
+            }
+            FilterPreset.NOIR_CONTRAST -> {
+                filters.add(GPUImageGrayscaleFilter())
+                filters.add(GPUImageContrastFilter(1.62f))
+                filters.add(GPUImageBrightnessFilter(-0.04f))
+            }
+            FilterPreset.SUNSET_WARMTH -> {
+                filters.add(GPUImageSepiaToneFilter(0.52f))
+                filters.add(GPUImageSaturationFilter(1.28f))
+                filters.add(GPUImageContrastFilter(1.08f))
+                filters.add(GPUImageBrightnessFilter(0.04f))
+            }
+            FilterPreset.MATRIX_CODE -> {
+                filters.add(GPUImageContrastFilter(1.34f))
+                filters.add(GPUImageSaturationFilter(1.12f))
+                filters.add(GPUImageSharpenFilter(0.45f))
+            }
+            FilterPreset.PASTEL_DREAM -> {
+                filters.add(GPUImageSaturationFilter(0.76f))
+                filters.add(GPUImageContrastFilter(0.86f))
+                filters.add(GPUImageBrightnessFilter(0.08f))
+            }
+            FilterPreset.NORDIC_BLUE -> {
+                filters.add(GPUImageSaturationFilter(0.72f))
+                filters.add(GPUImageContrastFilter(1.22f))
+                filters.add(GPUImageBrightnessFilter(-0.02f))
+            }
+            FilterPreset.SUPER8_VINTAGE -> {
+                filters.add(GPUImageSepiaToneFilter(0.44f))
+                filters.add(GPUImageContrastFilter(1.16f))
+                filters.add(GPUImageSaturationFilter(0.90f))
             }
         }
 
@@ -781,6 +849,15 @@ class FilterManager(private val context: Context) {
             "ilford_grain", "filter_ilford_grain" -> FilterPreset.ILFORD_GRAIN
             "silver_gelatin", "filter_silver_gelatin" -> FilterPreset.SILVER_GELATIN
             "antique_sepia", "filter_antique_sepia" -> FilterPreset.ANTIQUE_SEPIA
+            "portra_400", "filter_portra_400" -> FilterPreset.PORTRA_400
+            "fuji_400h", "filter_fuji_400h" -> FilterPreset.FUJI_400H
+            "teal_orange", "filter_teal_orange" -> FilterPreset.TEAL_ORANGE
+            "noir_contrast", "filter_noir_contrast" -> FilterPreset.NOIR_CONTRAST
+            "sunset_warmth", "filter_sunset_warmth" -> FilterPreset.SUNSET_WARMTH
+            "matrix_code", "filter_matrix_code" -> FilterPreset.MATRIX_CODE
+            "pastel_dream", "filter_pastel_dream" -> FilterPreset.PASTEL_DREAM
+            "nordic_blue", "filter_nordic_mood", "filter_nordic_blue" -> FilterPreset.NORDIC_BLUE
+            "super8_vintage", "filter_super8_retro", "filter_super8_vintage" -> FilterPreset.SUPER8_VINTAGE
             "cinematic" -> FilterPreset.CINEMATIC
             "vintage" -> FilterPreset.VINTAGE
             "bw", "black_and_white", "mono" -> FilterPreset.BLACK_AND_WHITE
@@ -878,7 +955,9 @@ class FilterManager(private val context: Context) {
                 style = style,
                 quantizeLevels = levels,
                 edgeThreshold = threshold,
-                intensity = intensity.coerceIn(0f, 1f)
+                intensity = intensity.coerceIn(0f, 1f),
+                halftoneDensity = halftoneDensity,
+                halftoneDotSize = halftoneDotSize
             )
             toonGpuImage.setImage(sourceBitmap)
             toonGpuImage.setFilter(comicFilter)

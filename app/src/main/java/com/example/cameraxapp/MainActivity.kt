@@ -24,8 +24,10 @@ import android.graphics.RectF
 import android.graphics.RenderEffect
 import android.graphics.Shader
 import android.graphics.Typeface
+import android.media.AudioManager
 import android.media.ExifInterface
 import android.media.FaceDetector
+import android.media.ToneGenerator
 import android.os.Build
 import android.os.Bundle
 import android.os.CountDownTimer
@@ -43,6 +45,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.animation.DecelerateInterpolator
 import android.widget.Chronometer
+import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageButton
 import android.widget.ImageView
@@ -51,6 +54,7 @@ import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraControl
@@ -58,6 +62,7 @@ import androidx.camera.core.CameraSelector
 import androidx.camera.core.FocusMeteringAction
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
+import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.video.FallbackStrategy
@@ -65,6 +70,7 @@ import androidx.camera.video.MediaStoreOutputOptions
 import androidx.camera.video.Quality
 import androidx.camera.video.QualitySelector
 import androidx.camera.core.CameraEffect
+import androidx.camera.core.ConcurrentCamera
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.UseCaseGroup
 import androidx.camera.extensions.ExtensionMode
@@ -84,8 +90,15 @@ import com.example.cameraxapp.overlay.ProOverlayView
 import com.example.cameraxapp.databinding.ActivityMainBinding
 import com.example.cameraxapp.filter.FilterManager
 import com.example.cameraxapp.filter.OpenGLSurfaceProcessor
+import com.example.cameraxapp.effect.MotionBlurProcessor
+import com.example.cameraxapp.panorama.PanoramaStitcher
+import com.example.cameraxapp.night.NightExposureStacker
+import com.example.cameraxapp.power.EcoPowerManager
+import com.example.cameraxapp.power.ThermalGuardManager
 import com.example.cameraxapp.ar.FaceMeshHelper
 import com.example.cameraxapp.ar.ARFaceOverlayView
+import com.example.cameraxapp.audio.ComicSoundEffectsHelper
+import com.example.cameraxapp.font.CameraFontHelper
 import com.google.mediapipe.tasks.vision.facelandmarker.FaceLandmarkerResult
 import java.text.SimpleDateFormat
 import java.util.Locale
@@ -111,7 +124,7 @@ import java.util.concurrent.Executors
  */
 class MainActivity : AppCompatActivity() {
 
-    enum class CameraMode { SLOW_MO, VIDEO, PHOTO, PORTRAIT, NIGHT }
+    enum class CameraMode { SLOW_MO, VIDEO, PHOTO, PORTRAIT, NIGHT, PANORAMA }
 
     private lateinit var viewBinding: ActivityMainBinding
 
@@ -132,11 +145,23 @@ class MainActivity : AppCompatActivity() {
     // Default lens is BACK camera
     private var lensFacing: CameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
 
-    // Real-Time Filter & AR Engine
+    // Real-Time Filter, MediaPipe 468-Mesh & Concurrent Multi-Cam PiP Engine
     private lateinit var filterManager: FilterManager
     private var faceMeshHelper: FaceMeshHelper? = null
+    @Volatile
+    private var isMediaPipeSupported: Boolean = true
+    @Volatile
+    private var lastMediaPipeLandmarkTime: Long = 0L
     private var openGLProcessor: OpenGLSurfaceProcessor? = null
     private var cameraEffect: CameraEffect? = null
+    private val motionBlurProcessor = MotionBlurProcessor()
+    @Volatile
+    private var latestMotionMetrics = MotionBlurProcessor.MotionMetrics.IDLE
+    private var concurrentCamera: ConcurrentCamera? = null
+    private var isMultiCamPipEnabled: Boolean = false
+    private var isUpdatingPipSwitch: Boolean = false
+    private var pipLastActionDownX: Float = 0f
+    private var pipLastActionDownY: Float = 0f
 
     // Video Recording Pause/Resume state
     private var isRecordingPaused = false
@@ -147,11 +172,121 @@ class MainActivity : AppCompatActivity() {
     private var isCountingDown = false
     private var isBurstCapturing = false
     private var burstCount = 0
-    private val maxBurstBuffer = 30
+    private var maxBurstBuffer = 30
     private var remainingBurstBuffer = 30
     private val burstHandler = Handler(Looper.getMainLooper())
     private var burstRunnable: Runnable? = null
     private var isGridVisible = true
+
+    // Audio Cue, Comic SFX & Typography Engines
+    private var toneGenerator: ToneGenerator? = null
+    private var comicSfxHelper: ComicSoundEffectsHelper? = null
+    private var cameraFontHelper: CameraFontHelper? = null
+    private var selectedVideoQualityLabel: String = "HD 30FPS"
+    private var activeEffectIntensity: Float = 0.85f
+    private var comicHalftoneDensity: Float = 1.0f
+    private var comicHalftoneDotSize: Float = 1.0f
+    private var comicLabelDepth: Float = 1.0f
+
+    // AR Calibration & Comic Studio State
+    private var calibOffsetX: Float = 0f
+    private var calibOffsetY: Float = 0f
+    private var calibScale: Float = 1.0f
+    private var calibRotDeg: Float = 0f
+    private var calibEyeSpace: Float = 1.0f
+    private var calibForehead: Float = 0f
+    private var calibChin: Float = 0f
+    private var calibDebug: Boolean = false
+
+    private data class ComicPalettePreset(
+        val id: String,
+        val name: String,
+        val powTop: String, val powBottom: String, val powExtrude: String, val powBurst: String,
+        val bamTop: String, val bamBottom: String, val bamExtrude: String, val bamBurst: String,
+        val zapTop: String, val zapBottom: String, val zapExtrude: String, val zapBurst: String
+    )
+    private val comicPalettePresets = listOf(
+        ComicPalettePreset("silver_age", "SILVER AGE", "#FFFBEB", "#FACC15", "#EF4444", "#DC2626", "#FFFFFF", "#FF5E3A", "#0284C7", "#FACC15", "#ECFCCB", "#22D3EE", "#7C3AED", "#2563EB"),
+        ComicPalettePreset("spider_verse", "SPIDER-VERSE", "#FDF2F8", "#F43F5E", "#06B6D4", "#7C3AED", "#FEFCE8", "#FACC15", "#EC4899", "#1D4ED8", "#ECFEFF", "#22D3EE", "#F43F5E", "#F59E0B"),
+        ComicPalettePreset("cyber_neon", "CYBER NEON", "#FCE7F3", "#EC4899", "#00F0FF", "#4C1D95", "#EDE9FE", "#A855F7", "#22D3EE", "#BE185D", "#ECFCCB", "#84CC16", "#EC4899", "#0F766E"),
+        ComicPalettePreset("manga_noir", "MANGA INK", "#FFFFFF", "#E2E8F0", "#EF4444", "#1E293B", "#FEF2F2", "#EF4444", "#0F172A", "#F8FAFC", "#F8FAFC", "#94A3B8", "#DC2626", "#0F172A")
+    )
+    private var comicPaletteIndex = 0
+    private val comicSfxChoices = listOf("comic_punch", "heavy_slam", "electric_zap", "boing_spring", "laser_burst")
+    private var comicSfxPow = "comic_punch"
+    private var comicSfxBam = "heavy_slam"
+    private var comicSfxZap = "electric_zap"
+    private val comicBubblePhrases = listOf("HERO MODE!", "BOOM!!", "ACTION!", "WHAT?!", "PLOT TWIST!", "TO BE CONTINUED...")
+    private var comicBubblePhraseIndex = 0
+
+    // AR Batch Queue & Auto-Adapt State
+    private var isBatchModeActive = false
+    private var isBatchPlaying = false
+    private var batchStepIndex = 0
+    private val batchLensQueue = mutableListOf<String>()
+    private var isAutoAdaptEnabled = false
+    private val batchHandler = Handler(Looper.getMainLooper())
+    private var batchRunnable: Runnable? = null
+
+    // Web Studio Injected Config Presets (Custom Filters, Lenses & Typography)
+    private data class CustomFilterDef(
+        val id: String, val name: String, val brightness: Int, val contrast: Int,
+        val saturation: Int, val sepia: Int, val grayscale: Int, val tintColor: String
+    )
+    private val injectedCustomFilters = listOf<CustomFilterDef>(
+        CustomFilterDef("filter_lut_rec709", "Standard Rec.709", 2, 12, 8, 0, 0, "#38bdf8"),
+        CustomFilterDef("filter_lut_flat_log", "Flat Log Profile", 10, -32, -38, 6, 0, "#94a3b8"),
+        CustomFilterDef("filter_lut_blockbuster_teal_orange", "Blockbuster Teal & Orange", 2, 30, 36, 16, 0, "#0d9488"),
+        CustomFilterDef("filter_lut_bleach_bypass", "Bleach Bypass", -4, 52, -48, 8, 30, "#64748b"),
+        CustomFilterDef("filter_lut_anamorphic_cyan", "Anamorphic Cyan", -2, 34, 18, 0, 0, "#06b6d4"),
+        CustomFilterDef("filter_lut_matte_cinema", "Matte Cinema", 12, -16, -14, 20, 0, "#78716c"),
+        CustomFilterDef("filter_lut_midnight_neon", "Midnight Neon", 2, 36, 56, 0, 0, "#8b5cf6"),
+        CustomFilterDef("filter_lut_warm_documentary", "Warm Documentary", 4, 10, 14, 22, 0, "#f59e0b"),
+        CustomFilterDef("filter_lut_noir_cinema", "Noir Cinema (B&W)", -6, 72, -100, 0, 100, "#09090b"),
+        CustomFilterDef("filter_golden_nostalgia", "Golden Nostalgia", 6, -6, 18, 46, 0, "#eab308"),
+        CustomFilterDef("filter_velvia_landscape", "Velvia Landscape", 2, 28, 55, 0, 0, "#059669"),
+        CustomFilterDef("filter_nordic_slate", "Nordic Slate", -3, 26, -34, 0, 18, "#475569"),
+        CustomFilterDef("filter_arctic_mist", "Arctic Mist", 10, -10, -38, 0, 22, "#94a3b8"),
+        CustomFilterDef("filter_classic_mono", "Classic Mono (B&W)", 2, 18, -100, 0, 100, "#64748b"),
+        CustomFilterDef("filter_high_contrast_noir", "High-Contrast Noir", -4, 68, -100, 0, 100, "#18181b"),
+        CustomFilterDef("filter_ilford_grain", "Ilford Grain (B&W)", 2, 32, -100, 0, 100, "#52525b"),
+        CustomFilterDef("filter_silver_gelatin", "Silver Gelatin", 4, 24, -100, 18, 92, "#78716c"),
+        CustomFilterDef("filter_antique_sepia", "Antique Sepia", 2, 22, -25, 88, 0, "#92400e"),
+        CustomFilterDef("filter_portra_400", "Portra 400", 6, 15, 22, 24, 0, "#fde68a"),
+        CustomFilterDef("filter_fuji_400h", "Fuji Pro 400H", 8, 16, 26, 8, 0, "#a7f3d0"),
+        CustomFilterDef("filter_teal_orange", "Teal & Orange", 4, 32, 46, 12, 0, "#38bdf8"),
+        CustomFilterDef("filter_noir_contrast", "Silver Noir", 2, 56, -100, 0, 100, "#ffffff"),
+        CustomFilterDef("filter_nordic_mood", "Nordic Blue", -2, 24, -30, 6, 0, "#93c5fd"),
+        CustomFilterDef("filter_super8_retro", "Super 8 Vintage", 10, -6, 20, 52, 0, "#fef08a"),
+        CustomFilterDef("filter_sunset_warmth", "Sunset Glow", 5, 18, 38, 40, 0, "#f59e0b"),
+        CustomFilterDef("filter_matrix_code", "Matrix Cyber", 8, 42, 65, 0, 0, "#10b981"),
+        CustomFilterDef("filter_pastel_dream", "Pastel Dream", 12, -8, -15, 15, 0, "#ec4899")
+    )
+    private data class CustomLensDef(
+        val id: String, val name: String, val anchor: String, val style: String,
+        val primaryColor: String, val accentColor: String
+    )
+    private val injectedCustomLenses = listOf<CustomLensDef>(
+        CustomLensDef("lens_neon_cat_ears", "Neon Feline Ears", "forehead", "cat_ears", "#ec4899", "#38bdf8"),
+        CustomLensDef("lens_celestial_halo", "Celestial Halo", "forehead", "halo_tiara", "#fbbf24", "#ffffff"),
+        CustomLensDef("lens_cyber_respirator", "Cyber Mask 2077", "mouth", "cyber_mask", "#06b6d4", "#f43f5e")
+    )
+    private data class CustomFontDef(
+        val id: String, val name: String, val family: String, val category: String,
+        val colorHex: String, val glowHex: String, val sampleText: String, val italic: Boolean
+    )
+    private val injectedFonts = listOf<CustomFontDef>(
+        CustomFontDef("font_jetbrains_mono", "Cyber HUD Monospace", "\"JetBrains Mono\", monospace", "monospace", "#38bdf8", "#0284c7", "CAMERAX PRO · 60FPS · RAW", false),
+        CustomFontDef("font_orbitron", "Orbitron Sci-Fi", "\"Orbitron\", sans-serif", "scifi", "#22d3ee", "#06b6d4", "TARGET LOCK // 99.8% · ACTIVE", false),
+        CustomFontDef("font_vt323", "90s Camcorder VHS", "\"VT323\", monospace", "retro", "#4ade80", "#16a34a", "PLAY ▶ REC · 00:14:28 · SP", false),
+        CustomFontDef("font_chakra_petch", "Tactical Mecha", "\"Chakra Petch\", sans-serif", "tactical", "#fbbf24", "#d97706", "MIL-STD // 810G · APERTURE F/1.8", false),
+        CustomFontDef("font_cinzel", "Cinematic Anamorphic", "\"Cinzel\", serif", "cinematic", "#f8fafc", "#94a3b8", "PANAVISION · 2.39:1 · SCENE 04", false),
+        CustomFontDef("font_space_grotesk", "Studio Clean Minimal", "\"Space Grotesk\", sans-serif", "editorial", "#ffffff", "#64748b", "STUDIO MASTER · 4K UHD · 10-BIT", false),
+        CustomFontDef("font_black_ops", "Black Ops Stencil", "\"Black Ops One\", cursive", "tactical", "#f43f5e", "#be123c", "DEFCON 1 · THERMAL OPTIC ENGAGED", false)
+    )
+    private var activeFontIndex = injectedFonts.indexOfFirst { it.id == "font_jetbrains_mono" }.coerceAtLeast(0)
+    private val dynamicFilterChips = mutableListOf<Pair<TextView, String>>()
+    private val dynamicLensChips = mutableListOf<Pair<TextView, String>>()
 
     // Auto Trigger Interval Loop Recorder (Auto Record -> Auto Pause -> Auto Resume)
     private var isAutoLoopEnabled = false
@@ -163,11 +298,55 @@ class MainActivity : AppCompatActivity() {
     private val autoLoopHandler = Handler(Looper.getMainLooper())
     private var autoLoopRunnable: Runnable? = null
 
-    // Electronic Virtual Horizon (60 FPS Sensor-Driven Roll & Pitch Level Gauge)
+    // Electronic Virtual Horizon & Gyroscope Panorama Tracking (60 FPS)
     private lateinit var sensorManager: SensorManager
     private var rotationSensor: Sensor? = null
     private val rotationMatrix = FloatArray(9)
+    private val remappedMatrix = FloatArray(9)
     private val orientationAngles = FloatArray(3)
+    private val uprightAngles = FloatArray(3)
+
+    // Automated CameraX ImageAnalysis Panorama Engine State
+    private val panoramaStitcher = PanoramaStitcher()
+    private val panoramaLock = Any()
+    @Volatile
+    private var isPanoramaCapturing = false
+    @Volatile
+    private var isPanoramaStitching = false
+    private val panoramaSlices = mutableListOf<PanoramaStitcher.PanoramaSlice>()
+    private var panoramaStartYawDeg = 0f
+    private var panoramaStartPitchDeg = 0f
+    private var panoramaDirection = 0
+    @Volatile
+    private var latestUprightYawDeg = 0f
+    @Volatile
+    private var latestUprightPitchDeg = 0f
+    private val panoramaFallbackHandler = Handler(Looper.getMainLooper())
+    private var panoramaFallbackRunnable: Runnable? = null
+
+    // Automated Night Mode Low-Light ImageAnalysis & Multi-Frame Exposure Stacking State
+    private val nightExposureStacker = NightExposureStacker()
+    @Volatile
+    private var isNightStacking = false
+    @Volatile
+    private var isAutoNightStackEnabled = true
+    private val nightHandler = Handler(Looper.getMainLooper())
+
+    // Eco Mode BatteryManager Monitor & Dynamic ImageAnalysis/AR Throttler
+    private lateinit var ecoPowerManager: EcoPowerManager
+    private var lastAppliedEcoTier: EcoPowerManager.EcoTier = EcoPowerManager.EcoTier.NORMAL
+    private var savedArLensBeforeEco: String? = null
+    private var savedPipBeforeEco: Boolean = false
+
+    // Thermal Monitoring Utility (PowerManager.OnThermalStatusChangedListener & Auto-Scaling)
+    private lateinit var thermalGuardManager: ThermalGuardManager
+    private var lastAppliedThermalTier: ThermalGuardManager.ThermalTier = ThermalGuardManager.ThermalTier.NOMINAL
+    private var savedArLensBeforeThermal: String? = null
+    private var savedPipBeforeThermal: Boolean = false
+
+    private fun normalizeAngleDelta(fromDeg: Float, toDeg: Float): Float {
+        return (((toDeg - fromDeg) + 540f) % 360f) - 180f
+    }
 
     private val sensorEventListener = object : SensorEventListener {
         override fun onSensorChanged(event: SensorEvent?) {
@@ -187,6 +366,12 @@ class MainActivity : AppCompatActivity() {
                 } else if (viewBinding.viewFinder.rotation != 0f) {
                     viewBinding.viewFinder.rotation = 0f
                 }
+
+                // Remap axes for upright handheld portrait sweep yaw & pitch (fused into ImageAnalysis Panorama tracking)
+                SensorManager.remapCoordinateSystem(rotationMatrix, SensorManager.AXIS_X, SensorManager.AXIS_Z, remappedMatrix)
+                SensorManager.getOrientation(remappedMatrix, uprightAngles)
+                latestUprightYawDeg = Math.toDegrees(uprightAngles[0].toDouble()).toFloat()
+                latestUprightPitchDeg = Math.toDegrees(uprightAngles[1].toDouble()).toFloat()
             }
         }
 
@@ -202,8 +387,12 @@ class MainActivity : AppCompatActivity() {
     private var isStylizingFrame = false
     private val stylizeRunnable = object : Runnable {
         override fun run() {
+            val isEcoThrottled = ::ecoPowerManager.isInitialized && ecoPowerManager.isEcoActive
+            val isThermalThrottled = ::thermalGuardManager.isInitialized && thermalGuardManager.isThrottled
+            val disableHeavyStylize = (::ecoPowerManager.isInitialized && ecoPowerManager.isHeavyMetersDisabled) ||
+                (::thermalGuardManager.isInitialized && thermalGuardManager.shouldReduceComplexity)
             val hasComicPreset = isComicFilterPreset(currentFilterName)
-            val useCpuLive = (isStylizedLiveEffect(currentShootingEffect) || hasComicPreset) &&
+            val useCpuLive = !disableHeavyStylize && (isStylizedLiveEffect(currentShootingEffect) || hasComicPreset) &&
                 ((cameraMode != CameraMode.VIDEO && cameraMode != CameraMode.SLOW_MO) || cameraEffect == null)
             if (useCpuLive && !isStylizingFrame && !isFinishing && !isDestroyed) {
                 val tv = findTextureView(viewBinding.viewFinder)
@@ -227,7 +416,7 @@ class MainActivity : AppCompatActivity() {
                                     "pop_art_print", "line_art_minimalist", "ligne_claire"
                                 )
                                 val gpuStyled = if (useGpuComicEngine) {
-                                    filterManager.applyToonEffectToBitmap(frame, targetStyleId)
+                                    filterManager.applyToonEffectToBitmap(frame, targetStyleId, activeEffectIntensity)
                                 } else {
                                     null
                                 }
@@ -253,7 +442,13 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
             }
-            stylizeHandler.postDelayed(this, if (currentShootingEffect == "stop_motion") 145L else 58L)
+            val baseDelay = if (currentShootingEffect == "stop_motion") 145L else 58L
+            val nextDelay = when {
+                disableHeavyStylize -> 420L
+                isEcoThrottled || isThermalThrottled -> Math.max(baseDelay, 200L)
+                else -> baseDelay
+            }
+            stylizeHandler.postDelayed(this, nextDelay)
         }
     }
 
@@ -282,17 +477,78 @@ class MainActivity : AppCompatActivity() {
         sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
         rotationSensor = sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
 
-        // Initialize Filter Engine
+        // Initialize Eco Mode Power Manager (monitors BatteryManager & OS Power Saver)
+        ecoPowerManager = EcoPowerManager(this) { policy ->
+            if (::thermalGuardManager.isInitialized) {
+                thermalGuardManager.updateBatteryTemperatureFallback(policy.temperatureC)
+            }
+            runOnUiThread { applyEcoPolicy(policy) }
+        }
+
+        // Initialize Thermal Guard Manager (monitors PowerManager thermal status & headroom)
+        thermalGuardManager = ThermalGuardManager(this) { policy ->
+            runOnUiThread { applyThermalPolicy(policy) }
+        }
+
+        // Initialize Filter, MediaPipe 468 Face Mesh, Comic SFX & Typography Engines
         filterManager = FilterManager(this)
+        comicSfxHelper = ComicSoundEffectsHelper()
+        cameraFontHelper = CameraFontHelper(this)
+        faceMeshHelper = FaceMeshHelper(this, object : FaceMeshHelper.FaceMeshListener {
+            override fun onFaceLandmarksDetected(
+                result: FaceLandmarkerResult,
+                inputWidth: Int,
+                inputHeight: Int
+            ) {
+                lastMediaPipeLandmarkTime = System.currentTimeMillis()
+                isMediaPipeSupported = true
+                val isFront = (lensFacing == CameraSelector.DEFAULT_FRONT_CAMERA)
+                if (result.faceLandmarks().isNotEmpty()) {
+                    viewBinding.arFaceOverlayView.updateResults(result, inputWidth, inputHeight, isFront)
+                } else {
+                    viewBinding.arFaceOverlayView.clearLandmarksOnly()
+                }
+            }
+
+            override fun onError(error: String) {
+                isMediaPipeSupported = false
+                Log.w(TAG, "MediaPipe unavailable — using built-in FaceDetector fallback: $error")
+            }
+        })
+        faceMeshHelper?.setFrontFacing(lensFacing == CameraSelector.DEFAULT_FRONT_CAMERA)
+        viewBinding.arFaceOverlayView.onComicFaceAcquired = {
+            if (!isAudioMuted) {
+                comicSfxHelper?.playComicBurst(comicSfxPow, comicSfxBam, comicSfxZap, 0.55f, isAudioMuted)
+            }
+        }
+        viewBinding.arFaceOverlayView.onOverlayDirty = {
+            syncOverlayToVideoProcessor()
+        }
+        viewBinding.arFaceOverlayView.onTextItemEditRequested = {
+            showArTextStudioDialog()
+        }
 
         viewBinding.proOverlayView.sensorAspectRatio = currentAspectRatio
+        viewBinding.tvVideoQualityPill.text = selectedVideoQualityLabel
+        viewBinding.proOverlayView.showWatermark = false
+        viewBinding.switchWatermark.isChecked = false
+        viewBinding.proOverlayView.watermarkText = "CAMERAX PRO · STUDIO"
+        if (false) {
+            setAspectMatteMode(ProOverlayView.AspectMatte.CINE_239)
+        }
+        applyActiveFontPreset()
 
+        setupDynamicConfigChips()
         setupClickListeners()
+        setupPipInteractions()
         setupBurstMode()
         setupExposureSlider()
         setupFilterAndArControls()
+        setupProEnhancementControls()
+        setupArCalibrationControls()
         selectCreativeCategory(CreativeTarget.FILTERS, fromUser = false)
         updateShootingEffectButtons()
+        updateActiveInstrumentsCount()
         isLastActionCreative = false
         viewBinding.modeScrollView.post { centerModeTab(cameraMode, smooth = false) }
         stylizeHandler.postDelayed(stylizeRunnable, 120L)
@@ -306,6 +562,12 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        if (::ecoPowerManager.isInitialized) {
+            ecoPowerManager.register()
+        }
+        if (::thermalGuardManager.isInitialized) {
+            thermalGuardManager.register()
+        }
         rotationSensor?.let {
             sensorManager.registerListener(sensorEventListener, it, SensorManager.SENSOR_DELAY_UI)
         }
@@ -313,7 +575,137 @@ class MainActivity : AppCompatActivity() {
 
     override fun onPause() {
         super.onPause()
+        if (::ecoPowerManager.isInitialized) {
+            ecoPowerManager.unregister()
+        }
+        if (::thermalGuardManager.isInitialized) {
+            thermalGuardManager.unregister()
+        }
         sensorManager.unregisterListener(sensorEventListener)
+    }
+
+    private fun applyEcoPolicy(policy: EcoPowerManager.EcoPolicy) {
+        val active = policy.tier != EcoPowerManager.EcoTier.NORMAL
+        val tierLabel = when (policy.tier) {
+            EcoPowerManager.EcoTier.ULTRA_ECO -> "ULTRA ECO"
+            EcoPowerManager.EcoTier.ECO_SAVER -> "ECO"
+            EcoPowerManager.EcoTier.NORMAL -> "NORMAL"
+        }
+        viewBinding.proOverlayView.updateEcoStatus(
+            active = active,
+            tierLabel = tierLabel,
+            batteryPct = policy.batteryPercent,
+            fpsCap = policy.targetAnalysisFps
+        )
+
+        val prevTier = lastAppliedEcoTier
+        lastAppliedEcoTier = policy.tier
+        if (policy.tier == prevTier) return
+
+        if (active) {
+            if (policy.disableHeavyAr) {
+                if (currentArLensName != "none") {
+                    savedArLensBeforeEco = currentArLensName
+                    setArLens("none", showNotice = false)
+                }
+                if (viewBinding.arFaceOverlayView.enableComicOnomatopoeia) {
+                    viewBinding.arFaceOverlayView.enableComicOnomatopoeia = false
+                }
+                if (viewBinding.arFaceOverlayView.enableComicSpeechBubble) {
+                    viewBinding.arFaceOverlayView.enableComicSpeechBubble = false
+                }
+                viewBinding.arFaceOverlayView.clear()
+            }
+            if (policy.disableMultiCamPip && isMultiCamPipEnabled && recording == null) {
+                savedPipBeforeEco = true
+                setMultiCamPipEnabled(false)
+            } else if (!isPanoramaCapturing && !isNightStacking && recording == null) {
+                bindCameraUseCases()
+            }
+            showHudNotice(
+                "${tierLabel} (${policy.batteryPercent}%): ImageAnalysis ${policy.targetAnalysisFps} FPS · AR OFF",
+                isWarning = true
+            )
+        } else {
+            val restoreLens = savedArLensBeforeEco
+            savedArLensBeforeEco = null
+            val thermalBlocksAr = ::thermalGuardManager.isInitialized && thermalGuardManager.isArDisabled
+            if (!thermalBlocksAr && !restoreLens.isNullOrBlank() && restoreLens != "none") {
+                setArLens(restoreLens, showNotice = false)
+            }
+            val restorePip = savedPipBeforeEco
+            savedPipBeforeEco = false
+            val thermalBlocksPip = ::thermalGuardManager.isInitialized && thermalGuardManager.isMultiCamDisabled
+            if (!thermalBlocksPip && restorePip && recording == null) {
+                setMultiCamPipEnabled(true)
+            } else if (!isPanoramaCapturing && !isNightStacking && recording == null) {
+                bindCameraUseCases()
+            }
+            showHudNotice("POWER RESTORED (${policy.batteryPercent}%): Full ImageAnalysis & AR Active")
+        }
+    }
+
+    private fun applyThermalPolicy(policy: ThermalGuardManager.ThermalPolicy) {
+        val throttled = policy.tier.severityRank >= ThermalGuardManager.ThermalTier.MODERATE.severityRank
+        val capLabel = when (policy.tier) {
+            ThermalGuardManager.ThermalTier.EMERGENCY -> "720p/SD"
+            ThermalGuardManager.ThermalTier.CRITICAL -> "720p/HD"
+            ThermalGuardManager.ThermalTier.SEVERE -> "1080p/FHD"
+            ThermalGuardManager.ThermalTier.MODERATE -> "LITE AI"
+            ThermalGuardManager.ThermalTier.NOMINAL -> "FULL"
+        }
+        viewBinding.proOverlayView.updateThermalStatus(
+            throttled = throttled,
+            tierLabel = policy.statusLabel,
+            fpsCap = policy.targetAnalysisFps,
+            captureCapLabel = capLabel
+        )
+
+        val prevTier = lastAppliedThermalTier
+        lastAppliedThermalTier = policy.tier
+        if (policy.tier == prevTier) return
+
+        if (throttled) {
+            if (policy.disableHeavyAr) {
+                if (currentArLensName != "none") {
+                    savedArLensBeforeThermal = currentArLensName
+                    setArLens("none", showNotice = false)
+                }
+                if (viewBinding.arFaceOverlayView.enableComicOnomatopoeia) {
+                    viewBinding.arFaceOverlayView.enableComicOnomatopoeia = false
+                }
+                if (viewBinding.arFaceOverlayView.enableComicSpeechBubble) {
+                    viewBinding.arFaceOverlayView.enableComicSpeechBubble = false
+                }
+                viewBinding.arFaceOverlayView.clear()
+            }
+            if (policy.disableMultiCamPip && isMultiCamPipEnabled && recording == null) {
+                savedPipBeforeThermal = true
+                setMultiCamPipEnabled(false)
+            } else if (!isPanoramaCapturing && !isNightStacking && recording == null) {
+                bindCameraUseCases()
+            }
+            showHudNotice(
+                "THERMAL ${policy.statusLabel}: Analysis ${policy.targetAnalysisFps} FPS · Capture ${capLabel}",
+                isWarning = true
+            )
+        } else {
+            val ecoBlocksAr = ::ecoPowerManager.isInitialized && ecoPowerManager.isArDisabled
+            val restoreLens = savedArLensBeforeThermal
+            savedArLensBeforeThermal = null
+            if (!ecoBlocksAr && !restoreLens.isNullOrBlank() && restoreLens != "none") {
+                setArLens(restoreLens, showNotice = false)
+            }
+            val ecoBlocksPip = ::ecoPowerManager.isInitialized && ecoPowerManager.currentPolicy.disableMultiCamPip
+            val restorePip = savedPipBeforeThermal
+            savedPipBeforeThermal = false
+            if (!ecoBlocksPip && restorePip && recording == null) {
+                setMultiCamPipEnabled(true)
+            } else if (!isPanoramaCapturing && !isNightStacking && recording == null) {
+                bindCameraUseCases()
+            }
+            showHudNotice("THERMAL NOMINAL: Full CameraX Analysis & Capture Resolution Restored")
+        }
     }
 
     enum class ShelfCategory { GRIDS, EXPOSURE, OPTICS, AUDIO }
@@ -339,15 +731,17 @@ class MainActivity : AppCompatActivity() {
         "cel_shaded_studio", "graphic_novel_noir", "manga_ink", "pop_art_print",
         "line_art_minimalist", "ligne_claire", "clay_vinyl_3d"
     )
-    private val filterPresetOrder = listOf(
+    private val filterPresetOrder = mutableListOf(
         "normal",
         "lut_rec709", "lut_flat_log", "lut_teal_orange", "lut_bleach_bypass",
         "lut_anamorphic_cyan", "lut_matte_cinema", "lut_midnight_neon", "lut_warm_documentary", "lut_noir_cinema",
         "golden_nostalgia", "velvia_landscape", "nordic_slate", "arctic_mist",
         "classic_mono", "high_contrast_noir", "ilford_grain", "silver_gelatin", "antique_sepia",
+        "portra_400", "fuji_400h", "teal_orange", "noir_contrast", "sunset_warmth",
+        "matrix_code", "pastel_dream", "nordic_blue", "super8_vintage",
         "cinematic", "vintage", "bw", "cyberpunk", "hdr", "comic_book"
     )
-    private val arLensOrder = listOf(
+    private val arLensOrder = mutableListOf(
         "none", "mesh_contour", "cyberpunk_visor", "golden_crown", "scifi_hud", "comic_frame"
     )
     private val toonStyleOrder = listOf(
@@ -368,7 +762,7 @@ class MainActivity : AppCompatActivity() {
     )
     private val videoOnlyEffectIds = setOf(
         "video_bokeh", "slow_motion_120_240", "time_lapse", "hyperlapse",
-        "anamorphic_flare", "dolly_zoom", "motion_blur", "action_stabilization",
+        "anamorphic_flare", "dolly_zoom", "action_stabilization",
         "vintage_super8", "super8_film", "film_16mm", "vhs_tape", "crt_monitor", "stop_motion"
     )
     private var isLastActionCreative = false
@@ -386,29 +780,29 @@ class MainActivity : AppCompatActivity() {
         viewBinding.btnGallery.setOnClickListener { openAppMediaGallery() }
         updateGalleryThumbnail()
 
-        // Mode Switcher: 5-Slot Infinite Rotating Carousel (Stationary center highlighter, endless rotation)
+        // Mode Switcher: Rotating Carousel (Stationary center highlighter, endless rotation)
         viewBinding.tabSlotFarLeft.setOnClickListener {
-            if (recording == null) {
+            if (recording == null && !isPanoramaCapturing) {
                 val curIdx = allCameraModes.indexOf(cameraMode)
-                setMode(allCameraModes[(curIdx - 2 + 50) % 5], slideDirection = -1)
+                setMode(allCameraModes[(curIdx - 2 + allCameraModes.size * 10) % allCameraModes.size], slideDirection = -1)
             }
         }
         viewBinding.tabSlotLeft.setOnClickListener {
-            if (recording == null) {
+            if (recording == null && !isPanoramaCapturing) {
                 val curIdx = allCameraModes.indexOf(cameraMode)
-                setMode(allCameraModes[(curIdx - 1 + 50) % 5], slideDirection = -1)
+                setMode(allCameraModes[(curIdx - 1 + allCameraModes.size * 10) % allCameraModes.size], slideDirection = -1)
             }
         }
         viewBinding.tabSlotRight.setOnClickListener {
-            if (recording == null) {
+            if (recording == null && !isPanoramaCapturing) {
                 val curIdx = allCameraModes.indexOf(cameraMode)
-                setMode(allCameraModes[(curIdx + 1) % 5], slideDirection = 1)
+                setMode(allCameraModes[(curIdx + 1) % allCameraModes.size], slideDirection = 1)
             }
         }
         viewBinding.tabSlotFarRight.setOnClickListener {
-            if (recording == null) {
+            if (recording == null && !isPanoramaCapturing) {
                 val curIdx = allCameraModes.indexOf(cameraMode)
-                setMode(allCameraModes[(curIdx + 2) % 5], slideDirection = 1)
+                setMode(allCameraModes[(curIdx + 2) % allCameraModes.size], slideDirection = 1)
             }
         }
         viewBinding.tabSlotCenter.setOnClickListener {
@@ -419,6 +813,7 @@ class MainActivity : AppCompatActivity() {
         viewBinding.tabPhoto.setOnClickListener { setMode(CameraMode.PHOTO) }
         viewBinding.tabPortrait.setOnClickListener { setMode(CameraMode.PORTRAIT) }
         viewBinding.tabNight.setOnClickListener { setMode(CameraMode.NIGHT) }
+        viewBinding.tabPanorama.setOnClickListener { setMode(CameraMode.PANORAMA) }
 
         // Video Pause/Resume Button
         viewBinding.btnPauseResume.setOnClickListener { toggleVideoPauseResume() }
@@ -544,6 +939,15 @@ class MainActivity : AppCompatActivity() {
         viewBinding.btnFilterCyber.setOnClickListener { setFilterPreset("cyberpunk") }
         viewBinding.btnFilterHDR.setOnClickListener { setFilterPreset("hdr") }
         viewBinding.btnFilterComicBook.setOnClickListener { setFilterPreset("comic_book") }
+        viewBinding.btnFilterPortra400.setOnClickListener { setFilterPreset("portra_400") }
+        viewBinding.btnFilterFuji400h.setOnClickListener { setFilterPreset("fuji_400h") }
+        viewBinding.btnFilterTealOrange.setOnClickListener { setFilterPreset("teal_orange") }
+        viewBinding.btnFilterNoirContrast.setOnClickListener { setFilterPreset("noir_contrast") }
+        viewBinding.btnFilterSunsetWarmth.setOnClickListener { setFilterPreset("sunset_warmth") }
+        viewBinding.btnFilterMatrixCode.setOnClickListener { setFilterPreset("matrix_code") }
+        viewBinding.btnFilterPastelDream.setOnClickListener { setFilterPreset("pastel_dream") }
+        viewBinding.btnFilterNordicBlue.setOnClickListener { setFilterPreset("nordic_blue") }
+        viewBinding.btnFilterSuper8Vintage.setOnClickListener { setFilterPreset("super8_vintage") }
 
         viewBinding.btnArNone.setOnClickListener { setArLens("none") }
         viewBinding.btnArMesh.setOnClickListener { setArLens("mesh_contour") }
@@ -552,6 +956,9 @@ class MainActivity : AppCompatActivity() {
         viewBinding.btnArHud.setOnClickListener { setArLens("scifi_hud") }
         viewBinding.btnArComicFrame.setOnClickListener { setArLens("comic_frame") }
         viewBinding.btnArComicOnomatopoeia.setOnClickListener { toggleComicOnomatopoeia() }
+        viewBinding.btnArTextStudio.setOnClickListener { showArTextStudioDialog() }
+        viewBinding.btnArCalibrate.setOnClickListener { toggleArCalibrationDrawer() }
+        viewBinding.btnArBatch.setOnClickListener { toggleArBatchMode() }
 
         viewBinding.btnEffectOff.setOnClickListener { setShootingEffect("none") }
         viewBinding.btnArtOff.setOnClickListener { setShootingEffect("none") }
@@ -731,8 +1138,15 @@ class MainActivity : AppCompatActivity() {
             updateAudioMuteUI()
         }
         viewBinding.switchMultiCamPip.setOnCheckedChangeListener { _, isChecked ->
-            // silent (no popup)
-            updateActiveInstrumentsCount()
+            if (isUpdatingPipSwitch) return@setOnCheckedChangeListener
+            if (recording != null) {
+                isUpdatingPipSwitch = true
+                viewBinding.switchMultiCamPip.isChecked = isMultiCamPipEnabled
+                isUpdatingPipSwitch = false
+                Toast.makeText(this, "Stop video recording before changing Multi-Cam PiP", Toast.LENGTH_SHORT).show()
+                return@setOnCheckedChangeListener
+            }
+            setMultiCamPipEnabled(isChecked)
         }
 
         // Quick Viewfinder Zoom Pills
@@ -775,58 +1189,208 @@ class MainActivity : AppCompatActivity() {
         }, ContextCompat.getMainExecutor(this))
     }
 
+    private fun setupPipInteractions() {
+        viewBinding.btnPipSwap.setOnClickListener {
+            switchCamera()
+        }
+        var dX = 0f
+        var dY = 0f
+        var moved = false
+        viewBinding.pipCardContainer.setOnTouchListener { v, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    dX = v.x - event.rawX
+                    dY = v.y - event.rawY
+                    pipLastActionDownX = event.rawX
+                    pipLastActionDownY = event.rawY
+                    moved = false
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val dist = Math.hypot(
+                        (event.rawX - pipLastActionDownX).toDouble(),
+                        (event.rawY - pipLastActionDownY).toDouble()
+                    )
+                    if (dist > 10.0) {
+                        moved = true
+                        val parentW = (viewBinding.viewFinder.width.takeIf { it > 0 } ?: 1080).toFloat()
+                        val parentH = (viewBinding.viewFinder.height.takeIf { it > 0 } ?: 1920).toFloat()
+                        val targetX = (event.rawX + dX).coerceIn(12f, (parentW - v.width - 12f).coerceAtLeast(12f))
+                        val targetY = (event.rawY + dY).coerceIn(110f, (parentH - v.height - 160f).coerceAtLeast(110f))
+                        v.x = targetX
+                        v.y = targetY
+                    }
+                    true
+                }
+                MotionEvent.ACTION_UP -> {
+                    if (!moved) {
+                        switchCamera()
+                    }
+                    true
+                }
+                else -> false
+            }
+        }
+    }
+
+    private fun findConcurrentFrontBackPair(provider: ProcessCameraProvider): Pair<CameraSelector, CameraSelector>? {
+        return try {
+            val pairs = provider.availableConcurrentCameraInfos
+            for (pair in pairs) {
+                val hasBack = CameraSelector.DEFAULT_BACK_CAMERA.filter(pair).isNotEmpty()
+                val hasFront = CameraSelector.DEFAULT_FRONT_CAMERA.filter(pair).isNotEmpty()
+                if (hasBack && hasFront) {
+                    return if (lensFacing == CameraSelector.DEFAULT_BACK_CAMERA) {
+                        Pair(CameraSelector.DEFAULT_BACK_CAMERA, CameraSelector.DEFAULT_FRONT_CAMERA)
+                    } else {
+                        Pair(CameraSelector.DEFAULT_FRONT_CAMERA, CameraSelector.DEFAULT_BACK_CAMERA)
+                    }
+                }
+            }
+            null
+        } catch (t: Throwable) {
+            Log.w(TAG, "ConcurrentCamera capability check failed", t)
+            null
+        }
+    }
+
+    private fun updatePipOverlayVisibility() {
+        val showPip = isMultiCamPipEnabled && !viewBinding.proOverlayView.isCleanScreen
+        viewBinding.pipCardContainer.visibility = if (showPip) View.VISIBLE else View.GONE
+        val secondaryIsFront = (lensFacing == CameraSelector.DEFAULT_BACK_CAMERA)
+        viewBinding.tvPipBadge.text = if (secondaryIsFront) "PIP · FRONT" else "PIP · REAR"
+        if (!isMultiCamPipEnabled) {
+            viewBinding.tvMultiCamPipStatus.text = "Live concurrent dual-camera PiP director view"
+        } else {
+            viewBinding.tvMultiCamPipStatus.text = if (secondaryIsFront) {
+                "Dual-Cam active: Rear main + Front PiP"
+            } else {
+                "Dual-Cam active: Front main + Rear PiP"
+            }
+        }
+    }
+
+    private fun setMultiCamPipEnabled(enabled: Boolean) {
+        isMultiCamPipEnabled = enabled
+        updatePipOverlayVisibility()
+        updateActiveInstrumentsCount()
+        bindCameraUseCases()
+    }
+
+    private fun handleConcurrentUnsupportedFallback(reason: String) {
+        isMultiCamPipEnabled = false
+        concurrentCamera = null
+        isUpdatingPipSwitch = true
+        viewBinding.switchMultiCamPip.isChecked = false
+        isUpdatingPipSwitch = false
+        viewBinding.pipCardContainer.visibility = View.GONE
+        viewBinding.tvMultiCamPipStatus.text = "Unsupported on device HAL — single camera active"
+        updateActiveInstrumentsCount()
+        Toast.makeText(this, reason, Toast.LENGTH_LONG).show()
+    }
+
     /**
-     * Bind Preview, ImageCapture, and VideoCapture to current lifecycle
+     * Bind Preview, ImageCapture, VideoCapture & ImageAnalysis (or ConcurrentCamera PiP) to current lifecycle
      */
     private fun bindCameraUseCases() {
         val cameraProvider = cameraProvider ?: return
+        faceMeshHelper?.setFrontFacing(lensFacing == CameraSelector.DEFAULT_FRONT_CAMERA)
 
         // Preview Use Case
         val preview = Preview.Builder().build().also {
             it.setSurfaceProvider(viewBinding.viewFinder.surfaceProvider)
         }
 
-        // ImageCapture Use Case (Force MAXIMIZE_QUALITY in NIGHT mode for full multi-frame ISP capture)
-        val desiredCaptureMode = if (cameraMode == CameraMode.NIGHT) {
+        // ImageCapture Use Case (Scales capture mode & resolution under critical thermal conditions)
+        val rawCaptureMode = if (cameraMode == CameraMode.NIGHT) {
             ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY
         } else {
             ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY
         }
-        imageCapture = ImageCapture.Builder()
+        val desiredCaptureMode = if (::thermalGuardManager.isInitialized) {
+            thermalGuardManager.effectiveCaptureMode(rawCaptureMode)
+        } else {
+            rawCaptureMode
+        }
+        val imageCaptureBuilder = ImageCapture.Builder()
             .setCaptureMode(desiredCaptureMode)
             .setFlashMode(flashMode)
-            .build()
+        if (::thermalGuardManager.isInitialized) {
+            thermalGuardManager.currentPolicy.maxImageCaptureResolution?.let { capRes ->
+                imageCaptureBuilder.setTargetResolution(capRes)
+            }
+        }
+        imageCapture = imageCaptureBuilder.build()
 
-        // VideoCapture Use Case with Recorder
+        // VideoCapture Use Case with Dynamic + Thermally Capped Quality Selector
+        val requestedQuality = resolveVideoQuality()
+        val selectedQuality = if (::thermalGuardManager.isInitialized) {
+            thermalGuardManager.constrainVideoQuality(requestedQuality)
+        } else {
+            requestedQuality
+        }
         val recorder = Recorder.Builder()
             .setQualitySelector(
                 QualitySelector.from(
-                    Quality.HD,
-                    FallbackStrategy.lowerQualityOrHigherThan(Quality.HD)
+                    selectedQuality,
+                    FallbackStrategy.lowerQualityOrHigherThan(selectedQuality)
                 )
             )
             .build()
         videoCapture = VideoCapture.withOutput(recorder)
 
-        // Real-Time Frame Analysis Engine: Live Histogram, Zebra Overexposure, Waveform & Vector Scope
+        // Real-Time Frame Analysis Engine: Live Histogram (Luma & RGB), Zebra Overexposure, Focus Peaking, Waveform & Vector Scope
         // Golden Rule: All pixel math is executed asynchronously on background cameraExecutor thread.
         val histoBins = IntArray(256)
+        val histoBinsR = IntArray(256)
+        val histoBinsG = IntArray(256)
+        val histoBinsB = IntArray(256)
         val overexposedList = ArrayList<Float>()
         val wfColsArray = FloatArray(36 * 2) // Pre-allocated [minIre, maxIre] pairs
         val vsPointsArray = FloatArray(48 * 2) // Pre-allocated [normCb, normCr] pairs
+        val fpPointsArray = FloatArray(180 * 2) // Pre-allocated focus peaking edge [normX, normY] pairs
 
+        val ecoTargetRes = if (::ecoPowerManager.isInitialized) {
+            ecoPowerManager.currentPolicy.targetAnalysisResolution
+        } else {
+            android.util.Size(640, 480)
+        }
+        val thermalTargetRes = if (::thermalGuardManager.isInitialized) {
+            thermalGuardManager.currentPolicy.targetAnalysisResolution
+        } else {
+            android.util.Size(640, 480)
+        }
+        val effectiveAnalysisRes = android.util.Size(
+            Math.min(ecoTargetRes.width, thermalTargetRes.width),
+            Math.min(ecoTargetRes.height, thermalTargetRes.height)
+        )
         imageAnalysis = ImageAnalysis.Builder()
+            .setTargetResolution(effectiveAnalysisRes)
             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
             .build()
             .also {
                 it.setAnalyzer(cameraExecutor) { imageProxy ->
-                    if (!viewBinding.proOverlayView.isCleanScreen && (
+                    if (::ecoPowerManager.isInitialized && !ecoPowerManager.shouldProcessAnalysisFrame()) {
+                        imageProxy.close()
+                        return@setAnalyzer
+                    }
+                    if (::thermalGuardManager.isInitialized && !thermalGuardManager.shouldProcessAnalysisFrame()) {
+                        imageProxy.close()
+                        return@setAnalyzer
+                    }
+                    val ecoMetersDisabled = ::ecoPowerManager.isInitialized && ecoPowerManager.isHeavyMetersDisabled
+                    val thermalComplexityReduced = ::thermalGuardManager.isInitialized && thermalGuardManager.shouldReduceComplexity
+                    val needsLumaMeters = !ecoMetersDisabled && !thermalComplexityReduced && !viewBinding.proOverlayView.isCleanScreen && (
                         viewBinding.proOverlayView.showHistogram ||
                         viewBinding.proOverlayView.showZebraStripes ||
                         viewBinding.proOverlayView.showVisualBalance ||
                         viewBinding.proOverlayView.showWaveform ||
-                        viewBinding.proOverlayView.showVectorScope
-                    )) {
+                        viewBinding.proOverlayView.showVectorScope ||
+                        viewBinding.proOverlayView.showFocusPeaking
+                    )
+                    val needsMotionBlurAnalysis = !thermalComplexityReduced && (currentShootingEffect == "motion_blur")
+
+                    if (needsLumaMeters) {
                         try {
                             val plane = imageProxy.planes[0]
                             val buffer = plane.buffer
@@ -942,6 +1506,67 @@ class MainActivity : AppCompatActivity() {
                                 }
                             }
                             
+                            // 4. Asynchronous RGB 256-Bin Histogram & Focus Peaking Gradient Analysis
+                            if (viewBinding.proOverlayView.showHistogram && viewBinding.proOverlayView.histogramRgbMode && imageProxy.planes.size >= 3) {
+                                histoBinsR.fill(0)
+                                histoBinsG.fill(0)
+                                histoBinsB.fill(0)
+                                val uP = imageProxy.planes[1]
+                                val vP = imageProxy.planes[2]
+                                val uB = uP.buffer
+                                val vB = vP.buffer
+                                val rgbStep = step * 2
+                                for (y in 0 until height step rgbStep) {
+                                    val yRow = y * rowStride
+                                    val uRow = (y / 2) * uP.rowStride
+                                    val vRow = (y / 2) * vP.rowStride
+                                    for (x in 0 until width step rgbStep) {
+                                        val yi = yRow + x * pixelStride
+                                        val ui = uRow + (x / 2) * uP.pixelStride
+                                        val vi = vRow + (x / 2) * vP.pixelStride
+                                        if (yi < buffer.limit() && ui < uB.limit() && vi < vB.limit()) {
+                                            val yv = buffer.get(yi).toInt() and 0xFF
+                                            val uv = (uB.get(ui).toInt() and 0xFF) - 128
+                                            val vv = (vB.get(vi).toInt() and 0xFF) - 128
+                                            val r = (yv + (1.370705f * vv)).toInt().coerceIn(0, 255)
+                                            val g = (yv - (0.337633f * uv) - (0.698001f * vv)).toInt().coerceIn(0, 255)
+                                            val b = (yv + (1.732446f * uv)).toInt().coerceIn(0, 255)
+                                            histoBinsR[r]++
+                                            histoBinsG[g]++
+                                            histoBinsB[b]++
+                                        }
+                                    }
+                                }
+                            }
+
+                            var fpCount = 0
+                            if (viewBinding.proOverlayView.showFocusPeaking && width > 8 && height > 8) {
+                                val fpStepX = Math.max(4, width / 28)
+                                val fpStepY = Math.max(4, height / 22)
+                                for (y in 2 until (height - 2) step fpStepY) {
+                                    if (fpCount >= 180) break
+                                    val rowC = y * rowStride
+                                    val rowUp = (y - 2) * rowStride
+                                    val rowDn = (y + 2) * rowStride
+                                    for (x in 2 until (width - 2) step fpStepX) {
+                                        if (fpCount >= 180) break
+                                        val iL = rowC + (x - 2) * pixelStride
+                                        val iR = rowC + (x + 2) * pixelStride
+                                        val iU = rowUp + x * pixelStride
+                                        val iD = rowDn + x * pixelStride
+                                        if (iR < buffer.limit() && iD < buffer.limit()) {
+                                            val gx = Math.abs((buffer.get(iR).toInt() and 0xFF) - (buffer.get(iL).toInt() and 0xFF))
+                                            val gy = Math.abs((buffer.get(iD).toInt() and 0xFF) - (buffer.get(iU).toInt() and 0xFF))
+                                            if (gx + gy >= 56) {
+                                                fpPointsArray[fpCount * 2] = x.toFloat() / width.toFloat()
+                                                fpPointsArray[fpCount * 2 + 1] = y.toFloat() / height.toFloat()
+                                                fpCount++
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
                             val balanceX = if (totalWeight > 0f) (sumWeightX / totalWeight) / width.toFloat() else 0.5f
                             val balanceY = if (totalWeight > 0f) (sumWeightY / totalWeight) / height.toFloat() else 0.5f
                             val overexposedArray = overexposedList.toFloatArray()
@@ -949,6 +1574,12 @@ class MainActivity : AppCompatActivity() {
                             // Pass ONLY finalized arrays back to UI thread for instant 60fps rendering without pixel loops
                             runOnUiThread {
                                 viewBinding.proOverlayView.updateLuminanceAnalysis(histoBins, overexposedArray, balanceX, balanceY)
+                                if (viewBinding.proOverlayView.showHistogram && viewBinding.proOverlayView.histogramRgbMode) {
+                                    viewBinding.proOverlayView.updateRgbHistogramAnalysis(histoBinsR, histoBinsG, histoBinsB)
+                                }
+                                if (viewBinding.proOverlayView.showFocusPeaking) {
+                                    viewBinding.proOverlayView.updateFocusPeakingAnalysis(fpPointsArray, fpCount)
+                                }
                                 if (viewBinding.proOverlayView.showWaveform) {
                                     viewBinding.proOverlayView.updateWaveformAnalysis(wfColsArray, peakIre, overexposedCols)
                                 }
@@ -961,82 +1592,299 @@ class MainActivity : AppCompatActivity() {
                         }
                     }
 
-                    // 4. Built-in Real-Time FaceDetector Tracking for AR Lenses (no external asset required)
-                    analysisFrameCounter++
-                    if ((viewBinding.arFaceOverlayView.currentLens != ARFaceOverlayView.ArLensMode.NONE &&
-                            viewBinding.arFaceOverlayView.currentLens != ARFaceOverlayView.ArLensMode.COMIC_FRAME ||
-                            viewBinding.arFaceOverlayView.enableComicOnomatopoeia ||
-                            viewBinding.arFaceOverlayView.enableComicSpeechBubble) &&
-                        analysisFrameCounter % 3 == 0
-                    ) {
+                    // Motion Blur Simulation: CameraX ImageAnalysis Y-plane temporal motion detection
+                    if (needsMotionBlurAnalysis) {
                         try {
-                            val plane = imageProxy.planes[0]
-                            val buffer = plane.buffer
-                            val srcW = imageProxy.width
-                            val srcH = imageProxy.height
-                            val rowStride = plane.rowStride
-                            val pixelStride = plane.pixelStride
-                            val rot = imageProxy.imageInfo.rotationDegrees
+                            val motionMetrics = motionBlurProcessor.analyzeYPlaneMotion(
+                                imageProxy = imageProxy,
+                                isFrontFacing = (lensFacing == CameraSelector.DEFAULT_FRONT_CAMERA)
+                            )
+                            latestMotionMetrics = motionMetrics
+                            openGLProcessor?.setMotionBlurVector(
+                                motionMetrics.dirX,
+                                motionMetrics.dirY,
+                                motionMetrics.magnitude
+                            )
+                            runOnUiThread {
+                                viewBinding.proOverlayView.updateMotionBlurTelemetry(
+                                    magnitude = motionMetrics.magnitude,
+                                    dirX = motionMetrics.dirX,
+                                    dirY = motionMetrics.dirY,
+                                    shutterLabel = motionMetrics.simulatedShutterLabel
+                                )
+                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Motion blur frame analysis error", e)
+                        }
+                    }
 
-                            val step = Math.max(2, Math.min(srcW, srcH) / 140)
-                            val rotSideways = rot == 90 || rot == 270
-                            val rawOutW = if (rotSideways) (srcH / step) else (srcW / step)
-                            val outW = (rawOutW and 1.inv()).coerceAtLeast(16)
-                            val outH = (if (rotSideways) (srcW / step) else (srcH / step)).coerceAtLeast(16)
+                    // Automated Panorama Sequence: CameraX ImageAnalysis Overlap Detection, Stitch Alignment & Guidance Arrows
+                    if (cameraMode == CameraMode.PANORAMA && isPanoramaCapturing && !isPanoramaStitching) {
+                        try {
+                            val isFront = (lensFacing == CameraSelector.DEFAULT_FRONT_CAMERA)
+                            val deltaYaw = normalizeAngleDelta(panoramaStartYawDeg, latestUprightYawDeg)
+                            val pitchDrift = latestUprightPitchDeg - panoramaStartPitchDeg
+                            val align = panoramaStitcher.analyzeFrame(
+                                imageProxy = imageProxy,
+                                isFrontFacing = isFront,
+                                gyroDeltaYawDeg = deltaYaw,
+                                gyroPitchDriftDeg = pitchDrift
+                            )
+                            panoramaDirection = align.panDirection
 
-                            val pixels = IntArray(outW * outH)
-                            for (oy in 0 until outH) {
-                                for (ox in 0 until outW) {
-                                    val sx: Int
-                                    val sy: Int
-                                    when (rot) {
-                                        90 -> {
-                                            sx = (oy * step).coerceIn(0, srcW - 1)
-                                            sy = ((srcH - 1) - (ox * step)).coerceIn(0, srcH - 1)
-                                        }
-                                        180 -> {
-                                            sx = ((srcW - 1) - (ox * step)).coerceIn(0, srcW - 1)
-                                            sy = ((srcH - 1) - (oy * step)).coerceIn(0, srcH - 1)
-                                        }
-                                        270 -> {
-                                            sx = ((srcW - 1) - (oy * step)).coerceIn(0, srcW - 1)
-                                            sy = (ox * step).coerceIn(0, srcH - 1)
-                                        }
-                                        else -> {
-                                            sx = (ox * step).coerceIn(0, srcW - 1)
-                                            sy = (oy * step).coerceIn(0, srcH - 1)
+                            var newCount = align.sliceCount
+                            var didAutoCapture = false
+                            if (align.shouldTriggerAutoCapture) {
+                                val sliceBmp = panoramaStitcher.imageProxyToBitmap(imageProxy, isFront, 960)
+                                if (sliceBmp != null) {
+                                    val filtered = try {
+                                        val f = filterManager.applyFilterToBitmap(sliceBmp)
+                                        if (f != sliceBmp && !sliceBmp.isRecycled) sliceBmp.recycle()
+                                        f
+                                    } catch (_: Throwable) {
+                                        sliceBmp
+                                    }
+                                    panoramaStitcher.lockCurrentFrameAsAnchor(deltaYaw, Math.abs(align.dxNorm))
+                                    synchronized(panoramaLock) {
+                                        if (isPanoramaCapturing) {
+                                            panoramaSlices.add(
+                                                PanoramaStitcher.PanoramaSlice(
+                                                    bitmap = filtered,
+                                                    stepDxNorm = align.dxNorm,
+                                                    stepDyNorm = align.dyNorm,
+                                                    overlapRatio = align.overlapRatio,
+                                                    deltaYawDeg = deltaYaw,
+                                                    pitchDriftDeg = pitchDrift
+                                                )
+                                            )
+                                            newCount = panoramaSlices.size
+                                            didAutoCapture = true
+                                        } else if (!filtered.isRecycled) {
+                                            filtered.recycle()
                                         }
                                     }
-                                    val idx = sy * rowStride + sx * pixelStride
-                                    val yVal = if (idx in 0 until buffer.limit()) (buffer.get(idx).toInt() and 0xFF) else 128
-                                    pixels[oy * outW + ox] = (0xFF shl 24) or (yVal shl 16) or (yVal shl 8) or yVal
                                 }
                             }
 
-                            val faceBmp = Bitmap.createBitmap(outW, outH, Bitmap.Config.RGB_565)
-                            faceBmp.setPixels(pixels, 0, outW, 0, 0, outW, outH)
-                            val faces = arrayOfNulls<FaceDetector.Face>(1)
-                            val count = FaceDetector(outW, outH, 1).findFaces(faceBmp, faces)
-                            if (count > 0 && faces[0] != null) {
-                                val mid = PointF()
-                                faces[0]!!.getMidPoint(mid)
-                                val eyeDist = faces[0]!!.eyesDistance()
-                                viewBinding.arFaceOverlayView.updateSimpleFace(
-                                    normEyeBridgeX = (mid.x / outW.toFloat()).coerceIn(0.05f, 0.95f),
-                                    normEyeBridgeY = (mid.y / outH.toFloat()).coerceIn(0.05f, 0.95f),
-                                    normEyeDist = (eyeDist / outW.toFloat()).coerceIn(0.06f, 0.55f),
-                                    isFrontFacing = lensFacing == CameraSelector.DEFAULT_FRONT_CAMERA
+                            val overlapPct = (align.overlapRatio * 100f).toInt().coerceIn(0, 100)
+                            val uiGuidance = if (didAutoCapture) "AUTO_CAPTURED" else align.guidance.name
+                            val shouldFinishNow = align.shouldAutoFinish || newCount >= 14
+
+                            runOnUiThread {
+                                if (!isPanoramaCapturing) return@runOnUiThread
+                                viewBinding.proOverlayView.updatePanoramaAnalysis(
+                                    guidance = uiGuidance,
+                                    progress = align.estimatedProgress,
+                                    overlapPct = overlapPct,
+                                    dxNorm = align.dxNorm,
+                                    dyNorm = align.dyNorm,
+                                    confidence = align.confidence,
+                                    yawDeg = deltaYaw,
+                                    pitchDriftDeg = pitchDrift,
+                                    sliceCount = newCount,
+                                    direction = align.panDirection
+                                )
+                                if (didAutoCapture) {
+                                    viewBinding.chronometer.text = "${newCount}/14 F · ${overlapPct}%"
+                                    playCameraCue(ToneGenerator.TONE_PROP_BEEP, 30)
+                                }
+                                if (shouldFinishNow) {
+                                    finishPanoramaCapture()
+                                }
+                            }
+                        } catch (panoErr: Throwable) {
+                            Log.e(TAG, "ImageAnalysis panorama frame error", panoErr)
+                        }
+                    }
+
+                    // Automated Night Mode: CameraX ImageAnalysis Low-Light Detection & Multi-Frame Stack Auto-Trigger
+                    val needsNightDetection = (cameraMode == CameraMode.PHOTO ||
+                        cameraMode == CameraMode.NIGHT ||
+                        currentShootingEffect == "night_sight") &&
+                        recording == null && !isPanoramaCapturing && !isPanoramaStitching
+                    if (needsNightDetection && !isNightStacking) {
+                        try {
+                            val nightInfo = nightExposureStacker.analyzeLowLight(imageProxy)
+                            val showHud = cameraMode == CameraMode.NIGHT ||
+                                currentShootingEffect == "night_sight" ||
+                                nightInfo.isLowLight
+                            runOnUiThread {
+                                viewBinding.proOverlayView.isNightModeHudActive = showHud
+                                viewBinding.proOverlayView.updateNightAnalysis(
+                                    avgLuma = nightInfo.avgLuma,
+                                    darkRatio = nightInfo.darkPixelRatio,
+                                    isLowLight = nightInfo.isLowLight,
+                                    dwellProgress = nightInfo.dwellProgress,
+                                    recommendedFrames = nightInfo.recommendedFrameCount,
+                                    statusLabel = nightInfo.state.name
                                 )
                             }
-                            faceBmp.recycle()
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Face tracking error", e)
+                            if (nightInfo.shouldAutoTriggerStack &&
+                                isAutoNightStackEnabled &&
+                                !isCountingDown &&
+                                !isBurstCapturing &&
+                                !isNightStacking &&
+                                cameraMode != CameraMode.PANORAMA
+                            ) {
+                                nightExposureStacker.markAutoTriggered()
+                                val targetFrames = nightInfo.recommendedFrameCount
+                                runOnUiThread {
+                                    if (!isNightStacking && recording == null && !isPanoramaCapturing) {
+                                        startNightExposureStacking(autoTriggered = true, targetFrameCount = targetFrames)
+                                    }
+                                }
+                            }
+                        } catch (nightErr: Throwable) {
+                            Log.e(TAG, "Low-light ImageAnalysis detection error", nightErr)
+                        }
+                    }
+
+                    // 4. Dual Face Tracking: MediaPipe 468 3D Landmarks with Automatic Built-in FaceDetector Fallback (Disabled in Eco or Critical Thermal Mode)
+                    analysisFrameCounter++
+                    val ecoBlocksAr = ::ecoPowerManager.isInitialized && ecoPowerManager.isArDisabled
+                    val thermalBlocksAr = ::thermalGuardManager.isInitialized && thermalGuardManager.isArDisabled
+                    val needsFaceTracking = !ecoBlocksAr && !thermalBlocksAr && ((viewBinding.arFaceOverlayView.currentLens != ARFaceOverlayView.ArLensMode.NONE &&
+                        viewBinding.arFaceOverlayView.currentLens != ARFaceOverlayView.ArLensMode.COMIC_FRAME) ||
+                        viewBinding.arFaceOverlayView.enableComicOnomatopoeia ||
+                        viewBinding.arFaceOverlayView.enableComicSpeechBubble)
+
+                    if (needsFaceTracking) {
+                        val fm = faceMeshHelper
+                        var handledByMediaPipe = false
+                        if (isMediaPipeSupported && fm != null && fm.isReady && !fm.isFailed && analysisFrameCounter % 2 == 0) {
+                            try {
+                                val rawMpBmp = imageProxy.toBitmap()
+                                val rot = imageProxy.imageInfo.rotationDegrees
+                                val maxDim = Math.max(rawMpBmp.width, rawMpBmp.height).coerceAtLeast(1)
+                                val downScale = if (maxDim > 320) (320f / maxDim.toFloat()) else 1f
+                                val m = Matrix().apply {
+                                    if (downScale < 1f) postScale(downScale, downScale)
+                                    if (rot != 0) postRotate(rot.toFloat())
+                                }
+                                val mpInputBmp = Bitmap.createBitmap(rawMpBmp, 0, 0, rawMpBmp.width, rawMpBmp.height, m, true)
+                                if (mpInputBmp != rawMpBmp) rawMpBmp.recycle()
+                                handledByMediaPipe = fm.analyzeRotatedBitmap(mpInputBmp, 0)
+                            } catch (mpErr: Throwable) {
+                                Log.w(TAG, "MediaPipe frame conversion fallback to FaceDetector", mpErr)
+                                isMediaPipeSupported = false
+                                handledByMediaPipe = false
+                            }
+                        }
+
+                        val mpTimedOut = (System.currentTimeMillis() - lastMediaPipeLandmarkTime) > 1200L
+                        if ((!handledByMediaPipe || mpTimedOut) && analysisFrameCounter % 3 == 0) {
+                            try {
+                                val plane = imageProxy.planes[0]
+                                val buffer = plane.buffer
+                                val srcW = imageProxy.width
+                                val srcH = imageProxy.height
+                                val rowStride = plane.rowStride
+                                val pixelStride = plane.pixelStride
+                                val rot = imageProxy.imageInfo.rotationDegrees
+
+                                val step = Math.max(2, Math.min(srcW, srcH) / 140)
+                                val rotSideways = rot == 90 || rot == 270
+                                val rawOutW = if (rotSideways) (srcH / step) else (srcW / step)
+                                val outW = (rawOutW and 1.inv()).coerceAtLeast(16)
+                                val outH = (if (rotSideways) (srcW / step) else (srcH / step)).coerceAtLeast(16)
+
+                                val pixels = IntArray(outW * outH)
+                                for (oy in 0 until outH) {
+                                    for (ox in 0 until outW) {
+                                        val sx: Int
+                                        val sy: Int
+                                        when (rot) {
+                                            90 -> {
+                                                sx = (oy * step).coerceIn(0, srcW - 1)
+                                                sy = ((srcH - 1) - (ox * step)).coerceIn(0, srcH - 1)
+                                            }
+                                            180 -> {
+                                                sx = ((srcW - 1) - (ox * step)).coerceIn(0, srcW - 1)
+                                                sy = ((srcH - 1) - (oy * step)).coerceIn(0, srcH - 1)
+                                            }
+                                            270 -> {
+                                                sx = ((srcW - 1) - (oy * step)).coerceIn(0, srcW - 1)
+                                                sy = (ox * step).coerceIn(0, srcH - 1)
+                                            }
+                                            else -> {
+                                                sx = (ox * step).coerceIn(0, srcW - 1)
+                                                sy = (oy * step).coerceIn(0, srcH - 1)
+                                            }
+                                        }
+                                        val idx = sy * rowStride + sx * pixelStride
+                                        val yVal = if (idx in 0 until buffer.limit()) (buffer.get(idx).toInt() and 0xFF) else 128
+                                        pixels[oy * outW + ox] = (0xFF shl 24) or (yVal shl 16) or (yVal shl 8) or yVal
+                                    }
+                                }
+
+                                val faceBmp = Bitmap.createBitmap(outW, outH, Bitmap.Config.RGB_565)
+                                faceBmp.setPixels(pixels, 0, outW, 0, 0, outW, outH)
+                                val faces = arrayOfNulls<FaceDetector.Face>(1)
+                                val count = FaceDetector(outW, outH, 1).findFaces(faceBmp, faces)
+                                if (count > 0 && faces[0] != null) {
+                                    val mid = PointF()
+                                    faces[0]!!.getMidPoint(mid)
+                                    val eyeDist = faces[0]!!.eyesDistance()
+                                    viewBinding.arFaceOverlayView.updateSimpleFace(
+                                        normEyeBridgeX = (mid.x / outW.toFloat()).coerceIn(0.05f, 0.95f),
+                                        normEyeBridgeY = (mid.y / outH.toFloat()).coerceIn(0.05f, 0.95f),
+                                        normEyeDist = (eyeDist / outW.toFloat()).coerceIn(0.06f, 0.55f),
+                                        isFrontFacing = lensFacing == CameraSelector.DEFAULT_FRONT_CAMERA
+                                    )
+                                }
+                                faceBmp.recycle()
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Face tracking fallback error", e)
+                            }
                         }
                     }
 
                     imageProxy.close()
                 }
             }
+
+        // Real Multi-Cam PiP (ConcurrentCamera) path with automatic single-camera HAL fallback
+        if (isMultiCamPipEnabled) {
+            val concurrentPair = findConcurrentFrontBackPair(cameraProvider)
+            if (concurrentPair != null) {
+                try {
+                    cameraProvider.unbindAll()
+                    cameraEffect = null
+                    isNightExtensionActive = false
+                    val (primarySelector, secondarySelector) = concurrentPair
+                    val pipPreview = Preview.Builder().build().also {
+                        it.setSurfaceProvider(viewBinding.pipViewFinder.surfaceProvider)
+                    }
+                    val isPhotoType = cameraMode == CameraMode.PHOTO || cameraMode == CameraMode.PORTRAIT || cameraMode == CameraMode.NIGHT || cameraMode == CameraMode.PANORAMA
+                    // CameraX ConcurrentCamera allows max 2 use cases per camera
+                    val primaryUseCaseGroup = UseCaseGroup.Builder()
+                        .addUseCase(preview)
+                        .addUseCase(if (isPhotoType) imageCapture!! else videoCapture!!)
+                        .build()
+                    val secondaryUseCaseGroup = UseCaseGroup.Builder()
+                        .addUseCase(pipPreview)
+                        .build()
+
+                    val primaryConfig = ConcurrentCamera.SingleCameraConfig(primarySelector, primaryUseCaseGroup, this)
+                    val secondaryConfig = ConcurrentCamera.SingleCameraConfig(secondarySelector, secondaryUseCaseGroup, this)
+                    concurrentCamera = cameraProvider.bindToLifecycle(listOf(primaryConfig, secondaryConfig))
+                    camera = concurrentCamera?.cameras?.firstOrNull()
+                    cameraControl = camera?.cameraControl
+                    initExposureRange()
+                    updatePipOverlayVisibility()
+                    viewBinding.viewFinder.post { applyLivePreviewColorMatrix() }
+                    return
+                } catch (ccErr: Throwable) {
+                    Log.w(TAG, "ConcurrentCamera bind failed on device HAL, reverting safely to single camera", ccErr)
+                    handleConcurrentUnsupportedFallback("Dual-Cam PiP rejected by camera HAL — reverted to single camera")
+                }
+            } else {
+                handleConcurrentUnsupportedFallback("Dual-Cam PiP unsupported on this device HAL — single camera active")
+            }
+        }
+
+        concurrentCamera = null
+        updatePipOverlayVisibility()
 
         var activeNightExt = false
         val effectiveSelector = if (cameraMode == CameraMode.NIGHT) {
@@ -1060,7 +1908,7 @@ class MainActivity : AppCompatActivity() {
             cameraProvider.unbindAll()
             cameraEffect = null
 
-            val isPhotoType = cameraMode == CameraMode.PHOTO || cameraMode == CameraMode.PORTRAIT || cameraMode == CameraMode.NIGHT
+            val isPhotoType = cameraMode == CameraMode.PHOTO || cameraMode == CameraMode.PORTRAIT || cameraMode == CameraMode.NIGHT || cameraMode == CameraMode.PANORAMA
             if (isPhotoType) {
                 camera = cameraProvider.bindToLifecycle(this, effectiveSelector, preview, imageCapture!!, imageAnalysis!!)
             } else {
@@ -1072,6 +1920,7 @@ class MainActivity : AppCompatActivity() {
                     viewBinding.proOverlayView.liveSaturationPercent
                 )
                 proc.setNightBoost(cameraMode == CameraMode.NIGHT || currentShootingEffect == "night_sight")
+                syncOverlayToVideoProcessor()
                 var boundWithEffect = false
                 try {
                     val effect = OpenGLSurfaceProcessor.createCameraEffect(proc, proc.getExecutor())
@@ -1104,7 +1953,7 @@ class MainActivity : AppCompatActivity() {
             Log.e(TAG, "Use case binding failed, attempting fallback without analysis", exc)
             try {
                 cameraProvider.unbindAll()
-                val isPhotoType = cameraMode == CameraMode.PHOTO || cameraMode == CameraMode.PORTRAIT || cameraMode == CameraMode.NIGHT
+                val isPhotoType = cameraMode == CameraMode.PHOTO || cameraMode == CameraMode.PORTRAIT || cameraMode == CameraMode.NIGHT || cameraMode == CameraMode.PANORAMA
                 if (isPhotoType) {
                     camera = cameraProvider.bindToLifecycle(this, effectiveSelector, preview, imageCapture!!)
                 } else {
@@ -1138,6 +1987,12 @@ class MainActivity : AppCompatActivity() {
      */
     private fun setupBurstMode() {
         viewBinding.btnCapture.setOnTouchListener { _, event ->
+            if (cameraMode == CameraMode.PANORAMA) {
+                if (event.action == MotionEvent.ACTION_UP) {
+                    togglePanoramaCapture()
+                }
+                return@setOnTouchListener true
+            }
             val isVideoType = cameraMode == CameraMode.VIDEO || cameraMode == CameraMode.SLOW_MO
             if (isVideoType) {
                 // In Video mode, standard click handles start/stop
@@ -1191,12 +2046,175 @@ class MainActivity : AppCompatActivity() {
         burstCount++
         remainingBurstBuffer--
         viewBinding.tvBurstBadge.text = "BURST: $burstCount · REMAINING: ${remainingBurstBuffer}r"
+        playCameraCue(ToneGenerator.TONE_PROP_BEEP, 45)
         takePhoto(isBurst = true)
 
         // Rapid capture every 200ms
         burstHandler.postDelayed({
             startBurstCapturingLoop()
         }, 200)
+    }
+
+    private fun togglePanoramaCapture() {
+        if (isPanoramaStitching) return
+        if (!isPanoramaCapturing) {
+            startPanoramaCapture()
+        } else {
+            finishPanoramaCapture()
+        }
+    }
+
+    private fun startPanoramaCapture() {
+        clearPanoramaSlices()
+        panoramaStitcher.reset()
+        isPanoramaCapturing = true
+        panoramaStartYawDeg = latestUprightYawDeg
+        panoramaStartPitchDeg = latestUprightPitchDeg
+        panoramaDirection = 0
+
+        viewBinding.proOverlayView.isPanoramaCapturing = true
+        viewBinding.proOverlayView.updatePanoramaAnalysis(
+            guidance = "PAN_RIGHT",
+            progress = 0f,
+            overlapPct = 100,
+            dxNorm = 0f,
+            dyNorm = 0f,
+            confidence = 1f,
+            yawDeg = 0f,
+            pitchDriftDeg = 0f,
+            sliceCount = 0,
+            direction = 0
+        )
+        viewBinding.btnCapture.setImageResource(R.drawable.bg_record_button_active)
+        viewBinding.tvRecordingStatus.text = "AUTO PANO"
+        viewBinding.tvRecordingStatus.setTextColor(Color.parseColor("#FACC15"))
+        viewBinding.chronometer.text = "0/14 F · 100%"
+        playCameraCue(ToneGenerator.TONE_PROP_BEEP2, 90)
+        showHudNotice("AUTO PANORAMA · FOLLOW ARROWS TO CAPTURE")
+    }
+
+    private fun cancelPanoramaCapture() {
+        isPanoramaCapturing = false
+        panoramaFallbackRunnable?.let { panoramaFallbackHandler.removeCallbacks(it) }
+        panoramaFallbackRunnable = null
+        panoramaStitcher.reset()
+        viewBinding.proOverlayView.isPanoramaCapturing = false
+        viewBinding.proOverlayView.updatePanoramaAnalysis("READY", 0f, 100, 0f, 0f, 0f, 0f, 0f, 0, 0)
+        clearPanoramaSlices()
+        if (cameraMode == CameraMode.PANORAMA) {
+            viewBinding.btnCapture.setImageResource(R.drawable.bg_shutter_button)
+        }
+    }
+
+    private fun clearPanoramaSlices() {
+        synchronized(panoramaLock) {
+            for (slice in panoramaSlices) {
+                if (!slice.bitmap.isRecycled) slice.bitmap.recycle()
+            }
+            panoramaSlices.clear()
+        }
+    }
+
+    private fun finishPanoramaCapture() {
+        if (!isPanoramaCapturing) return
+        isPanoramaCapturing = false
+        panoramaFallbackRunnable?.let { panoramaFallbackHandler.removeCallbacks(it) }
+        panoramaFallbackRunnable = null
+        viewBinding.proOverlayView.isPanoramaCapturing = false
+        viewBinding.btnCapture.setImageResource(R.drawable.bg_shutter_button)
+
+        val snapshot: List<PanoramaStitcher.PanoramaSlice>
+        synchronized(panoramaLock) {
+            snapshot = ArrayList(panoramaSlices)
+            panoramaSlices.clear()
+        }
+
+        if (snapshot.isEmpty()) return
+        if (snapshot.size == 1) {
+            Toast.makeText(this, "Pan slowly along arrows before stopping (saved anchor frame)", Toast.LENGTH_SHORT).show()
+        }
+
+        isPanoramaStitching = true
+        viewBinding.tvRecordingStatus.text = "STITCH"
+        viewBinding.tvRecordingStatus.setTextColor(Color.parseColor("#38BDF8"))
+        showHudNotice("ALIGNING & STITCHING ${snapshot.size} PANORAMA FRAMES...")
+
+        cameraExecutor.execute {
+            var stitched: Bitmap? = null
+            try {
+                // Delegate pixel-strip alignment refinement & feather Canvas stitching to PanoramaStitcher
+                val cleanPano = panoramaStitcher.stitchSlices(snapshot) ?: return@execute
+                stitched = cleanPano
+
+                // Bake Watermark if active
+                if (viewBinding.proOverlayView.showWatermark && viewBinding.proOverlayView.watermarkText.isNotBlank()) {
+                    val pCanvas = Canvas(cleanPano)
+                    val wmPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                        color = Color.parseColor(injectedFonts.getOrNull(activeFontIndex)?.colorHex ?: "#38BDF8")
+                        textSize = (cleanPano.height * 0.036f).coerceAtLeast(22f)
+                        typeface = resolveFontTypeface(injectedFonts.getOrNull(activeFontIndex))
+                        letterSpacing = 0.08f
+                    }
+                    cameraFontHelper?.drawWatermarkOverlay(
+                        pCanvas,
+                        viewBinding.proOverlayView.watermarkText,
+                        cleanPano.width * 0.025f,
+                        cleanPano.height - cleanPano.height * 0.055f,
+                        wmPaint
+                    )
+                }
+
+                val name = "PANO_" + SimpleDateFormat(FILENAME_FORMAT, Locale.US).format(System.currentTimeMillis())
+                val cv = ContentValues().apply {
+                    put(MediaStore.MediaColumns.DISPLAY_NAME, name)
+                    put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/CameraX-Image")
+                    }
+                }
+                val uri = contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, cv)
+                if (uri != null) {
+                    contentResolver.openOutputStream(uri, "wt")?.use { out ->
+                        cleanPano.compress(Bitmap.CompressFormat.JPEG, 95, out)
+                    }
+                    lastCapturedUri = uri
+                    lastCapturedMimeType = "image/jpeg"
+                    val outW = cleanPano.width
+                    val outH = cleanPano.height
+                    runOnUiThread {
+                        playCameraCue(ToneGenerator.TONE_PROP_BEEP2, 120)
+                        viewBinding.tvRecordingStatus.text = "PANO"
+                        viewBinding.tvRecordingStatus.setTextColor(Color.parseColor("#38BDF8"))
+                        viewBinding.chronometer.text = "AUTO-STITCH"
+                        showHudNotice("Saved Panorama (${outW}×${outH})")
+                        try {
+                            viewBinding.ivGalleryThumbnail.setImageURI(null)
+                            viewBinding.ivGalleryThumbnail.setImageURI(uri)
+                        } catch (_: Exception) {}
+                    }
+                }
+            } catch (t: Throwable) {
+                Log.e(TAG, "Panorama stitch error", t)
+                runOnUiThread {
+                    Toast.makeText(this, "Panorama save failed: ${t.message}", Toast.LENGTH_SHORT).show()
+                }
+            } finally {
+                for (s in snapshot) {
+                    if (!s.bitmap.isRecycled) s.bitmap.recycle()
+                }
+                if (stitched != null && !stitched!!.isRecycled) stitched!!.recycle()
+                panoramaStitcher.reset()
+                isPanoramaStitching = false
+                runOnUiThread {
+                    if (cameraMode == CameraMode.PANORAMA && !isPanoramaCapturing) {
+                        viewBinding.proOverlayView.updatePanoramaAnalysis("READY", 0f, 100, 0f, 0f, 0f, 0f, 0f, 0, 0)
+                        viewBinding.tvRecordingStatus.text = "PANO"
+                        viewBinding.tvRecordingStatus.setTextColor(Color.parseColor("#38BDF8"))
+                        viewBinding.chronometer.text = "AUTO-STITCH"
+                    }
+                }
+            }
+        }
     }
 
     /**
@@ -1220,6 +2238,7 @@ class MainActivity : AppCompatActivity() {
             override fun onTick(millisUntilFinished: Long) {
                 val secRemaining = (millisUntilFinished / 1000) + 1
                 viewBinding.tvCountdown.text = secRemaining.toString()
+                playCameraCue(ToneGenerator.TONE_PROP_BEEP, 75)
                 viewBinding.tvCountdown.animate().scaleX(1.4f).scaleY(1.4f).setDuration(150).withEndAction {
                     viewBinding.tvCountdown.animate().scaleX(1.0f).scaleY(1.0f).setDuration(150).start()
                 }.start()
@@ -1228,6 +2247,7 @@ class MainActivity : AppCompatActivity() {
             override fun onFinish() {
                 viewBinding.tvCountdown.visibility = View.GONE
                 isCountingDown = false
+                playCameraCue(ToneGenerator.TONE_PROP_BEEP2, 120)
                 takePhoto(isBurst = false)
             }
         }.start()
@@ -1667,7 +2687,7 @@ class MainActivity : AppCompatActivity() {
         "neon_edge", "noir_graphic_novel", "thermal_vision",
         "cel_shaded_studio", "graphic_novel_noir", "manga_ink", "pop_art_print",
         "line_art_minimalist", "ligne_claire", "clay_vinyl_3d",
-        "portrait_bokeh", "video_bokeh", "tilt_shift" -> true
+        "portrait_bokeh", "video_bokeh", "tilt_shift", "motion_blur" -> true
         else -> false
     }
 
@@ -1934,6 +2954,104 @@ class MainActivity : AppCompatActivity() {
                     0f, 0f, contrast, 0f, t,
                     0f, 0f, 0f, 1f, 0f
                 )))
+            }
+            "portra_400", "filter_portra_400" -> {
+                combined.postConcat(ColorMatrix().apply { setSaturation(1.12f) })
+                combined.postConcat(ColorMatrix(floatArrayOf(
+                    1.06f, 0.04f, 0f, 0f, 12f,
+                    0.02f, 1.03f, 0f, 0f, 8f,
+                    0f, 0.02f, 0.94f, 0f, 6f,
+                    0f, 0f, 0f, 1f, 0f
+                )))
+            }
+            "fuji_400h", "filter_fuji_400h" -> {
+                combined.postConcat(ColorMatrix().apply { setSaturation(1.06f) })
+                combined.postConcat(ColorMatrix(floatArrayOf(
+                    0.96f, 0.02f, 0f, 0f, 8f,
+                    0f, 1.08f, 0.03f, 0f, 12f,
+                    0.02f, 0.05f, 1.06f, 0f, 12f,
+                    0f, 0f, 0f, 1f, 0f
+                )))
+            }
+            "teal_orange", "filter_teal_orange" -> {
+                combined.postConcat(ColorMatrix().apply { setSaturation(1.30f) })
+                combined.postConcat(ColorMatrix(floatArrayOf(
+                    1.18f, 0.03f, -0.05f, 0f, 6f,
+                    0.02f, 1.02f, 0.04f, 0f, 0f,
+                    -0.06f, 0.08f, 1.22f, 0f, 4f,
+                    0f, 0f, 0f, 1f, 0f
+                )))
+            }
+            "noir_contrast", "filter_noir_contrast" -> {
+                combined.setSaturation(0f)
+                val c = 1.68f
+                val t = (-0.5f * c + 0.5f) * 255f - 8f
+                combined.postConcat(ColorMatrix(floatArrayOf(
+                    c, 0f, 0f, 0f, t,
+                    0f, c, 0f, 0f, t,
+                    0f, 0f, c, 0f, t,
+                    0f, 0f, 0f, 1f, 0f
+                )))
+            }
+            "sunset_warmth", "filter_sunset_warmth" -> {
+                combined.postConcat(ColorMatrix().apply { setSaturation(1.25f) })
+                combined.postConcat(ColorMatrix(floatArrayOf(
+                    1.14f, 0.06f, 0f, 0f, 16f,
+                    0.02f, 1.02f, 0f, 0f, 6f,
+                    0f, 0f, 0.84f, 0f, -10f,
+                    0f, 0f, 0f, 1f, 0f
+                )))
+            }
+            "matrix_code", "filter_matrix_code" -> {
+                combined.postConcat(ColorMatrix().apply { setSaturation(0.75f) })
+                combined.postConcat(ColorMatrix(floatArrayOf(
+                    0.78f, 0f, 0f, 0f, -8f,
+                    0.05f, 1.24f, 0.05f, 0f, 10f,
+                    0f, 0.02f, 0.82f, 0f, -4f,
+                    0f, 0f, 0f, 1f, 0f
+                )))
+            }
+            "pastel_dream", "filter_pastel_dream" -> {
+                combined.postConcat(ColorMatrix().apply { setSaturation(0.82f) })
+                combined.postConcat(ColorMatrix(floatArrayOf(
+                    0.96f, 0.04f, 0.02f, 0f, 20f,
+                    0.02f, 0.94f, 0.04f, 0f, 18f,
+                    0.04f, 0.04f, 1.02f, 0f, 24f,
+                    0f, 0f, 0f, 1f, 0f
+                )))
+            }
+            "nordic_blue", "filter_nordic_mood" -> {
+                combined.postConcat(ColorMatrix().apply { setSaturation(0.76f) })
+                combined.postConcat(ColorMatrix(floatArrayOf(
+                    0.94f, 0f, 0.02f, 0f, -10f,
+                    0f, 1.02f, 0.04f, 0f, -4f,
+                    0.02f, 0.06f, 1.22f, 0f, 10f,
+                    0f, 0f, 0f, 1f, 0f
+                )))
+            }
+            "super8_vintage", "filter_super8_retro" -> {
+                combined.postConcat(ColorMatrix().apply { setSaturation(0.90f) })
+                combined.postConcat(ColorMatrix(floatArrayOf(
+                    1.10f, 0.10f, 0f, 0f, 14f,
+                    0.04f, 1.02f, 0f, 0f, 8f,
+                    0f, 0.02f, 0.82f, 0f, -8f,
+                    0f, 0f, 0f, 1f, 0f
+                )))
+            }
+            else -> {
+                val custom = injectedCustomFilters.find { it.id == currentFilterName }
+                if (custom != null) {
+                    val satVal = (1.0f + custom.saturation / 100f).coerceIn(0f, 2.5f)
+                    combined.postConcat(ColorMatrix().apply { setSaturation(if (custom.grayscale > 50) 0f else satVal) })
+                    val conVal = (1.0f + custom.contrast / 100f).coerceIn(0.4f, 2.2f)
+                    val t = (-0.5f * conVal + 0.5f) * 255f + (custom.brightness * 1.2f)
+                    combined.postConcat(ColorMatrix(floatArrayOf(
+                        conVal, 0f, 0f, 0f, t,
+                        0f, conVal, 0f, 0f, t,
+                        0f, 0f, conVal, 0f, t,
+                        0f, 0f, 0f, 1f, 0f
+                    )))
+                }
             }
         }
 
@@ -2364,6 +3482,15 @@ class MainActivity : AppCompatActivity() {
             "hdr" -> FilterManager.FilterPreset.HDR
             "cyberpunk", "cyber" -> FilterManager.FilterPreset.CYBERPUNK
             "comic_book", "comic", "cartoon" -> FilterManager.FilterPreset.COMIC_BOOK
+            "portra_400", "filter_portra_400" -> FilterManager.FilterPreset.PORTRA_400
+            "fuji_400h", "filter_fuji_400h" -> FilterManager.FilterPreset.FUJI_400H
+            "teal_orange", "filter_teal_orange" -> FilterManager.FilterPreset.TEAL_ORANGE
+            "noir_contrast", "filter_noir_contrast" -> FilterManager.FilterPreset.NOIR_CONTRAST
+            "sunset_warmth", "filter_sunset_warmth" -> FilterManager.FilterPreset.SUNSET_WARMTH
+            "matrix_code", "filter_matrix_code" -> FilterManager.FilterPreset.MATRIX_CODE
+            "pastel_dream", "filter_pastel_dream" -> FilterManager.FilterPreset.PASTEL_DREAM
+            "nordic_blue", "filter_nordic_mood" -> FilterManager.FilterPreset.NORDIC_BLUE
+            "super8_vintage", "filter_super8_retro" -> FilterManager.FilterPreset.SUPER8_VINTAGE
             else -> FilterManager.FilterPreset.NORMAL
         }
         filterManager.setPreset(filterPreset)
@@ -2400,8 +3527,17 @@ class MainActivity : AppCompatActivity() {
             viewBinding.btnFilterBW to "bw",
             viewBinding.btnFilterCyber to "cyberpunk",
             viewBinding.btnFilterHDR to "hdr",
-            viewBinding.btnFilterComicBook to "comic_book"
-        )
+            viewBinding.btnFilterComicBook to "comic_book",
+            viewBinding.btnFilterPortra400 to "portra_400",
+            viewBinding.btnFilterFuji400h to "fuji_400h",
+            viewBinding.btnFilterTealOrange to "teal_orange",
+            viewBinding.btnFilterNoirContrast to "noir_contrast",
+            viewBinding.btnFilterSunsetWarmth to "sunset_warmth",
+            viewBinding.btnFilterMatrixCode to "matrix_code",
+            viewBinding.btnFilterPastelDream to "pastel_dream",
+            viewBinding.btnFilterNordicBlue to "nordic_blue",
+            viewBinding.btnFilterSuper8Vintage to "super8_vintage"
+        ) + dynamicFilterChips
         for ((btn, name) in filterButtons) {
             val isActive = name == preset
             if (isActive) {
@@ -2420,24 +3556,50 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setArLens(lens: String, showNotice: Boolean = true) {
+        if (lens != "none" && ::ecoPowerManager.isInitialized && ecoPowerManager.isArDisabled) {
+            showHudNotice(
+                "ECO MODE (${ecoPowerManager.currentPolicy.batteryPercent}%): AR disabled to save battery",
+                isWarning = true
+            )
+            return
+        }
+        if (lens != "none" && ::thermalGuardManager.isInitialized && thermalGuardManager.isArDisabled) {
+            showHudNotice(
+                "THERMAL ${thermalGuardManager.currentPolicy.statusLabel}: AR paused to prevent overheating",
+                isWarning = true
+            )
+            return
+        }
+        val prevLens = currentArLensName
         currentArLensName = lens
         if (showNotice) {
             currentCreativeTarget = CreativeTarget.LENSES
             isLastActionCreative = true
         }
-        val mode = when (lens.lowercase(Locale.ROOT)) {
+        val mappedMode = when (lens.lowercase(Locale.ROOT)) {
             "mesh_contour", "mesh" -> ARFaceOverlayView.ArLensMode.MESH_CONTOUR
             "cyberpunk_visor", "visor" -> ARFaceOverlayView.ArLensMode.CYBERPUNK_VISOR
             "golden_crown", "crown" -> ARFaceOverlayView.ArLensMode.GOLDEN_CROWN
             "scifi_hud", "hud" -> ARFaceOverlayView.ArLensMode.SCIFI_HUD
             "comic_frame", "comic", "comic_panel" -> ARFaceOverlayView.ArLensMode.COMIC_FRAME
-            else -> ARFaceOverlayView.ArLensMode.NONE
+            else -> {
+                val customLens = injectedCustomLenses.find { it.id == lens }
+                if (customLens != null) {
+                    when (customLens.anchor.lowercase(Locale.ROOT)) {
+                        "forehead" -> ARFaceOverlayView.ArLensMode.GOLDEN_CROWN
+                        "eyes" -> ARFaceOverlayView.ArLensMode.CYBERPUNK_VISOR
+                        "mouth", "nose_cheeks" -> ARFaceOverlayView.ArLensMode.SCIFI_HUD
+                        else -> ARFaceOverlayView.ArLensMode.MESH_CONTOUR
+                    }
+                } else ARFaceOverlayView.ArLensMode.NONE
+            }
         }
         syncComicFrameOverlayState()
-        viewBinding.arFaceOverlayView.currentLens = mode
-        if (mode == ARFaceOverlayView.ArLensMode.NONE) {
+        viewBinding.arFaceOverlayView.currentLens = mappedMode
+        if (mappedMode == ARFaceOverlayView.ArLensMode.NONE) {
             viewBinding.arFaceOverlayView.clear()
         }
+        syncOverlayToVideoProcessor()
         val lensButtons = listOf(
             viewBinding.btnArNone to "none",
             viewBinding.btnArMesh to "mesh_contour",
@@ -2445,7 +3607,7 @@ class MainActivity : AppCompatActivity() {
             viewBinding.btnArCrown to "golden_crown",
             viewBinding.btnArHud to "scifi_hud",
             viewBinding.btnArComicFrame to "comic_frame"
-        )
+        ) + dynamicLensChips
         for ((btn, name) in lensButtons) {
             val isActive = name == lens
             if (isActive) {
@@ -2457,9 +3619,16 @@ class MainActivity : AppCompatActivity() {
                 btn.setTextColor(Color.parseColor("#94A3B8"))
             }
         }
+        if (isAutoAdaptEnabled && lens != "none" && lens != prevLens) {
+            val recommendedFront = lens in setOf("mesh_contour", "cyberpunk_visor", "golden_crown", "comic_frame")
+            val isCurrentlyFront = (lensFacing == CameraSelector.DEFAULT_FRONT_CAMERA)
+            if (recommendedFront != isCurrentlyFront && recording == null) {
+                switchCamera()
+            }
+        }
         updateCreativeStatusUI()
         if (showNotice) {
-            if (mode == ARFaceOverlayView.ArLensMode.COMIC_FRAME && !isCartoonShaderActive()) {
+            if (mappedMode == ARFaceOverlayView.ArLensMode.COMIC_FRAME && !isCartoonShaderActive()) {
                 showHudNotice("AR Lens: COMIC FRAME (Activate Comic Book or Toon shader)", isWarning = true)
             } else {
                 showHudNotice("AR Lens: ${lens.replace('_', ' ').uppercase(Locale.ROOT)}")
@@ -2479,6 +3648,7 @@ class MainActivity : AppCompatActivity() {
         viewBinding.btnArComicOnomatopoeia.text = if (next) "POW! ON" else "POW! COMIC"
         if (next && !isAudioMuted) {
             playCameraCue(ToneGenerator.TONE_PROP_BEEP2, 110)
+            comicSfxHelper?.playComicBurst(comicSfxPow, comicSfxBam, comicSfxZap, 0.72f, isAudioMuted)
         }
         showHudNotice(if (next) "Comic Onomatopoeia: POW! BAM! ZAP! ON" else "Comic Onomatopoeia: OFF")
     }
@@ -2502,7 +3672,7 @@ class MainActivity : AppCompatActivity() {
             listOf(
                 "none",
                 "portrait_bokeh", "long_exposure", "light_painting", "star_trails",
-                "night_sight", "macro_focus", "tilt_shift", "double_exposure", "panorama",
+                "night_sight", "macro_focus", "motion_blur", "tilt_shift", "double_exposure", "panorama",
                 "film_grain", "soft_halation", "vignette"
             )
         }
@@ -2635,6 +3805,12 @@ class MainActivity : AppCompatActivity() {
         }
         viewBinding.proOverlayView.activeShootingEffect = effectId
         syncComicFrameOverlayState()
+        if (effectId != "motion_blur") {
+            motionBlurProcessor.reset()
+            latestMotionMetrics = MotionBlurProcessor.MotionMetrics.IDLE
+            openGLProcessor?.setMotionBlurVector(1f, 0f, 0.18f)
+            viewBinding.proOverlayView.updateMotionBlurTelemetry(0f, 1f, 0f, "1/60s")
+        }
         if (!isStylizedLiveEffect(effectId) && !isComicFilterPreset(currentFilterName)) {
             viewBinding.proOverlayView.updateProcessedEffectBitmap(null)
         }
@@ -2686,6 +3862,7 @@ class MainActivity : AppCompatActivity() {
 
         applyLivePreviewColorMatrix()
         updateShootingEffectButtons()
+        viewBinding.layoutEffectIntensity.visibility = if (effectId != "none") View.VISIBLE else View.GONE
         updateCreativeStatusUI()
         if (showNotice) {
             showHudNotice("Effect: ${getShootingEffectLabel(effectId)}")
@@ -2997,6 +4174,14 @@ class MainActivity : AppCompatActivity() {
      * Unified pixel-accurate Art, Optical Blur & Toon Renderer used for both Live Viewfinder & Captured JPEG Photos
      */
     private fun renderStylizedEffectBitmap(srcBmp: Bitmap, effectId: String, forLivePreview: Boolean): Bitmap {
+        if (effectId == "motion_blur") {
+            return motionBlurProcessor.applyDirectionalMotionBlur(
+                src = srcBmp,
+                metrics = latestMotionMetrics,
+                intensity = activeEffectIntensity,
+                forLivePreview = forLivePreview
+            )
+        }
         val w = srcBmp.width.coerceAtLeast(1)
         val h = srcBmp.height.coerceAtLeast(1)
         val maxSample = if (forLivePreview) 420 else 860
@@ -3114,7 +4299,7 @@ class MainActivity : AppCompatActivity() {
             val fx = rx - Math.floor(rx.toDouble()).toFloat() - 0.5f
             val fy = ry - Math.floor(ry.toDouble()).toFloat() - 0.5f
             val dist = Math.sqrt((fx * fx + fy * fy).toDouble()).toFloat()
-            val rad = Math.sqrt(darkness.coerceIn(0f, 1f).toDouble()).toFloat() * 0.50f
+            val rad = (Math.sqrt(darkness.coerceIn(0f, 1f).toDouble()).toFloat() * 0.50f * comicHalftoneDotSize).coerceIn(0.06f, 0.88f)
             return 1f - smoothstep(rad - 0.08f, rad + 0.08f, dist)
         }
 
@@ -3167,7 +4352,7 @@ class MainActivity : AppCompatActivity() {
             "comic_book", "comic", "cartoon", "cel_shaded_studio" -> {
                 // Multi-pass Dual-Scale Sobel Ink Outlines + HSV Quantized Color Banding + Luminance-Channel Newspaper Halftone Screen
                 val hsvTmp = FloatArray(3)
-                val dotPitch = Math.max(4.2f, sw / 92f)
+                val dotPitch = Math.max(2.6f, (sw / 92f) / comicHalftoneDensity.coerceIn(0.4f, 2.2f))
                 for (y in 0 until sh) {
                     val row = y * sw
                     for (x in 0 until sw) {
@@ -3230,7 +4415,7 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             "graphic_novel_noir", "noir_graphic_novel" -> {
-                val dotPitch = Math.max(4.0f, sw / 82f)
+                val dotPitch = Math.max(2.6f, (sw / 82f) / comicHalftoneDensity.coerceIn(0.4f, 2.2f))
                 for (y in 0 until sh) {
                     val row = y * sw
                     for (x in 0 until sw) {
@@ -3250,7 +4435,7 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             "manga_ink" -> {
-                val dotPitch = Math.max(3.8f, sw / 86f)
+                val dotPitch = Math.max(2.4f, (sw / 86f) / comicHalftoneDensity.coerceIn(0.4f, 2.2f))
                 for (y in 0 until sh) {
                     val row = y * sw
                     for (x in 0 until sw) {
@@ -3280,7 +4465,7 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             "pop_art_print" -> {
-                val dotPitch = Math.max(4.4f, sw / 68f)
+                val dotPitch = Math.max(2.6f, (sw / 68f) / comicHalftoneDensity.coerceIn(0.4f, 2.2f))
                 for (y in 0 until sh) {
                     val row = y * sw
                     for (x in 0 until sw) {
@@ -3486,7 +4671,7 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             "halftone_print" -> {
-                val pitch = Math.max(3.8f, sw / 82f)
+                val pitch = Math.max(2.4f, (sw / 82f) / comicHalftoneDensity.coerceIn(0.4f, 2.2f))
                 for (y in 0 until sh) {
                     val row = y * sw
                     for (x in 0 until sw) {
@@ -3601,6 +4786,19 @@ class MainActivity : AppCompatActivity() {
             else -> System.arraycopy(pxArr, 0, outArr, 0, n)
         }
 
+        val effBlend = activeEffectIntensity.coerceIn(0f, 1f)
+        if (effBlend < 0.99f) {
+            val inv = 1f - effBlend
+            for (i in 0 until n) {
+                val o = rawArr[i]
+                val s = outArr[i]
+                val r = (((o shr 16) and 0xFF) * inv + ((s shr 16) and 0xFF) * effBlend).toInt()
+                val g = (((o shr 8) and 0xFF) * inv + ((s shr 8) and 0xFF) * effBlend).toInt()
+                val b = ((o and 0xFF) * inv + (s and 0xFF) * effBlend).toInt()
+                outArr[i] = packRgb(r, g, b)
+            }
+        }
+
         val artBmp = Bitmap.createBitmap(outArr, sw, sh, Bitmap.Config.ARGB_8888)
         if (forLivePreview) return artBmp
         return Bitmap.createScaledBitmap(artBmp, w, h, true).also {
@@ -3621,6 +4819,7 @@ class MainActivity : AppCompatActivity() {
     private fun toggleCleanScreen() {
         val isClean = !viewBinding.proOverlayView.isCleanScreen
         viewBinding.proOverlayView.isCleanScreen = isClean
+        updatePipOverlayVisibility()
         if (isClean) {
             viewBinding.btnCleanScreen.setImageResource(R.drawable.ic_eye_off)
             viewBinding.btnCleanScreen.setColorFilter(Color.parseColor("#E2E8F0"))
@@ -3711,11 +4910,14 @@ class MainActivity : AppCompatActivity() {
         if (viewBinding.proOverlayView.currentMatte != ProOverlayView.AspectMatte.NONE) count++
         if (viewBinding.proOverlayView.showLevelGauge) count++
         if (viewBinding.proOverlayView.showVisualBalance) count++
+        if (viewBinding.proOverlayView.showFocusPeaking) count++
         if (viewBinding.proOverlayView.showZebraStripes) count++
         if (viewBinding.proOverlayView.showWaveform) count++
         if (viewBinding.proOverlayView.showHistogram) count++
         if (viewBinding.proOverlayView.showVectorScope) count++
         if (viewBinding.proOverlayView.showAudioVuMeter) count++
+        if (viewBinding.proOverlayView.showWatermark) count++
+        if (isMultiCamPipEnabled) count++
 
         if (count > 0) {
             viewBinding.viewStudioBadge.visibility = View.VISIBLE
@@ -3923,6 +5125,7 @@ class MainActivity : AppCompatActivity() {
             .start(ContextCompat.getMainExecutor(this)) { recordEvent ->
                 when (recordEvent) {
                     is VideoRecordEvent.Start -> {
+                        playCameraCue(ToneGenerator.TONE_PROP_BEEP2, 95)
                         isRecordingPaused = false
                         viewBinding.btnCapture.setImageResource(R.drawable.bg_record_button_active)
                         viewBinding.recordingTimer.visibility = View.VISIBLE
@@ -3946,6 +5149,7 @@ class MainActivity : AppCompatActivity() {
                     }
 
                     is VideoRecordEvent.Pause -> {
+                        playCameraCue(ToneGenerator.TONE_PROP_BEEP, 70)
                         isRecordingPaused = true
                         // Save exact elapsed time in milliseconds
                         timeWhenStopped = SystemClock.elapsedRealtime() - viewBinding.chronometer.base
@@ -3958,6 +5162,7 @@ class MainActivity : AppCompatActivity() {
                     }
 
                     is VideoRecordEvent.Resume -> {
+                        playCameraCue(ToneGenerator.TONE_PROP_BEEP2, 85)
                         isRecordingPaused = false
                         // Offset base by saved elapsed time so counting resumes seamlessly from where it stopped
                         viewBinding.chronometer.base = SystemClock.elapsedRealtime() - timeWhenStopped
@@ -3970,6 +5175,7 @@ class MainActivity : AppCompatActivity() {
                     }
 
                     is VideoRecordEvent.Finalize -> {
+                        playCameraCue(ToneGenerator.TONE_PROP_BEEP, 110)
                         stopAutoLoopTicker()
                         viewBinding.chronometer.stop()
                         timeWhenStopped = 0L
@@ -4024,6 +5230,15 @@ class MainActivity : AppCompatActivity() {
      * 5. Capture Photo and Save into MediaStore
      */
     private fun takePhoto(isBurst: Boolean = false) {
+        if (!isBurst && (cameraMode == CameraMode.NIGHT || currentShootingEffect == "night_sight")) {
+            if (!isNightStacking) {
+                startNightExposureStacking(
+                    autoTriggered = false,
+                    targetFrameCount = nightExposureStacker.lastRecommendedFrameCount
+                )
+            }
+            return
+        }
         val imageCapture = imageCapture ?: return
 
         val name = SimpleDateFormat(FILENAME_FORMAT, Locale.US).format(System.currentTimeMillis())
@@ -4052,11 +5267,20 @@ class MainActivity : AppCompatActivity() {
             }.start()
         }
 
+        val pipBitmapSnapshot: Bitmap? = try {
+            if (isMultiCamPipEnabled && viewBinding.pipCardContainer.visibility == View.VISIBLE) {
+                findTextureView(viewBinding.pipViewFinder)?.bitmap
+            } else null
+        } catch (_: Throwable) {
+            null
+        }
+
         imageCapture.takePicture(
             outputOptions,
             ContextCompat.getMainExecutor(this),
             object : ImageCapture.OnImageSavedCallback {
                 override fun onError(exc: ImageCaptureException) {
+                    if (pipBitmapSnapshot != null && !pipBitmapSnapshot.isRecycled) pipBitmapSnapshot.recycle()
                     Log.e(TAG, "Photo capture failed: ${exc.message}", exc)
                     if (cameraMode == CameraMode.NIGHT) {
                         runOnUiThread {
@@ -4074,6 +5298,7 @@ class MainActivity : AppCompatActivity() {
                         lastCapturedMimeType = "image/jpeg"
 
                         val needsPostProcess = cameraMode == CameraMode.NIGHT ||
+                            pipBitmapSnapshot != null ||
                             currentFilterName != "normal" ||
                             currentShootingEffect != "none" ||
                             viewBinding.proOverlayView.liveBrightnessPercent != 0 ||
@@ -4082,14 +5307,16 @@ class MainActivity : AppCompatActivity() {
                             viewBinding.arFaceOverlayView.currentLens != ARFaceOverlayView.ArLensMode.NONE ||
                             viewBinding.arFaceOverlayView.enableComicOnomatopoeia ||
                             viewBinding.arFaceOverlayView.enableComicSpeechBubble ||
+                            viewBinding.arFaceOverlayView.hasArTextItems() ||
                             viewBinding.proOverlayView.enableFilmGrain ||
                             viewBinding.proOverlayView.enableDateStamp ||
                             viewBinding.proOverlayView.enableCineFlare ||
-                            viewBinding.proOverlayView.enableVignette
+                            viewBinding.proOverlayView.enableVignette ||
+                            viewBinding.proOverlayView.showWatermark
 
                         if (needsPostProcess) {
                             cameraExecutor.execute {
-                                applyCreativeLookToSavedPhoto(savedUri)
+                                applyCreativeLookToSavedPhoto(savedUri, pipBitmapSnapshot)
                                 runOnUiThread {
                                     if (cameraMode == CameraMode.NIGHT) {
                                         viewBinding.tvRecordingStatus.text = "NIGHT"
@@ -4174,7 +5401,185 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun applyCreativeLookToSavedPhoto(savedUri: Uri) {
+    /**
+     * Captures a bracketed multi-frame exposure sequence (Night Mode) and fuses frames for low-light clarity.
+     */
+    private fun startNightExposureStacking(autoTriggered: Boolean, targetFrameCount: Int) {
+        val cap = imageCapture ?: return
+        if (isNightStacking || isPanoramaCapturing || isPanoramaStitching || recording != null) return
+
+        isNightStacking = true
+        val exposureState = camera?.cameraInfo?.exposureState
+        val savedEvIndex = exposureState?.exposureCompensationIndex ?: 0
+        val evRange = exposureState?.exposureCompensationRange
+        val minEv = evRange?.lower ?: 0
+        val maxEv = evRange?.upper ?: 0
+        val bracketIndices = nightExposureStacker.buildExposureBracketIndices(minEv, maxEv, targetFrameCount)
+        val totalFrames = bracketIndices.size
+        val avgLumaHint = nightExposureStacker.lastAvgLuma
+
+        val pipBitmapSnapshot: Bitmap? = try {
+            if (isMultiCamPipEnabled && viewBinding.pipCardContainer.visibility == View.VISIBLE) {
+                findTextureView(viewBinding.pipViewFinder)?.bitmap
+            } else null
+        } catch (_: Throwable) {
+            null
+        }
+
+        viewBinding.proOverlayView.updateNightStackProgress(true, 1, totalFrames)
+        viewBinding.tvRecordingStatus.text = "STACK"
+        viewBinding.tvRecordingStatus.setTextColor(Color.parseColor("#A855F7"))
+        viewBinding.chronometer.text = "1/${totalFrames} F"
+        showHudNotice(
+            if (autoTriggered) {
+                "LOW LIGHT DETECTED · AUTO NIGHT STACK (${totalFrames} FRAMES)"
+            } else {
+                "NIGHT STACK · HOLD STEADY (${totalFrames} FRAMES)"
+            }
+        )
+        playCameraCue(ToneGenerator.TONE_PROP_BEEP2, 70)
+
+        val capturedFrames = java.util.Collections.synchronizedList(ArrayList<Bitmap>())
+
+        fun finishStackSequence() {
+            if (exposureState?.isExposureCompensationSupported == true) {
+                cameraControl?.setExposureCompensationIndex(savedEvIndex)
+            }
+            val snapshot = ArrayList(capturedFrames)
+            capturedFrames.clear()
+            if (snapshot.isEmpty()) {
+                if (pipBitmapSnapshot != null && !pipBitmapSnapshot.isRecycled) pipBitmapSnapshot.recycle()
+                isNightStacking = false
+                runOnUiThread {
+                    viewBinding.proOverlayView.updateNightStackProgress(false, 0, totalFrames)
+                    viewBinding.tvRecordingStatus.text = if (cameraMode == CameraMode.NIGHT) "NIGHT" else "READY"
+                }
+                return
+            }
+
+            runOnUiThread {
+                viewBinding.tvRecordingStatus.text = "FUSE"
+                viewBinding.chronometer.text = "ALIGN ${snapshot.size}F"
+                showHudNotice("ALIGNING & FUSING ${snapshot.size} NIGHT FRAMES...")
+            }
+
+            cameraExecutor.execute {
+                var stackedUri: Uri? = null
+                var stackedBmp: Bitmap? = null
+                try {
+                    stackedBmp = nightExposureStacker.stackExposureFrames(snapshot, avgLumaHint)
+                    val outBmp = stackedBmp ?: return@execute
+
+                    val name = "NIGHT_" + SimpleDateFormat(FILENAME_FORMAT, Locale.US).format(System.currentTimeMillis())
+                    val cv = ContentValues().apply {
+                        put(MediaStore.MediaColumns.DISPLAY_NAME, name)
+                        put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                            put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/CameraX-Image")
+                        }
+                    }
+                    stackedUri = contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, cv)
+                    val uri = stackedUri
+                    if (uri != null) {
+                        contentResolver.openOutputStream(uri, "wt")?.use { out ->
+                            outBmp.compress(Bitmap.CompressFormat.JPEG, 95, out)
+                        }
+                        if (!outBmp.isRecycled) outBmp.recycle()
+                        stackedBmp = null
+
+                        // Apply active LUT/filter/watermark/PiP while skipping duplicate night gamma LUT
+                        applyCreativeLookToSavedPhoto(uri, pipBitmapSnapshot, skipNightLut = true)
+                        lastCapturedUri = uri
+                        lastCapturedMimeType = "image/jpeg"
+
+                        runOnUiThread {
+                            playCameraCue(ToneGenerator.TONE_PROP_BEEP2, 110)
+                            showHudNotice("Saved Multi-Frame Night Stack (${snapshot.size} Exposures)")
+                            try {
+                                viewBinding.ivGalleryThumbnail.setImageURI(null)
+                                viewBinding.ivGalleryThumbnail.setImageURI(uri)
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Failed updating gallery thumbnail after Night stack", e)
+                            }
+                        }
+                    } else if (pipBitmapSnapshot != null && !pipBitmapSnapshot.isRecycled) {
+                        pipBitmapSnapshot.recycle()
+                    }
+                } catch (t: Throwable) {
+                    Log.e(TAG, "Night stacking failed", t)
+                    if (pipBitmapSnapshot != null && !pipBitmapSnapshot.isRecycled) pipBitmapSnapshot.recycle()
+                } finally {
+                    for (bmp in snapshot) {
+                        if (!bmp.isRecycled) bmp.recycle()
+                    }
+                    if (stackedBmp != null && !stackedBmp!!.isRecycled) stackedBmp!!.recycle()
+                    isNightStacking = false
+                    runOnUiThread {
+                        viewBinding.proOverlayView.updateNightStackProgress(false, 0, totalFrames)
+                        if (cameraMode == CameraMode.NIGHT) {
+                            viewBinding.tvRecordingStatus.text = "NIGHT"
+                            viewBinding.tvRecordingStatus.setTextColor(Color.parseColor("#818CF8"))
+                            viewBinding.chronometer.text = "MULTI-EXP · LOW LIGHT"
+                        } else if (cameraMode == CameraMode.PHOTO) {
+                            viewBinding.tvRecordingStatus.text = "READY"
+                            viewBinding.tvRecordingStatus.setTextColor(Color.parseColor("#10B981"))
+                            viewBinding.chronometer.text = "12MP 4:3"
+                        }
+                    }
+                }
+            }
+        }
+
+        fun captureBracketStep(stepIndex: Int) {
+            if (stepIndex >= totalFrames) {
+                finishStackSequence()
+                return
+            }
+            val evIdx = bracketIndices[stepIndex]
+            if (exposureState?.isExposureCompensationSupported == true) {
+                cameraControl?.setExposureCompensationIndex(evIdx)
+            }
+            runOnUiThread {
+                viewBinding.proOverlayView.updateNightStackProgress(true, stepIndex + 1, totalFrames)
+                viewBinding.chronometer.text = "${stepIndex + 1}/${totalFrames} F"
+                viewBinding.viewFinder.animate().alpha(0.55f).setDuration(45).withEndAction {
+                    viewBinding.viewFinder.animate().alpha(1.0f).setDuration(90).start()
+                }.start()
+            }
+
+            // Brief AE settle window so camera HAL applies the updated exposure bracket
+            nightHandler.postDelayed({
+                cap.takePicture(
+                    cameraExecutor,
+                    object : ImageCapture.OnImageCapturedCallback() {
+                        override fun onCaptureSuccess(image: ImageProxy) {
+                            try {
+                                val bmp = nightExposureStacker.decodeCapturedProxyToBitmap(image, 1920)
+                                if (bmp != null) {
+                                    capturedFrames.add(bmp)
+                                }
+                            } catch (e: Throwable) {
+                                Log.e(TAG, "Night bracket frame decode failed", e)
+                            } finally {
+                                image.close()
+                            }
+                            runOnUiThread { playCameraCue(ToneGenerator.TONE_PROP_BEEP, 28) }
+                            nightHandler.post { captureBracketStep(stepIndex + 1) }
+                        }
+
+                        override fun onError(exception: ImageCaptureException) {
+                            Log.e(TAG, "Night bracket capture error on frame $stepIndex", exception)
+                            nightHandler.post { captureBracketStep(stepIndex + 1) }
+                        }
+                    }
+                )
+            }, if (stepIndex == 0) 40L else 105L)
+        }
+
+        captureBracketStep(0)
+    }
+
+    private fun applyCreativeLookToSavedPhoto(savedUri: Uri, pipBitmapSnapshot: Bitmap? = null, skipNightLut: Boolean = false) {
         try {
             var orientation = ExifInterface.ORIENTATION_NORMAL
             contentResolver.openInputStream(savedUri)?.use { exifStream ->
@@ -4188,7 +5593,11 @@ class MainActivity : AppCompatActivity() {
             val rawBmp = contentResolver.openInputStream(savedUri)?.use { input ->
                 val opts = BitmapFactory.Options().apply { inSampleSize = 1 }
                 BitmapFactory.decodeStream(input, null, opts)
-            } ?: return
+            }
+            if (rawBmp == null) {
+                if (pipBitmapSnapshot != null && !pipBitmapSnapshot.isRecycled) pipBitmapSnapshot.recycle()
+                return
+            }
 
             val rotDeg = when (orientation) {
                 ExifInterface.ORIENTATION_ROTATE_90 -> 90f
@@ -4226,8 +5635,8 @@ class MainActivity : AppCompatActivity() {
                 finalBmp = writable
             }
 
-            // Computational Night Mode / Night Sight adaptive shadow-recovery LUT
-            if (cameraMode == CameraMode.NIGHT || currentShootingEffect == "night_sight") {
+            // Computational Night Mode / Night Sight adaptive shadow-recovery LUT (skipped when already stacked)
+            if (!skipNightLut && (cameraMode == CameraMode.NIGHT || currentShootingEffect == "night_sight")) {
                 applyComputationalNightEnhancement(finalBmp, isHardwareExt = isNightExtensionActive && cameraMode == CameraMode.NIGHT)
             }
 
@@ -4261,26 +5670,34 @@ class MainActivity : AppCompatActivity() {
                     canvas.drawBitmap(ghost, m, p)
                     ghost.recycle()
                 }
-                "long_exposure", "motion_blur" -> {
+                "motion_blur" -> {
+                    val blurredBmp = motionBlurProcessor.applyDirectionalMotionBlur(
+                        src = finalBmp,
+                        metrics = latestMotionMetrics,
+                        intensity = activeEffectIntensity,
+                        forLivePreview = false
+                    )
+                    canvas.drawBitmap(blurredBmp, 0f, 0f, null)
+                    if (blurredBmp != finalBmp && !blurredBmp.isRecycled) blurredBmp.recycle()
+                }
+                "long_exposure" -> {
                     val streakSrc = finalBmp.copy(Bitmap.Config.ARGB_8888, false)
-                    val p = Paint(Paint.ANTI_ALIAS_FLAG).apply { alpha = if (currentShootingEffect == "motion_blur") 62 else 48 }
-                    val shiftAmt = if (currentShootingEffect == "motion_blur") 0.022f else 0.012f
+                    val p = Paint(Paint.ANTI_ALIAS_FLAG).apply { alpha = 48 }
+                    val shiftAmt = 0.012f
                     canvas.drawBitmap(streakSrc, -fw * shiftAmt, 0f, p)
                     canvas.drawBitmap(streakSrc, fw * shiftAmt, 0f, p)
                     streakSrc.recycle()
-                    if (currentShootingEffect == "long_exposure") {
-                        val trailP = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                            style = Paint.Style.STROKE
-                            strokeCap = Paint.Cap.ROUND
-                            strokeWidth = (fw * 0.008f).coerceAtLeast(6f)
-                            shader = LinearGradient(
-                                0f, fh * 0.65f, fw, fh * 0.65f,
-                                intArrayOf(Color.TRANSPARENT, Color.parseColor("#99F59E0B"), Color.TRANSPARENT),
-                                null, Shader.TileMode.CLAMP
-                            )
-                        }
-                        canvas.drawLine(0f, fh * 0.65f, fw, fh * 0.64f, trailP)
+                    val trailP = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                        style = Paint.Style.STROKE
+                        strokeCap = Paint.Cap.ROUND
+                        strokeWidth = (fw * 0.008f).coerceAtLeast(6f)
+                        shader = LinearGradient(
+                            0f, fh * 0.65f, fw, fh * 0.65f,
+                            intArrayOf(Color.TRANSPARENT, Color.parseColor("#99F59E0B"), Color.TRANSPARENT),
+                            null, Shader.TileMode.CLAMP
+                        )
                     }
+                    canvas.drawLine(0f, fh * 0.65f, fw, fh * 0.64f, trailP)
                 }
                 "light_painting" -> {
                     val glowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -4407,7 +5824,7 @@ class MainActivity : AppCompatActivity() {
                 }
                 "cel_shaded_studio", "graphic_novel_noir", "manga_ink", "pop_art_print",
                 "line_art_minimalist", "ligne_claire" -> {
-                    val gpuToon = filterManager.applyToonEffectToBitmap(finalBmp, currentShootingEffect)
+                    val gpuToon = filterManager.applyToonEffectToBitmap(finalBmp, currentShootingEffect, activeEffectIntensity)
                     val styledBmp = gpuToon ?: renderStylizedEffectBitmap(finalBmp, currentShootingEffect, forLivePreview = false)
                     canvas.drawBitmap(styledBmp, 0f, 0f, null)
                     if (styledBmp != finalBmp && !styledBmp.isRecycled) styledBmp.recycle()
@@ -4581,32 +5998,58 @@ class MainActivity : AppCompatActivity() {
                 canvas.drawRect(0f, cy - streakH, finalBmp.width.toFloat(), cy + streakH, flarePaint)
             }
 
-            // Bake AR Face Lens overlay onto captured image
+            // Bake AR Face Lens & Freehand AR Text overlays cleanly onto captured image (without selection guides)
             syncComicFrameOverlayState()
-            if (viewBinding.arFaceOverlayView.currentLens == ARFaceOverlayView.ArLensMode.COMIC_FRAME) {
-                if (isCartoonShaderActive()) {
-                    viewBinding.arFaceOverlayView.drawComicFrameBorders(canvas, fw, fh)
-                }
-                if (viewBinding.arFaceOverlayView.enableComicOnomatopoeia || viewBinding.arFaceOverlayView.enableComicSpeechBubble) {
-                    canvas.save()
-                    val offsetX = (finalBmp.width - overlayW * scale) / 2f
-                    val offsetY = (finalBmp.height - overlayH * scale) / 2f
-                    canvas.translate(offsetX, offsetY)
-                    canvas.scale(scale, scale)
-                    viewBinding.arFaceOverlayView.drawFaceTrackedOverlays(canvas, overlayW, overlayH)
-                    canvas.restore()
-                }
-            } else if (viewBinding.arFaceOverlayView.currentLens != ARFaceOverlayView.ArLensMode.NONE ||
-                viewBinding.arFaceOverlayView.enableComicOnomatopoeia ||
-                viewBinding.arFaceOverlayView.enableComicSpeechBubble
-            ) {
+            if (viewBinding.arFaceOverlayView.hasAnyVisibleOverlay()) {
                 canvas.save()
                 val offsetX = (finalBmp.width - overlayW * scale) / 2f
                 val offsetY = (finalBmp.height - overlayH * scale) / 2f
                 canvas.translate(offsetX, offsetY)
                 canvas.scale(scale, scale)
-                viewBinding.arFaceOverlayView.draw(canvas)
+                viewBinding.arFaceOverlayView.drawCompositeOverlay(canvas, overlayW, overlayH, includeSelectionOutline = false)
                 canvas.restore()
+            }
+
+            // Bake Typography / Studio Watermark Banner if enabled
+            if (viewBinding.proOverlayView.showWatermark && viewBinding.proOverlayView.watermarkText.isNotBlank()) {
+                val wmPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.parseColor(injectedFonts.getOrNull(activeFontIndex)?.colorHex ?: "#38BDF8")
+                    textSize = (fw * 0.026f).coerceAtLeast(24f)
+                    typeface = resolveFontTypeface(injectedFonts.getOrNull(activeFontIndex))
+                    letterSpacing = 0.08f
+                }
+                cameraFontHelper?.drawWatermarkOverlay(
+                    canvas,
+                    viewBinding.proOverlayView.watermarkText,
+                    fw * 0.055f,
+                    fh - fh * 0.055f,
+                    wmPaint
+                )
+            }
+
+            // Bake Real Multi-Cam PiP overlay onto saved JPEG photo when dual-camera mode is active
+            if (pipBitmapSnapshot != null && !pipBitmapSnapshot.isRecycled) {
+                try {
+                    val pipW = fw * 0.25f
+                    val pipH = pipW * (pipBitmapSnapshot.height.toFloat() / pipBitmapSnapshot.width.toFloat().coerceAtLeast(1f))
+                    val marginX = fw * 0.045f
+                    val marginY = fh * 0.14f
+                    val pipRect = RectF(fw - marginX - pipW, marginY, fw - marginX, marginY + pipH)
+                    val corner = pipW * 0.10f
+                    val saveId = canvas.save()
+                    val clipPath = Path().apply { addRoundRect(pipRect, corner, corner, Path.Direction.CW) }
+                    canvas.clipPath(clipPath)
+                    canvas.drawBitmap(pipBitmapSnapshot, null, pipRect, Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
+                    canvas.restoreToCount(saveId)
+                    val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                        style = Paint.Style.STROKE
+                        strokeWidth = (fw * 0.004f).coerceAtLeast(4f)
+                        color = Color.parseColor("#FACC15")
+                    }
+                    canvas.drawRoundRect(pipRect, corner, corner, borderPaint)
+                } finally {
+                    if (!pipBitmapSnapshot.isRecycled) pipBitmapSnapshot.recycle()
+                }
             }
 
             contentResolver.openOutputStream(savedUri, "wt")?.use { out ->
@@ -4614,6 +6057,7 @@ class MainActivity : AppCompatActivity() {
             }
             finalBmp.recycle()
         } catch (e: Exception) {
+            if (pipBitmapSnapshot != null && !pipBitmapSnapshot.isRecycled) pipBitmapSnapshot.recycle()
             Log.e(TAG, "Failed post-processing photo creative look", e)
         }
     }
@@ -4623,7 +6067,8 @@ class MainActivity : AppCompatActivity() {
         CameraMode.VIDEO,
         CameraMode.PHOTO,
         CameraMode.PORTRAIT,
-        CameraMode.NIGHT
+        CameraMode.NIGHT,
+        CameraMode.PANORAMA
     )
 
     private fun getModeLabel(mode: CameraMode): String = when (mode) {
@@ -4632,15 +6077,17 @@ class MainActivity : AppCompatActivity() {
         CameraMode.PHOTO -> "PHOTO"
         CameraMode.PORTRAIT -> "PORTRAIT"
         CameraMode.NIGHT -> "NIGHT"
+        CameraMode.PANORAMA -> "PANORAMA"
     }
 
     private fun updateModeCarouselSlots(animated: Boolean = true, slideDirection: Int = 0) {
         val curIdx = allCameraModes.indexOf(cameraMode)
-        val farLeftMode = allCameraModes[(curIdx - 2 + 50) % 5]
-        val leftMode = allCameraModes[(curIdx - 1 + 50) % 5]
+        val total = allCameraModes.size
+        val farLeftMode = allCameraModes[(curIdx - 2 + total * 10) % total]
+        val leftMode = allCameraModes[(curIdx - 1 + total * 10) % total]
         val centerMode = allCameraModes[curIdx]
-        val rightMode = allCameraModes[(curIdx + 1) % 5]
-        val farRightMode = allCameraModes[(curIdx + 2) % 5]
+        val rightMode = allCameraModes[(curIdx + 1) % total]
+        val farRightMode = allCameraModes[(curIdx + 2) % total]
 
         viewBinding.tabSlotFarLeft.text = getModeLabel(farLeftMode)
         viewBinding.tabSlotLeft.text = getModeLabel(leftMode)
@@ -4654,7 +6101,8 @@ class MainActivity : AppCompatActivity() {
             viewBinding.tabVideo to CameraMode.VIDEO,
             viewBinding.tabPhoto to CameraMode.PHOTO,
             viewBinding.tabPortrait to CameraMode.PORTRAIT,
-            viewBinding.tabNight to CameraMode.NIGHT
+            viewBinding.tabNight to CameraMode.NIGHT,
+            viewBinding.tabPanorama to CameraMode.PANORAMA
         )
         for ((tab, m) in modeTabs) {
             val isActive = m == cameraMode
@@ -4676,10 +6124,16 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setMode(mode: CameraMode, slideDirection: Int = 0) {
-        if (recording != null) return
+        if (recording != null || isNightStacking) return
+        if (isPanoramaCapturing && mode != CameraMode.PANORAMA) {
+            cancelPanoramaCapture()
+        }
         cameraMode = mode
+        nightExposureStacker.clearDarkEpisodeLock()
+        viewBinding.proOverlayView.isNightModeHudActive = (mode == CameraMode.NIGHT || currentShootingEffect == "night_sight")
         isLastActionCreative = false
         showHudNotice("Mode: ${getModeLabel(mode)}")
+        viewBinding.proOverlayView.isPanoramaModeActive = (mode == CameraMode.PANORAMA)
 
         updateModeCarouselSlots(animated = true, slideDirection = slideDirection)
 
@@ -4688,11 +6142,16 @@ class MainActivity : AppCompatActivity() {
         if (!isVideoType) {
             viewBinding.btnCapture.setImageResource(R.drawable.bg_shutter_button)
             viewBinding.btnPauseResume.visibility = View.GONE
-            viewBinding.layoutBtnTimer.visibility = View.VISIBLE
+            viewBinding.layoutBtnTimer.visibility = if (mode == CameraMode.PANORAMA) View.GONE else View.VISIBLE
             viewBinding.btnAutoLoop.visibility = View.GONE
             viewBinding.recordingDot.setBackgroundResource(R.drawable.bg_green_dot)
             viewBinding.recordingDot.visibility = View.VISIBLE
-            if (mode == CameraMode.NIGHT) {
+            if (mode == CameraMode.PANORAMA) {
+                viewBinding.tvRecordingStatus.text = "PANO"
+                viewBinding.tvRecordingStatus.setTextColor(Color.parseColor("#38BDF8"))
+                viewBinding.chronometer.text = "110° SWEEP"
+                viewBinding.chronometer.setTextColor(Color.parseColor("#7DD3FC"))
+            } else if (mode == CameraMode.NIGHT) {
                 viewBinding.tvRecordingStatus.text = "NIGHT"
                 viewBinding.tvRecordingStatus.setTextColor(Color.parseColor("#818CF8"))
                 viewBinding.chronometer.text = "MULTI-EXP · LOW LIGHT"
@@ -4979,7 +6438,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun switchCamera() {
-        if (recording != null) return
+        if (recording != null || isPanoramaCapturing || isPanoramaStitching || isNightStacking) return
+        motionBlurProcessor.reset()
+        panoramaStitcher.reset()
+        nightExposureStacker.reset()
+        latestMotionMetrics = MotionBlurProcessor.MotionMetrics.IDLE
         lensFacing = if (lensFacing == CameraSelector.DEFAULT_BACK_CAMERA) {
             CameraSelector.DEFAULT_FRONT_CAMERA
         } else {
@@ -5018,6 +6481,7 @@ class MainActivity : AppCompatActivity() {
                 val point = viewBinding.viewFinder.meteringPointFactory.createPoint(e.x, e.y)
                 val action = FocusMeteringAction.Builder(point).build()
                 cameraControl?.startFocusAndMetering(action)
+                playCameraCue(ToneGenerator.TONE_PROP_ACK, 40)
 
                 // Animate Focus Ring
                 viewBinding.focusRing.x = e.x - (viewBinding.focusRing.width / 2)
@@ -5042,6 +6506,9 @@ class MainActivity : AppCompatActivity() {
         })
 
         viewBinding.proOverlayView.setOnTouchListener { view, event ->
+            if (viewBinding.arFaceOverlayView.handleArTextTouch(event)) {
+                return@setOnTouchListener true
+            }
             var handled = scaleGestureDetector.onTouchEvent(event)
             if (!scaleGestureDetector.isInProgress) {
                 handled = gestureDetector.onTouchEvent(event) || handled
@@ -5159,6 +6626,7 @@ class MainActivity : AppCompatActivity() {
                     isPointInView(viewBinding.bottomControls, ev.rawX, ev.rawY) ||
                     isPointInView(viewBinding.zoomControls, ev.rawX, ev.rawY) ||
                     isPointInView(viewBinding.proStudioDrawer, ev.rawX, ev.rawY) ||
+                    isPointInView(viewBinding.arCalibrationDrawer, ev.rawX, ev.rawY) ||
                     (viewBinding.effectsStudioDrawer.visibility == View.VISIBLE && (
                         isPointInView(viewBinding.layoutEffectsHeader, ev.rawX, ev.rawY) ||
                         isPointInView(viewBinding.layoutEffectsSubItems, ev.rawX, ev.rawY)
@@ -5256,6 +6724,13 @@ class MainActivity : AppCompatActivity() {
                         isLastActionCreative = false
                         closedDrawer = true
                     }
+                    if (viewBinding.arCalibrationDrawer.visibility == View.VISIBLE &&
+                        !isPointInView(viewBinding.arCalibrationDrawer, ev.rawX, ev.rawY) &&
+                        !isPointInView(viewBinding.btnArCalibrate, ev.rawX, ev.rawY)
+                    ) {
+                        viewBinding.arCalibrationDrawer.visibility = View.GONE
+                        closedDrawer = true
+                    }
                     if (closedDrawer) {
                         window.decorView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                     }
@@ -5265,12 +6740,640 @@ class MainActivity : AppCompatActivity() {
         return super.dispatchTouchEvent(ev)
     }
 
+    private fun playCameraCue(toneType: Int, durationMs: Int = 80) {
+        if (isAudioMuted) return
+        try {
+            if (toneGenerator == null) {
+                toneGenerator = ToneGenerator(AudioManager.STREAM_SYSTEM, 65)
+            }
+            toneGenerator?.startTone(toneType, durationMs)
+        } catch (_: Throwable) {
+            // Ignore audio hardware init failures on silent/headless devices
+        }
+    }
+
+    private fun resolveVideoQuality(): Quality = when {
+        selectedVideoQualityLabel.startsWith("4K") -> Quality.UHD
+        selectedVideoQualityLabel.startsWith("FHD") -> Quality.FHD
+        selectedVideoQualityLabel.startsWith("SD") -> Quality.SD
+        else -> Quality.HD
+    }
+
+    private fun resolveFontTypeface(def: CustomFontDef?): Typeface {
+        val styleInt = if (def?.italic == true) Typeface.BOLD_ITALIC else Typeface.BOLD
+        return when (def?.category?.lowercase(Locale.ROOT)) {
+            "cinematic", "editorial" -> Typeface.create(Typeface.SERIF, styleInt)
+            "scifi", "tactical" -> Typeface.create(Typeface.SANS_SERIF, styleInt)
+            else -> Typeface.create(Typeface.MONOSPACE, styleInt)
+        }
+    }
+
+    private fun applyActiveFontPreset() {
+        val def = injectedFonts.getOrNull(activeFontIndex)
+        val baseTf = resolveFontTypeface(def)
+        val label = def?.name?.uppercase(Locale.ROOT) ?: "CYBER ORBITRON"
+        val txtHex = def?.colorHex ?: "#38BDF8"
+        val glwHex = def?.glowHex ?: "#0284C7"
+        viewBinding.tvWatermarkFontStatus.text = "Font: $label"
+        viewBinding.proOverlayView.setWatermarkStyle(baseTf, txtHex, glwHex)
+        if (!def?.family.isNullOrBlank()) {
+            cameraFontHelper?.loadDownloadableFont(
+                CameraFontHelper.FontConfig(
+                    name = def!!.name,
+                    familyQuery = "name=${def.family}&weight=700",
+                    textColor = Color.parseColor(txtHex),
+                    glowColor = Color.parseColor(glwHex)
+                )
+            ) { loadedTf ->
+                runOnUiThread {
+                    viewBinding.proOverlayView.setWatermarkStyle(loadedTf, txtHex, glwHex)
+                }
+            }
+        }
+    }
+
+    private fun createStudioChipView(label: String): TextView {
+        val density = resources.displayMetrics.density
+        return TextView(this).apply {
+            val lp = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                (36 * density).toInt()
+            )
+            lp.marginStart = (6 * density).toInt()
+            layoutParams = lp
+            minWidth = (86 * density).toInt()
+            setPadding((12 * density).toInt(), 0, (12 * density).toInt(), 0)
+            gravity = android.view.Gravity.CENTER
+            text = label.uppercase(Locale.ROOT)
+            setTextColor(Color.parseColor("#94A3B8"))
+            textSize = 10.5f
+            typeface = Typeface.MONOSPACE
+            setBackgroundResource(R.drawable.bg_cinema_button_inactive)
+        }
+    }
+
+    private fun setupDynamicConfigChips() {
+        for (cf in injectedCustomFilters) {
+            if (!filterPresetOrder.contains(cf.id)) {
+                filterPresetOrder.add(cf.id)
+                val chip = createStudioChipView(cf.name)
+                chip.setOnClickListener { setFilterPreset(cf.id) }
+                viewBinding.layoutFiltersContainer.addView(chip)
+                dynamicFilterChips.add(chip to cf.id)
+            }
+        }
+        for (cl in injectedCustomLenses) {
+            if (!arLensOrder.contains(cl.id)) {
+                arLensOrder.add(cl.id)
+                val chip = createStudioChipView(cl.name)
+                chip.setOnClickListener { setArLens(cl.id) }
+                viewBinding.layoutLensesContainer.addView(chip)
+                dynamicLensChips.add(chip to cl.id)
+            }
+        }
+    }
+
+    private fun setupProEnhancementControls() {
+        // Video Quality Pill Cycle (4K 60FPS -> FHD 60FPS -> FHD 30FPS -> HD 30FPS)
+        viewBinding.tvVideoQualityPill.setOnClickListener {
+            if (recording != null) {
+                showHudNotice("Stop recording before switching video quality", isWarning = true)
+                return@setOnClickListener
+            }
+            selectedVideoQualityLabel = when (selectedVideoQualityLabel) {
+                "4K 60FPS" -> "FHD 60FPS"
+                "FHD 60FPS" -> "FHD 30FPS"
+                "FHD 30FPS" -> "HD 30FPS"
+                else -> "4K 60FPS"
+            }
+            viewBinding.tvVideoQualityPill.text = selectedVideoQualityLabel
+            bindCameraUseCases()
+            showHudNotice("Video Quality: $selectedVideoQualityLabel")
+        }
+
+        // Histogram Mode Toggle (LUMA <-> RGB)
+        viewBinding.btnHistogramMode.setOnClickListener {
+            val nextRgb = !viewBinding.proOverlayView.histogramRgbMode
+            viewBinding.proOverlayView.histogramRgbMode = nextRgb
+            viewBinding.btnHistogramMode.text = if (nextRgb) "RGB" else "LUMA"
+            viewBinding.proOverlayView.invalidate()
+            showHudNotice(if (nextRgb) "Histogram: RGB Channels" else "Histogram: Luminance")
+        }
+
+        // Focus Peaking Toggle
+        viewBinding.switchFocusPeaking.setOnCheckedChangeListener { _, isChecked ->
+            viewBinding.proOverlayView.showFocusPeaking = isChecked
+            viewBinding.tvFocusPeakingStatus.text = if (isChecked) "Active · Cyan edge contour highlight" else "Focus Peaking: Inactive"
+            updateActiveInstrumentsCount()
+            showHudNotice("Focus Peaking ${if (isChecked) "ON" else "OFF"}")
+        }
+
+        // Burst Buffer Limit Cycle (15 -> 30 -> 50 -> 100)
+        viewBinding.btnBurstLimit.setOnClickListener {
+            maxBurstBuffer = when (maxBurstBuffer) {
+                15 -> 30
+                30 -> 50
+                50 -> 100
+                else -> 15
+            }
+            remainingBurstBuffer = maxBurstBuffer
+            viewBinding.btnBurstLimit.text = "${maxBurstBuffer} SHOTS"
+            viewBinding.tvBurstLimitStatus.text = "Buffer limit: ${maxBurstBuffer} RAW/JPEG frames"
+            showHudNotice("Burst Limit: ${maxBurstBuffer} Shots")
+        }
+
+        // Typography & Watermark Banner
+        viewBinding.switchWatermark.setOnCheckedChangeListener { _, isChecked ->
+            viewBinding.proOverlayView.showWatermark = isChecked
+            updateActiveInstrumentsCount()
+            viewBinding.proOverlayView.invalidate()
+            showHudNotice("Watermark ${if (isChecked) "ON" else "OFF"}")
+        }
+        viewBinding.btnCycleFont.setOnClickListener {
+            if (injectedFonts.isNotEmpty()) {
+                activeFontIndex = (activeFontIndex + 1) % injectedFonts.size
+                applyActiveFontPreset()
+                showHudNotice("Font: ${injectedFonts[activeFontIndex].name}")
+            }
+        }
+
+        // Creative Effect Intensity Slider (0% - 100%)
+        viewBinding.sbEffectIntensity.progress = (activeEffectIntensity * 100f).toInt().coerceIn(0, 100)
+        viewBinding.tvEffectIntensityVal.text = "${viewBinding.sbEffectIntensity.progress}%"
+        viewBinding.sbEffectIntensity.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
+                if (fromUser) {
+                    activeEffectIntensity = (progress / 100f).coerceIn(0f, 1f)
+                    viewBinding.tvEffectIntensityVal.text = "$progress%"
+                    openGLProcessor?.setEffectIntensity(currentShootingEffect, progress)
+                }
+            }
+            override fun onStartTrackingTouch(sb: SeekBar?) {}
+            override fun onStopTrackingTouch(sb: SeekBar?) {}
+        })
+    }
+
+    private fun pushArCalibrationToOverlay() {
+        viewBinding.arFaceOverlayView.setCalibration(
+            offsetX = calibOffsetX,
+            offsetY = calibOffsetY,
+            scale = calibScale,
+            rotationDeg = calibRotDeg,
+            eyeSpacing = calibEyeSpace,
+            forehead = calibForehead,
+            chin = calibChin,
+            debug = calibDebug
+        )
+    }
+
+    private fun resetArCalibrationValues() {
+        calibOffsetX = 0f; calibOffsetY = 0f; calibScale = 1.0f; calibRotDeg = 0f
+        calibEyeSpace = 1.0f; calibForehead = 0f; calibChin = 0f; calibDebug = false
+        comicHalftoneDensity = 1.0f; comicHalftoneDotSize = 1.0f; comicLabelDepth = 1.0f
+        viewBinding.sbCalibOffsetX.progress = 150
+        viewBinding.sbCalibOffsetY.progress = 150
+        viewBinding.sbCalibScale.progress = 50
+        viewBinding.sbCalibRotation.progress = 45
+        viewBinding.sbCalibEyeSpace.progress = 40
+        viewBinding.sbCalibForehead.progress = 80
+        viewBinding.sbCalibChin.progress = 80
+        viewBinding.switchArMeshDebug.isChecked = false
+        viewBinding.sbHalftoneDensity.progress = 33
+        viewBinding.sbHalftoneDotSize.progress = 47
+        viewBinding.sbComicLabelDepth.progress = 40
+        viewBinding.arFaceOverlayView.comicLabelDepth = 1.0f
+        filterManager.setComicHalftoneParams(1.0f, 1.0f)
+        openGLProcessor?.setComicHalftoneParams(1.0f, 1.0f)
+        pushArCalibrationToOverlay()
+        showHudNotice("AR Calibration Reset")
+    }
+
+    private fun toggleArCalibrationDrawer() {
+        val show = viewBinding.arCalibrationDrawer.visibility != View.VISIBLE
+        viewBinding.arCalibrationDrawer.visibility = if (show) View.VISIBLE else View.GONE
+        if (show) {
+            viewBinding.proStudioDrawer.visibility = View.GONE
+            viewBinding.layoutGuideFloatingBar.visibility = View.GONE
+        }
+        viewBinding.btnArCalibrate.setBackgroundResource(
+            if (show) R.drawable.bg_cinema_button_active else R.drawable.bg_cinema_button_inactive
+        )
+        viewBinding.btnArCalibrate.setTextColor(Color.parseColor(if (show) "#0F172A" else "#38BDF8"))
+        window.decorView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+    }
+
+    private fun updateBubbleStyleButtons(activeStyle: ARFaceOverlayView.ComicSpeechBubbleStyle) {
+        val btns = listOf(
+            viewBinding.btnBubbleSpeech to ARFaceOverlayView.ComicSpeechBubbleStyle.SPEECH,
+            viewBinding.btnBubbleThought to ARFaceOverlayView.ComicSpeechBubbleStyle.THOUGHT,
+            viewBinding.btnBubbleShout to ARFaceOverlayView.ComicSpeechBubbleStyle.SHOUT
+        )
+        for ((btn, st) in btns) {
+            val active = st == activeStyle
+            btn.setBackgroundResource(if (active) R.drawable.bg_cinema_button_active else R.drawable.bg_cinema_button_inactive)
+            btn.setTextColor(Color.parseColor(if (active) "#0F172A" else "#94A3B8"))
+        }
+    }
+
+    private fun applyComicPaletteIndex(idx: Int) {
+        val p = comicPalettePresets[idx % comicPalettePresets.size]
+        viewBinding.arFaceOverlayView.setComicOnomatopoeiaPalette(
+            p.powTop, p.powBottom, p.powExtrude, p.powBurst,
+            p.bamTop, p.bamBottom, p.bamExtrude, p.bamBurst,
+            p.zapTop, p.zapBottom, p.zapExtrude, p.zapBurst
+        )
+        viewBinding.btnComicPalette.text = "PALETTE: ${p.name}"
+    }
+
+    private fun setupArCalibrationControls() {
+        viewBinding.btnCloseArCalibDrawer.setOnClickListener {
+            viewBinding.arCalibrationDrawer.visibility = View.GONE
+            viewBinding.btnArCalibrate.setBackgroundResource(R.drawable.bg_cinema_button_inactive)
+            viewBinding.btnArCalibrate.setTextColor(Color.parseColor("#38BDF8"))
+        }
+        viewBinding.btnArCalibReset.setOnClickListener { resetArCalibrationValues() }
+
+        viewBinding.sbCalibOffsetX.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
+                val px = progress - 150
+                viewBinding.tvCalibOffsetX.text = "${px}px"
+                if (fromUser) { calibOffsetX = px / 600f; pushArCalibrationToOverlay() }
+            }
+            override fun onStartTrackingTouch(sb: SeekBar?) {}
+            override fun onStopTrackingTouch(sb: SeekBar?) {}
+        })
+        viewBinding.sbCalibOffsetY.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
+                val px = progress - 150
+                viewBinding.tvCalibOffsetY.text = "${px}px"
+                if (fromUser) { calibOffsetY = px / 600f; pushArCalibrationToOverlay() }
+            }
+            override fun onStartTrackingTouch(sb: SeekBar?) {}
+            override fun onStopTrackingTouch(sb: SeekBar?) {}
+        })
+        viewBinding.sbCalibScale.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
+                val s = 0.5f + (progress / 100f) * 1.5f
+                viewBinding.tvCalibScale.text = String.format(Locale.US, "%.2fx", s)
+                if (fromUser) { calibScale = s; pushArCalibrationToOverlay() }
+            }
+            override fun onStartTrackingTouch(sb: SeekBar?) {}
+            override fun onStopTrackingTouch(sb: SeekBar?) {}
+        })
+        viewBinding.sbCalibRotation.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
+                val deg = (progress - 45).toFloat()
+                viewBinding.tvCalibRotation.text = "${deg.toInt()}°"
+                if (fromUser) { calibRotDeg = deg; pushArCalibrationToOverlay() }
+            }
+            override fun onStartTrackingTouch(sb: SeekBar?) {}
+            override fun onStopTrackingTouch(sb: SeekBar?) {}
+        })
+        viewBinding.sbCalibEyeSpace.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
+                val es = 0.6f + (progress / 100f)
+                viewBinding.tvCalibEyeSpace.text = String.format(Locale.US, "%.2fx", es)
+                if (fromUser) { calibEyeSpace = es; pushArCalibrationToOverlay() }
+            }
+            override fun onStartTrackingTouch(sb: SeekBar?) {}
+            override fun onStopTrackingTouch(sb: SeekBar?) {}
+        })
+        viewBinding.sbCalibForehead.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
+                val v = progress - 80
+                viewBinding.tvCalibForehead.text = "${v}px"
+                if (fromUser) { calibForehead = v / 800f; pushArCalibrationToOverlay() }
+            }
+            override fun onStartTrackingTouch(sb: SeekBar?) {}
+            override fun onStopTrackingTouch(sb: SeekBar?) {}
+        })
+        viewBinding.sbCalibChin.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
+                val v = progress - 80
+                viewBinding.tvCalibChin.text = "${v}px"
+                if (fromUser) { calibChin = v / 800f; pushArCalibrationToOverlay() }
+            }
+            override fun onStartTrackingTouch(sb: SeekBar?) {}
+            override fun onStopTrackingTouch(sb: SeekBar?) {}
+        })
+        viewBinding.switchArMeshDebug.setOnCheckedChangeListener { _, isChecked ->
+            calibDebug = isChecked
+            pushArCalibrationToOverlay()
+        }
+
+        // Halftone Density (0.4x .. 2.2x)
+        viewBinding.sbHalftoneDensity.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
+                val d = 0.4f + (progress / 100f) * 1.8f
+                viewBinding.tvHalftoneDensity.text = String.format(Locale.US, "%.2fx", d)
+                if (fromUser) {
+                    comicHalftoneDensity = d
+                    filterManager.setComicHalftoneParams(d, comicHalftoneDotSize)
+                    openGLProcessor?.setComicHalftoneParams(d, comicHalftoneDotSize)
+                }
+            }
+            override fun onStartTrackingTouch(sb: SeekBar?) {}
+            override fun onStopTrackingTouch(sb: SeekBar?) {}
+        })
+        // Halftone Dot Size (0.3x .. 1.8x)
+        viewBinding.sbHalftoneDotSize.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
+                val ds = 0.3f + (progress / 100f) * 1.5f
+                viewBinding.tvHalftoneDotSize.text = String.format(Locale.US, "%.2fx", ds)
+                if (fromUser) {
+                    comicHalftoneDotSize = ds
+                    filterManager.setComicHalftoneParams(comicHalftoneDensity, ds)
+                    openGLProcessor?.setComicHalftoneParams(comicHalftoneDensity, ds)
+                }
+            }
+            override fun onStartTrackingTouch(sb: SeekBar?) {}
+            override fun onStopTrackingTouch(sb: SeekBar?) {}
+        })
+        // Comic Label 3D Depth (0.0x .. 2.5x)
+        viewBinding.sbComicLabelDepth.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
+                val dp = (progress / 100f) * 2.5f
+                viewBinding.tvComicLabelDepth.text = String.format(Locale.US, "%.2fx", dp)
+                if (fromUser) {
+                    comicLabelDepth = dp
+                    viewBinding.arFaceOverlayView.comicLabelDepth = dp
+                }
+            }
+            override fun onStartTrackingTouch(sb: SeekBar?) {}
+            override fun onStopTrackingTouch(sb: SeekBar?) {}
+        })
+
+        viewBinding.btnComicPalette.setOnClickListener {
+            comicPaletteIndex = (comicPaletteIndex + 1) % comicPalettePresets.size
+            applyComicPaletteIndex(comicPaletteIndex)
+            showHudNotice("Comic Palette: ${comicPalettePresets[comicPaletteIndex].name}")
+        }
+        viewBinding.btnComicRandomize.setOnClickListener {
+            val rng = java.util.Random()
+            val randomHex = {
+                val hues = listOf("#FACC15", "#EF4444", "#22D3EE", "#EC4899", "#A855F7", "#84CC16", "#F97316", "#3B82F6", "#FFFFFF", "#FFFBEB")
+                hues[rng.nextInt(hues.size)]
+            }
+            viewBinding.arFaceOverlayView.setComicOnomatopoeiaPalette(
+                "#FFFFFF", randomHex(), randomHex(), randomHex(),
+                "#FFFBEB", randomHex(), randomHex(), randomHex(),
+                "#ECFEFF", randomHex(), randomHex(), randomHex()
+            )
+            comicSfxPow = comicSfxChoices[rng.nextInt(comicSfxChoices.size)]
+            comicSfxBam = comicSfxChoices[rng.nextInt(comicSfxChoices.size)]
+            comicSfxZap = comicSfxChoices[rng.nextInt(comicSfxChoices.size)]
+            if (!viewBinding.arFaceOverlayView.enableComicOnomatopoeia && !viewBinding.arFaceOverlayView.enableComicSpeechBubble) {
+                toggleComicOnomatopoeia()
+            } else {
+                comicSfxHelper?.playComicBurst(comicSfxPow, comicSfxBam, comicSfxZap, 0.72f, isAudioMuted)
+            }
+            viewBinding.btnComicPalette.text = "PALETTE: RANDOM"
+            showHudNotice("Randomized Comic Palette & SFX!")
+        }
+
+        // Speech Bubble Studio Controls
+        viewBinding.switchComicSpeechBubble.setOnCheckedChangeListener { _, isChecked ->
+            viewBinding.arFaceOverlayView.enableComicSpeechBubble = isChecked
+            showHudNotice("Comic Speech Bubble ${if (isChecked) "ON" else "OFF"}")
+        }
+        viewBinding.btnBubbleSpeech.setOnClickListener {
+            viewBinding.arFaceOverlayView.speechBubbleStyle = ARFaceOverlayView.ComicSpeechBubbleStyle.SPEECH
+            updateBubbleStyleButtons(ARFaceOverlayView.ComicSpeechBubbleStyle.SPEECH)
+        }
+        viewBinding.btnBubbleThought.setOnClickListener {
+            viewBinding.arFaceOverlayView.speechBubbleStyle = ARFaceOverlayView.ComicSpeechBubbleStyle.THOUGHT
+            updateBubbleStyleButtons(ARFaceOverlayView.ComicSpeechBubbleStyle.THOUGHT)
+        }
+        viewBinding.btnBubbleShout.setOnClickListener {
+            viewBinding.arFaceOverlayView.speechBubbleStyle = ARFaceOverlayView.ComicSpeechBubbleStyle.SHOUT
+            updateBubbleStyleButtons(ARFaceOverlayView.ComicSpeechBubbleStyle.SHOUT)
+        }
+        viewBinding.btnCycleBubblePhrase.setOnClickListener {
+            comicBubblePhraseIndex = (comicBubblePhraseIndex + 1) % comicBubblePhrases.size
+            val phrase = comicBubblePhrases[comicBubblePhraseIndex]
+            viewBinding.arFaceOverlayView.speechBubbleText = phrase
+            viewBinding.btnCycleBubblePhrase.text = "TEXT: $phrase"
+            if (!viewBinding.switchComicSpeechBubble.isChecked) {
+                viewBinding.switchComicSpeechBubble.isChecked = true
+            }
+        }
+
+        // AR Batch Queue & Auto-Adapt Studio
+        viewBinding.switchArAutoAdapt.setOnCheckedChangeListener { _, isChecked ->
+            isAutoAdaptEnabled = isChecked
+            showHudNotice("AR Auto-Adapt ${if (isChecked) "ON" else "OFF"}")
+        }
+        viewBinding.btnBatchSelectAll.setOnClickListener {
+            batchLensQueue.clear()
+            batchLensQueue.addAll(arLensOrder.filter { it != "none" })
+            batchStepIndex = 0
+            updateBatchQueueHud()
+            if (batchLensQueue.isNotEmpty()) setArLens(batchLensQueue[0])
+        }
+        viewBinding.btnBatchClear.setOnClickListener {
+            stopBatchLoop()
+            batchLensQueue.clear()
+            batchStepIndex = 0
+            updateBatchQueueHud()
+            setArLens("none")
+        }
+        viewBinding.btnBatchPrev.setOnClickListener { stepBatchQueue(-1) }
+        viewBinding.btnBatchNext.setOnClickListener { stepBatchQueue(1) }
+        viewBinding.btnBatchPlayPause.setOnClickListener {
+            if (batchLensQueue.isEmpty()) {
+                batchLensQueue.addAll(arLensOrder.filter { it != "none" })
+            }
+            if (isBatchPlaying) {
+                stopBatchLoop()
+            } else {
+                startBatchLoop()
+            }
+        }
+        updateBatchQueueHud()
+    }
+
+    private fun toggleArBatchMode() {
+        isBatchModeActive = !isBatchModeActive
+        if (isBatchModeActive && batchLensQueue.isEmpty()) {
+            batchLensQueue.addAll(arLensOrder.filter { it != "none" })
+            batchStepIndex = 0
+        }
+        if (isBatchModeActive) {
+            viewBinding.arCalibrationDrawer.visibility = View.VISIBLE
+            startBatchLoop()
+        } else {
+            stopBatchLoop()
+        }
+        viewBinding.btnArBatch.text = if (isBatchModeActive) "BATCH: ON" else "BATCH: OFF"
+        viewBinding.btnArBatch.setBackgroundResource(
+            if (isBatchModeActive) R.drawable.bg_cinema_button_active else R.drawable.bg_cinema_button_inactive
+        )
+        viewBinding.btnArBatch.setTextColor(Color.parseColor(if (isBatchModeActive) "#0F172A" else "#94A3B8"))
+    }
+
+    private fun stepBatchQueue(delta: Int) {
+        if (batchLensQueue.isEmpty()) return
+        batchStepIndex = ((batchStepIndex + delta) % batchLensQueue.size + batchLensQueue.size) % batchLensQueue.size
+        setArLens(batchLensQueue[batchStepIndex])
+        updateBatchQueueHud()
+    }
+
+    private fun startBatchLoop() {
+        stopBatchLoop()
+        if (batchLensQueue.isEmpty()) return
+        isBatchPlaying = true
+        setArLens(batchLensQueue[batchStepIndex % batchLensQueue.size])
+        updateBatchQueueHud()
+        batchRunnable = object : Runnable {
+            override fun run() {
+                if (!isBatchPlaying || batchLensQueue.isEmpty()) return
+                stepBatchQueue(1)
+                batchHandler.postDelayed(this, 2400L)
+            }
+        }
+        batchHandler.postDelayed(batchRunnable!!, 2400L)
+    }
+
+    private fun stopBatchLoop() {
+        isBatchPlaying = false
+        batchRunnable?.let { batchHandler.removeCallbacks(it) }
+        batchRunnable = null
+        updateBatchQueueHud()
+    }
+
+    private fun updateBatchQueueHud() {
+        val total = batchLensQueue.size
+        val step = if (total > 0) (batchStepIndex % total) + 1 else 0
+        viewBinding.tvBatchQueueStatus.text = "QUEUE: $step/$total ${if (isBatchPlaying) "· PLAYING" else "· PAUSED"}"
+        viewBinding.btnBatchPlayPause.text = if (isBatchPlaying) "PAUSE" else "PLAY"
+    }
+
+    private fun syncOverlayToVideoProcessor() {
+        val proc = openGLProcessor ?: return
+        val overlayView = viewBinding.arFaceOverlayView
+        if (!overlayView.hasAnyVisibleOverlay()) {
+            proc.updateOverlayBitmap(null)
+            return
+        }
+        val w = overlayView.width.takeIf { it > 0 } ?: 720
+        val h = overlayView.height.takeIf { it > 0 } ?: 1280
+        val bmp = overlayView.renderExportOverlayBitmap(w, h)
+        proc.updateOverlayBitmap(bmp)
+    }
+
+    private fun showArTextStudioDialog() {
+        val overlay = viewBinding.arFaceOverlayView
+        val selected = overlay.arTextItems.firstOrNull { it.id == overlay.selectedTextId } ?: overlay.arTextItems.lastOrNull()
+        val colors = listOf("#FFFFFF", "#FACC15", "#22D3EE", "#FB7185", "#34D399", "#A78BFA")
+        val styles = ARFaceOverlayView.ArTextStyle.values()
+
+        var chosenColor = selected?.colorHex ?: "#FACC15"
+        var chosenStyle = selected?.style ?: ARFaceOverlayView.ArTextStyle.NEON
+        var chosenScale = selected?.scale ?: 1.0f
+
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(48, 28, 48, 12)
+        }
+        val input = EditText(this).apply {
+            hint = "Write AR text (hold & drag on screen)"
+            setText(selected?.text ?: "HELLO AR!")
+            setSingleLine(true)
+        }
+        val tvSize = TextView(this).apply {
+            text = "Size: ${(chosenScale * 100).toInt()}%"
+            setPadding(0, 18, 0, 4)
+        }
+        val sbSize = SeekBar(this).apply {
+            max = 185
+            progress = ((chosenScale - 0.55f) * 100f).toInt().coerceIn(0, 185)
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(sb: SeekBar?, p: Int, fromUser: Boolean) {
+                    chosenScale = 0.55f + (p / 100f)
+                    tvSize.text = "Size: ${(chosenScale * 100).toInt()}%"
+                }
+                override fun onStartTrackingTouch(sb: SeekBar?) {}
+                override fun onStopTrackingTouch(sb: SeekBar?) {}
+            })
+        }
+        val btnStyle = TextView(this).apply {
+            text = "Style: ${chosenStyle.name} (Tap to cycle)"
+            setPadding(0, 18, 0, 12)
+            setTextColor(Color.parseColor("#38BDF8"))
+            setOnClickListener {
+                chosenStyle = styles[(chosenStyle.ordinal + 1) % styles.size]
+                text = "Style: ${chosenStyle.name} (Tap to cycle)"
+            }
+        }
+        val btnColor = TextView(this).apply {
+            text = "Color: ${chosenColor} (Tap to cycle)"
+            setPadding(0, 6, 0, 12)
+            setTextColor(Color.parseColor(chosenColor))
+            setOnClickListener {
+                val idx = colors.indexOf(chosenColor).let { if (it < 0) 0 else (it + 1) % colors.size }
+                chosenColor = colors[idx]
+                text = "Color: ${chosenColor} (Tap to cycle)"
+                setTextColor(Color.parseColor(chosenColor))
+            }
+        }
+        container.addView(input)
+        container.addView(tvSize)
+        container.addView(sbSize)
+        container.addView(btnStyle)
+        container.addView(btnColor)
+
+        val builder = AlertDialog.Builder(this)
+            .setTitle("AR Text Studio (Photo & Video)")
+            .setView(container)
+            .setPositiveButton(if (selected != null) "Update" else "Place Text") { _, _ ->
+                val txt = input.text.toString().trim().ifEmpty { "HELLO AR!" }
+                if (selected != null) {
+                    overlay.updateSelectedArText(txt, chosenScale, chosenColor, chosenStyle)
+                } else {
+                    overlay.addOrSelectArText(txt, chosenScale, chosenColor, chosenStyle)
+                }
+                viewBinding.btnArTextStudio.text = if (overlay.hasArTextItems()) "TEXT (${overlay.arTextItems.size})" else "Aa TEXT"
+                showHudNotice("Hold & drag AR text anywhere on screen")
+            }
+            .setNeutralButton("Add New") { _, _ ->
+                val txt = input.text.toString().trim().ifEmpty { "HELLO AR!" }
+                overlay.addOrSelectArText(txt, chosenScale, chosenColor, chosenStyle)
+                viewBinding.btnArTextStudio.text = "TEXT (${overlay.arTextItems.size})"
+                showHudNotice("Added AR text — hold & drag to move")
+            }
+        if (selected != null) {
+            builder.setNegativeButton("Delete") { _, _ ->
+                overlay.removeSelectedArText()
+                viewBinding.btnArTextStudio.text = if (overlay.hasArTextItems()) "TEXT (${overlay.arTextItems.size})" else "Aa TEXT"
+            }
+        } else {
+            builder.setNegativeButton("Cancel", null)
+        }
+        builder.show()
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         dollyZoomAnimator?.cancel()
+        panoramaFallbackHandler.removeCallbacksAndMessages(null)
+        nightHandler.removeCallbacksAndMessages(null)
+        if (::ecoPowerManager.isInitialized) {
+            ecoPowerManager.unregister()
+        }
+        if (::thermalGuardManager.isInitialized) {
+            thermalGuardManager.unregister()
+        }
+        panoramaStitcher.reset()
+        nightExposureStacker.reset()
+        clearPanoramaSlices()
         stylizeHandler.removeCallbacksAndMessages(null)
+        batchHandler.removeCallbacksAndMessages(null)
+        autoLoopHandler.removeCallbacksAndMessages(null)
+        motionBlurProcessor.reset()
         stylizeExecutor?.shutdownNow()
         openGLProcessor?.release()
+        comicSfxHelper?.release()
+        try { toneGenerator?.release() } catch (_: Throwable) {}
         sensorManager.unregisterListener(sensorEventListener)
         faceMeshHelper?.clear()
         cameraExecutor.shutdown()

@@ -1,5 +1,6 @@
 package com.example.cameraxapp.filter
 
+import android.graphics.Bitmap
 import android.graphics.SurfaceTexture
 import android.opengl.EGL14
 import android.opengl.EGLConfig
@@ -9,6 +10,7 @@ import android.opengl.EGLExt
 import android.opengl.EGLSurface
 import android.opengl.GLES11Ext
 import android.opengl.GLES20
+import android.opengl.GLUtils
 import android.opengl.Matrix
 import android.os.Handler
 import android.os.HandlerThread
@@ -47,6 +49,7 @@ class OpenGLSurfaceProcessor : SurfaceProcessor, SurfaceTexture.OnFrameAvailable
     private var progBilatV = 0
     private var progSobelEdge = 0
     private var progComicComposite = 0
+    private var progOverlay = 0
 
     private val comicFboIds = IntArray(3)
     private val comicFboTexIds = IntArray(3)
@@ -54,6 +57,11 @@ class OpenGLSurfaceProcessor : SurfaceProcessor, SurfaceTexture.OnFrameAvailable
     private var comicFboH = 0
 
     private var oesTextureId = 0
+    private var overlayTextureId = 0
+    private var hasOverlayTexture = false
+    private val overlayLock = Any()
+    private var pendingOverlayBitmap: Bitmap? = null
+    private var overlayBitmapDirty = false
     private var activeSurfaceTexture: SurfaceTexture? = null
     private val texMatrix = FloatArray(16)
     private val holderTexMatrix = FloatArray(16)
@@ -159,11 +167,30 @@ class OpenGLSurfaceProcessor : SurfaceProcessor, SurfaceTexture.OnFrameAvailable
     @Volatile
     private var halftoneDotSize: Float = 1.0f
 
+    @Volatile
+    private var motionBlurDirX: Float = 1.0f
+
+    @Volatile
+    private var motionBlurDirY: Float = 0.0f
+
+    @Volatile
+    private var motionBlurMagnitude: Float = 0.18f
+
     fun getExecutor(): Executor = glExecutor
 
     fun setComicHalftoneParams(density: Float, dotSize: Float) {
         halftoneDensity = density.coerceIn(0.4f, 2.2f)
         halftoneDotSize = dotSize.coerceIn(0.3f, 1.8f)
+    }
+
+    /**
+     * Receives smoothed directional motion vectors computed on the CameraX ImageAnalysis
+     * background thread and injects them into the real-time OpenGL ES video recording shader.
+     */
+    fun setMotionBlurVector(dirX: Float, dirY: Float, magnitude: Float) {
+        motionBlurDirX = dirX.coerceIn(-1f, 1f)
+        motionBlurDirY = dirY.coerceIn(-1f, 1f)
+        motionBlurMagnitude = magnitude.coerceIn(0f, 1f)
     }
 
     fun setFilterPreset(preset: FilterManager.FilterPreset) {
@@ -191,6 +218,17 @@ class OpenGLSurfaceProcessor : SurfaceProcessor, SurfaceTexture.OnFrameAvailable
 
     fun setNightBoost(enabled: Boolean) {
         nightBoost = enabled
+    }
+
+    /**
+     * Uploads an RGBA overlay bitmap (containing custom dragged AR text & active AR lenses)
+     * so both Preview and VideoCapture MP4 frames composite it cleanly in OpenGL ES.
+     */
+    fun updateOverlayBitmap(bitmap: Bitmap?) {
+        synchronized(overlayLock) {
+            pendingOverlayBitmap = bitmap
+            overlayBitmapDirty = true
+        }
     }
 
     private fun ensureGlInitialized() {
@@ -226,15 +264,25 @@ class OpenGLSurfaceProcessor : SurfaceProcessor, SurfaceTexture.OnFrameAvailable
         progBilatV = createProgram(PASS_VERTEX_SHADER, BILAT_V_FRAGMENT_SHADER)
         progSobelEdge = createProgram(PASS_VERTEX_SHADER, SOBEL_2D_FRAGMENT_SHADER)
         progComicComposite = createProgram(VERTEX_SHADER, COMIC_COMPOSITE_FRAGMENT_SHADER)
+        progOverlay = createProgram(OVERLAY_VERTEX_SHADER, OVERLAY_FRAGMENT_SHADER)
 
-        val textures = IntArray(1)
-        GLES20.glGenTextures(1, textures, 0)
+        val textures = IntArray(2)
+        GLES20.glGenTextures(2, textures, 0)
         oesTextureId = textures[0]
+        overlayTextureId = textures[1]
+
         GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, oesTextureId)
         GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR)
         GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR)
         GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
         GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
+
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, overlayTextureId)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, 0)
     }
 
     private fun ensureComicFbos(targetW: Int, targetH: Int) {
@@ -367,6 +415,21 @@ class OpenGLSurfaceProcessor : SurfaceProcessor, SurfaceTexture.OnFrameAvailable
 
             val isMultiPassComic = (filterCode == 7 || effectCode in 1..6)
 
+            synchronized(overlayLock) {
+                if (overlayBitmapDirty) {
+                    val bmp = pendingOverlayBitmap
+                    if (bmp != null && !bmp.isRecycled && overlayTextureId != 0) {
+                        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, overlayTextureId)
+                        GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, bmp, 0)
+                        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, 0)
+                        hasOverlayTexture = true
+                    } else {
+                        hasOverlayTexture = false
+                    }
+                    overlayBitmapDirty = false
+                }
+            }
+
             for (holder in outputSurfaces) {
                 val out = holder.surfaceOutput
                 EGL14.eglMakeCurrent(eglDisplay, holder.eglSurface, holder.eglSurface, eglContext)
@@ -476,8 +539,27 @@ class OpenGLSurfaceProcessor : SurfaceProcessor, SurfaceTexture.OnFrameAvailable
                         1f / inputWidth.toFloat(),
                         1f / inputHeight.toFloat()
                     )
+                    GLES20.glUniform3f(
+                        GLES20.glGetUniformLocation(glProgram, "uMotionVector"),
+                        motionBlurDirX,
+                        motionBlurDirY,
+                        motionBlurMagnitude
+                    )
 
                     GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
+                }
+
+                // Alpha-composite freehand AR Text & AR Lens overlay into recorded video & preview frames
+                if (hasOverlayTexture && progOverlay != 0 && overlayTextureId != 0) {
+                    GLES20.glEnable(GLES20.GL_BLEND)
+                    GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA)
+                    GLES20.glUseProgram(progOverlay)
+                    bindQuadAttributes(progOverlay)
+                    GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
+                    GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, overlayTextureId)
+                    GLES20.glUniform1i(GLES20.glGetUniformLocation(progOverlay, "uOverlayTex"), 0)
+                    GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
+                    GLES20.glDisable(GLES20.GL_BLEND)
                 }
 
                 EGLExt.eglPresentationTimeANDROID(eglDisplay, holder.eglSurface, timestampNs)
@@ -516,11 +598,20 @@ class OpenGLSurfaceProcessor : SurfaceProcessor, SurfaceTexture.OnFrameAvailable
                 GLES20.glDeleteTextures(1, intArrayOf(oesTextureId), 0)
                 oesTextureId = 0
             }
+            if (overlayTextureId != 0) {
+                GLES20.glDeleteTextures(1, intArrayOf(overlayTextureId), 0)
+                overlayTextureId = 0
+            }
+            synchronized(overlayLock) {
+                pendingOverlayBitmap = null
+                hasOverlayTexture = false
+            }
             if (glProgram != 0) { GLES20.glDeleteProgram(glProgram); glProgram = 0 }
             if (progOesBilatH != 0) { GLES20.glDeleteProgram(progOesBilatH); progOesBilatH = 0 }
             if (progBilatV != 0) { GLES20.glDeleteProgram(progBilatV); progBilatV = 0 }
             if (progSobelEdge != 0) { GLES20.glDeleteProgram(progSobelEdge); progSobelEdge = 0 }
             if (progComicComposite != 0) { GLES20.glDeleteProgram(progComicComposite); progComicComposite = 0 }
+            if (progOverlay != 0) { GLES20.glDeleteProgram(progOverlay); progOverlay = 0 }
             if (eglDisplay != EGL14.EGL_NO_DISPLAY) {
                 EGL14.eglMakeCurrent(eglDisplay, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_CONTEXT)
                 if (pbufferSurface != EGL14.EGL_NO_SURFACE) EGL14.eglDestroySurface(eglDisplay, pbufferSurface)
@@ -541,21 +632,33 @@ class OpenGLSurfaceProcessor : SurfaceProcessor, SurfaceTexture.OnFrameAvailable
         FilterManager.FilterPreset.CLASSIC_MONO,
         FilterManager.FilterPreset.HIGH_CONTRAST_NOIR,
         FilterManager.FilterPreset.ILFORD_GRAIN,
+        FilterManager.FilterPreset.NOIR_CONTRAST,
         FilterManager.FilterPreset.LUT_NOIR_CINEMA -> 1
         FilterManager.FilterPreset.VINTAGE,
         FilterManager.FilterPreset.ANTIQUE_SEPIA,
         FilterManager.FilterPreset.SILVER_GELATIN,
-        FilterManager.FilterPreset.GOLDEN_NOSTALGIA -> 2
+        FilterManager.FilterPreset.GOLDEN_NOSTALGIA,
+        FilterManager.FilterPreset.PORTRA_400,
+        FilterManager.FilterPreset.SUNSET_WARMTH,
+        FilterManager.FilterPreset.SUPER8_VINTAGE -> 2
         FilterManager.FilterPreset.CINEMATIC,
-        FilterManager.FilterPreset.LUT_TEAL_ORANGE -> 3
+        FilterManager.FilterPreset.LUT_TEAL_ORANGE,
+        FilterManager.FilterPreset.TEAL_ORANGE -> 3
         FilterManager.FilterPreset.CYBERPUNK,
         FilterManager.FilterPreset.LUT_MIDNIGHT_NEON -> 4
         FilterManager.FilterPreset.HDR,
         FilterManager.FilterPreset.VELVIA_LANDSCAPE,
         FilterManager.FilterPreset.LUT_REC709 -> 5
         FilterManager.FilterPreset.LUT_FLAT_LOG,
-        FilterManager.FilterPreset.LUT_MATTE_CINEMA -> 6
+        FilterManager.FilterPreset.LUT_MATTE_CINEMA,
+        FilterManager.FilterPreset.FUJI_400H,
+        FilterManager.FilterPreset.PASTEL_DREAM -> 6
         FilterManager.FilterPreset.COMIC_BOOK -> 7
+        FilterManager.FilterPreset.MATRIX_CODE -> 8
+        FilterManager.FilterPreset.NORDIC_BLUE,
+        FilterManager.FilterPreset.NORDIC_SLATE,
+        FilterManager.FilterPreset.ARCTIC_MIST,
+        FilterManager.FilterPreset.LUT_ANAMORPHIC_CYAN -> 9
         else -> 0
     }
 
@@ -587,6 +690,7 @@ class OpenGLSurfaceProcessor : SurfaceProcessor, SurfaceTexture.OnFrameAvailable
         "tilt_shift" -> 25
         "vignette" -> 26
         "soft_halation", "anamorphic_flare" -> 27
+        "motion_blur" -> 28
         else -> 0
     }
 
@@ -669,6 +773,11 @@ class OpenGLSurfaceProcessor : SurfaceProcessor, SurfaceTexture.OnFrameAvailable
                     col = (col - 0.5) * 1.22 + 0.5;
                 } else if (uFilterMode == 6) {
                     col = col * 0.72 + 0.12;
+                } else if (uFilterMode == 8) {
+                    float gM = luma(col);
+                    col = vec3(gM * 0.25, clamp(gM * 1.38 + 0.05, 0.0, 1.0), gM * 0.35);
+                } else if (uFilterMode == 9) {
+                    col = vec3(col.r * 0.88, col.g * 1.04, col.b * 1.28 + 0.04);
                 }
                 return col;
             }
@@ -907,6 +1016,7 @@ class OpenGLSurfaceProcessor : SurfaceProcessor, SurfaceTexture.OnFrameAvailable
             uniform float uNightBoost;
             uniform float uTime;
             uniform vec2 uTexelSize;
+            uniform vec3 uMotionVector;
 
             float luma(vec3 c) {
                 return dot(c, vec3(0.299, 0.587, 0.114));
@@ -1052,6 +1162,11 @@ class OpenGLSurfaceProcessor : SurfaceProcessor, SurfaceTexture.OnFrameAvailable
                     color = (color - 0.5) * 1.22 + 0.5;
                 } else if (uFilterMode == 6) {
                     color = color * 0.72 + 0.12;
+                } else if (uFilterMode == 8) {
+                    float gM = luma(color);
+                    color = vec3(gM * 0.25, clamp(gM * 1.38 + 0.05, 0.0, 1.0), gM * 0.35);
+                } else if (uFilterMode == 9) {
+                    color = vec3(color.r * 0.88, color.g * 1.04, color.b * 1.28 + 0.04);
                 }
 
                 vec3 baseEffectColor = texture2D(sTexture, clamp(vTexCoord, 0.0, 1.0)).rgb;
@@ -1072,6 +1187,11 @@ class OpenGLSurfaceProcessor : SurfaceProcessor, SurfaceTexture.OnFrameAvailable
                     baseEffectColor = (baseEffectColor - 0.5) * 1.22 + 0.5;
                 } else if (uFilterMode == 6) {
                     baseEffectColor = baseEffectColor * 0.72 + 0.12;
+                } else if (uFilterMode == 8) {
+                    float gM0 = luma(baseEffectColor);
+                    baseEffectColor = vec3(gM0 * 0.25, clamp(gM0 * 1.38 + 0.05, 0.0, 1.0), gM0 * 0.35);
+                } else if (uFilterMode == 9) {
+                    baseEffectColor = vec3(baseEffectColor.r * 0.88, baseEffectColor.g * 1.04, baseEffectColor.b * 1.28 + 0.04);
                 }
 
                 float edge = xdogEdge(uv, 1.75);
@@ -1230,6 +1350,19 @@ class OpenGLSurfaceProcessor : SurfaceProcessor, SurfaceTexture.OnFrameAvailable
                     color *= clamp(1.08 - dist * 1.05, 0.25, 1.0);
                 } else if (uEffectMode == 27) {
                     color += smoothSample(uv, 3.5) * 0.18;
+                } else if (uEffectMode == 28) {
+                    vec2 dir = normalize(vec2(uMotionVector.x, uMotionVector.y) + vec2(0.0001, 0.0));
+                    float spread = (4.0 + 18.0 * clamp(uMotionVector.z, 0.12, 1.0)) * clamp(uEffectIntensity, 0.15, 1.0);
+                    vec2 stepUv = dir * uTexelSize * (spread * 0.25);
+                    vec3 acc = vec3(0.0);
+                    float wSum = 0.0;
+                    for (int k = -4; k <= 4; k++) {
+                        float fk = float(k);
+                        float w = 1.0 - (abs(fk) / 5.2);
+                        acc += texture2D(sTexture, clamp(uv + stepUv * fk, 0.0, 1.0)).rgb * w;
+                        wSum += w;
+                    }
+                    color = acc / max(wSum, 0.001);
                 }
 
                 if (uEffectMode > 0) {
@@ -1241,6 +1374,25 @@ class OpenGLSurfaceProcessor : SurfaceProcessor, SurfaceTexture.OnFrameAvailable
                 color = mix(vec3(gFinal), color, uAdjustments.z);
                 color = (color - 0.5) * uAdjustments.y + 0.5 + uAdjustments.x;
                 gl_FragColor = vec4(clamp(color, 0.0, 1.0), 1.0);
+            }
+        """
+
+        private const val OVERLAY_VERTEX_SHADER = """
+            attribute vec2 aPosition;
+            attribute vec2 aTexCoord;
+            varying vec2 vTexCoord;
+            void main() {
+                gl_Position = vec4(aPosition, 0.0, 1.0);
+                vTexCoord = vec2(aTexCoord.x, 1.0 - aTexCoord.y);
+            }
+        """
+
+        private const val OVERLAY_FRAGMENT_SHADER = """
+            precision mediump float;
+            varying vec2 vTexCoord;
+            uniform sampler2D uOverlayTex;
+            void main() {
+                gl_FragColor = texture2D(uOverlayTex, vTexCoord);
             }
         """
 

@@ -1,0 +1,328 @@
+package com.example.cameraxapp.night;
+
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.graphics.ImageFormat;
+import android.graphics.Matrix;
+import android.graphics.Rect;
+import android.graphics.YuvImage;
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+import androidx.camera.core.ImageProxy;
+import java.io.ByteArrayOutputStream;
+import java.nio.ByteBuffer;
+import java.util.List;
+
+/**
+ * Java Reference: CameraX ImageAnalysis Low-Light Detector & Multi-Frame Night Exposure Stacker.
+ */
+public class NightExposureStacker {
+
+    public enum NightState {
+        BRIGHT, LOW_LIGHT_DETECTED, STABILIZING, AUTO_TRIGGERED, ARMED_COOLDOWN
+    }
+
+    public static class LowLightAnalysis {
+        public final float avgLuma;
+        public final float darkPixelRatio;
+        public final boolean isLowLight;
+        public final boolean isSceneSteady;
+        public final float dwellProgress;
+        public final int recommendedFrameCount;
+        public final boolean shouldAutoTriggerStack;
+        public final NightState state;
+
+        public LowLightAnalysis(float avgLuma, float darkPixelRatio, boolean isLowLight,
+                                boolean isSceneSteady, float dwellProgress,
+                                int recommendedFrameCount, boolean shouldAutoTriggerStack,
+                                NightState state) {
+            this.avgLuma = avgLuma;
+            this.darkPixelRatio = darkPixelRatio;
+            this.isLowLight = isLowLight;
+            this.isSceneSteady = isSceneSteady;
+            this.dwellProgress = dwellProgress;
+            this.recommendedFrameCount = recommendedFrameCount;
+            this.shouldAutoTriggerStack = shouldAutoTriggerStack;
+            this.state = state;
+        }
+    }
+
+    private static final float ENTER_LOW_LIGHT_LUMA = 58f;
+    private static final float EXIT_LOW_LIGHT_LUMA = 68f;
+    private static final long LOW_LIGHT_DWELL_MS = 1500L;
+    private static final long AUTO_TRIGGER_COOLDOWN_MS = 14000L;
+
+    private boolean hasSample = false;
+    private float smoothedLuma = 128f;
+    private float prevRawLuma = 128f;
+    private boolean isLowLightActive = false;
+    private long steadyStartMs = 0L;
+    private long lastAutoTriggerMs = 0L;
+    private boolean triggeredInDarkEpisode = false;
+    public volatile float lastAvgLuma = 128f;
+    public volatile int lastRecommendedFrames = 4;
+
+    public void reset() {
+        hasSample = false;
+        smoothedLuma = 128f;
+        prevRawLuma = 128f;
+        isLowLightActive = false;
+        steadyStartMs = 0L;
+        triggeredInDarkEpisode = false;
+    }
+
+    public void markAutoTriggered() {
+        lastAutoTriggerMs = System.currentTimeMillis();
+        triggeredInDarkEpisode = true;
+        steadyStartMs = 0L;
+    }
+
+    /**
+     * Step 1: Measure Y-plane luminance and shadow ratio via CameraX ImageAnalysis.
+     */
+    @NonNull
+    public LowLightAnalysis analyzeLowLight(@NonNull ImageProxy imageProxy) {
+        if (imageProxy.getPlanes().length == 0) {
+            return new LowLightAnalysis(128f, 0f, false, true, 0f, 3, false, NightState.BRIGHT);
+        }
+        ImageProxy.PlaneProxy yPlane = imageProxy.getPlanes()[0];
+        ByteBuffer yBuf = yPlane.getBuffer();
+        int w = Math.max(1, imageProxy.getWidth());
+        int h = Math.max(1, imageProxy.getHeight());
+        int rowStride = yPlane.getRowStride();
+        int pixelStride = yPlane.getPixelStride();
+        int limit = yBuf.limit();
+
+        int stepX = Math.max(4, w / 48);
+        int stepY = Math.max(4, h / 36);
+        long lumaSum = 0;
+        int darkCount = 0;
+        int total = 0;
+
+        for (int y = 0; y < h; y += stepY) {
+            int rowOff = y * rowStride;
+            for (int x = 0; x < w; x += stepX) {
+                int idx = rowOff + x * pixelStride;
+                if (idx >= 0 && idx < limit) {
+                    int luma = yBuf.get(idx) & 0xFF;
+                    lumaSum += luma;
+                    if (luma < 44) darkCount++;
+                    total++;
+                }
+            }
+        }
+
+        float rawLuma = (total > 0) ? (lumaSum / (float) total) : 128f;
+        float darkRatio = (total > 0) ? (darkCount / (float) total) : 0f;
+        float lumaDelta = hasSample ? Math.abs(rawLuma - prevRawLuma) : 0f;
+        prevRawLuma = rawLuma;
+
+        if (hasSample) {
+            smoothedLuma = smoothedLuma * 0.72f + rawLuma * 0.28f;
+        } else {
+            hasSample = true;
+            smoothedLuma = rawLuma;
+        }
+        lastAvgLuma = smoothedLuma;
+
+        if (!isLowLightActive && (smoothedLuma < ENTER_LOW_LIGHT_LUMA || (darkRatio > 0.62f && smoothedLuma < 72f))) {
+            isLowLightActive = true;
+            steadyStartMs = 0L;
+        } else if (isLowLightActive && smoothedLuma > EXIT_LOW_LIGHT_LUMA && darkRatio < 0.42f) {
+            isLowLightActive = false;
+            steadyStartMs = 0L;
+            triggeredInDarkEpisode = false;
+        }
+
+        int frameCount = (smoothedLuma < 28f || darkRatio > 0.80f) ? 5 : (isLowLightActive ? 4 : 3);
+        lastRecommendedFrames = frameCount;
+
+        long now = System.currentTimeMillis();
+        boolean isSteady = lumaDelta <= 4.8f;
+        float dwellProgress = 0f;
+        boolean shouldTrigger = false;
+
+        if (isLowLightActive) {
+            if (!isSteady) {
+                steadyStartMs = 0L;
+            } else {
+                if (steadyStartMs == 0L) steadyStartMs = now;
+                long dwellMs = Math.max(0L, now - steadyStartMs);
+                dwellProgress = Math.min(1f, dwellMs / (float) LOW_LIGHT_DWELL_MS);
+                boolean cooldownOk = (now - lastAutoTriggerMs) >= AUTO_TRIGGER_COOLDOWN_MS;
+                if (!triggeredInDarkEpisode && cooldownOk && dwellMs >= LOW_LIGHT_DWELL_MS) {
+                    shouldTrigger = true;
+                }
+            }
+        }
+
+        NightState state = !isLowLightActive ? NightState.BRIGHT
+                : (shouldTrigger ? NightState.AUTO_TRIGGERED
+                : (triggeredInDarkEpisode ? NightState.ARMED_COOLDOWN
+                : (isSteady && dwellProgress > 0f ? NightState.STABILIZING : NightState.LOW_LIGHT_DETECTED)));
+
+        return new LowLightAnalysis(smoothedLuma, darkRatio, isLowLightActive, isSteady, dwellProgress, frameCount, shouldTrigger, state);
+    }
+
+    @NonNull
+    public int[] buildExposureBracketIndices(int minEv, int maxEv, int frameCount) {
+        int count = Math.max(3, Math.min(5, frameCount));
+        int anchor = Math.max(minEv, Math.min(maxEv, 0));
+        int pos1 = Math.max(minEv, Math.min(maxEv, Math.max(0, maxEv / 3)));
+        int pos2 = Math.max(minEv, Math.min(maxEv, Math.max(0, (maxEv * 2) / 3)));
+        int posMax = Math.max(minEv, Math.min(maxEv, maxEv));
+        int neg1 = Math.max(minEv, Math.min(maxEv, -Math.max(0, maxEv / 3)));
+        if (count == 5) return new int[]{anchor, neg1, pos1, pos2, posMax};
+        if (count == 4) return new int[]{anchor, neg1, pos1, pos2};
+        return new int[]{anchor, neg1, pos2};
+    }
+
+    @Nullable
+    public Bitmap decodeCapturedProxyToBitmap(@NonNull ImageProxy imageProxy, int maxDim) {
+        Bitmap rawBmp = null;
+        if (imageProxy.getFormat() == ImageFormat.JPEG || imageProxy.getPlanes().length == 1) {
+            ByteBuffer buf = imageProxy.getPlanes()[0].getBuffer().duplicate();
+            buf.rewind();
+            byte[] bytes = new byte[buf.remaining()];
+            buf.get(bytes);
+            BitmapFactory.Options opts = new BitmapFactory.Options();
+            opts.inJustDecodeBounds = true;
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.length, opts);
+            int sample = 1;
+            int largest = Math.max(opts.outWidth, opts.outHeight);
+            while ((largest / sample) > maxDim * 2) sample *= 2;
+            BitmapFactory.Options decodeOpts = new BitmapFactory.Options();
+            decodeOpts.inSampleSize = sample;
+            decodeOpts.inPreferredConfig = Bitmap.Config.ARGB_8888;
+            rawBmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.length, decodeOpts);
+        } else if (imageProxy.getPlanes().length >= 3) {
+            int w = imageProxy.getWidth();
+            int h = imageProxy.getHeight();
+            byte[] nv21 = yuvToNv21(imageProxy);
+            YuvImage yuv = new YuvImage(nv21, ImageFormat.NV21, w, h, null);
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            yuv.compressToJpeg(new Rect(0, 0, w, h), 94, baos);
+            byte[] jpg = baos.toByteArray();
+            rawBmp = BitmapFactory.decodeByteArray(jpg, 0, jpg.length);
+        }
+        if (rawBmp == null) return null;
+
+        int rot = imageProxy.getImageInfo().getRotationDegrees();
+        int curMax = Math.max(1, Math.max(rawBmp.getWidth(), rawBmp.getHeight()));
+        float downScale = (curMax > maxDim) ? (maxDim / (float) curMax) : 1f;
+        if (rot == 0 && downScale >= 0.99f) return rawBmp;
+
+        Matrix m = new Matrix();
+        if (rot != 0) m.postRotate(rot);
+        if (downScale < 0.99f) m.postScale(downScale, downScale);
+        Bitmap out = Bitmap.createBitmap(rawBmp, 0, 0, rawBmp.getWidth(), rawBmp.getHeight(), m, true);
+        if (out != rawBmp && !rawBmp.isRecycled()) rawBmp.recycle();
+        return out;
+    }
+
+    /**
+     * Step 2: Row-by-row Multi-Frame Exposure Fusion + Ghost Rejection + Shadow Recovery LUT.
+     */
+    @Nullable
+    public Bitmap stackExposureFrames(@NonNull List<Bitmap> frames, float avgLumaHint) {
+        if (frames.isEmpty()) return null;
+        Bitmap ref = frames.get(0);
+        if (frames.size() == 1) return ref.copy(Bitmap.Config.ARGB_8888, true);
+
+        int w = ref.getWidth();
+        int h = ref.getHeight();
+        int count = frames.size();
+        Bitmap result = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+        int[][] rows = new int[count][w];
+        int[] outRow = new int[w];
+
+        float darkness = Math.max(0.15f, Math.min(1f, (135f - avgLumaHint) / 110f));
+        double gamma = 0.86 - darkness * 0.34;
+        double shadowLift = darkness * 12.0;
+        int[] lut = new int[256];
+        for (int i = 0; i < 256; i++) {
+            double n = i / 255.0;
+            int v = (int) Math.round(Math.pow(n, gamma) * 255.0 + shadowLift * Math.pow(1.0 - n, 2.2));
+            lut[i] = Math.max(0, Math.min(255, v));
+        }
+
+        for (int y = 0; y < h; y++) {
+            for (int k = 0; k < count; k++) {
+                Bitmap f = frames.get(k);
+                if (f.getWidth() == w && f.getHeight() == h) {
+                    f.getPixels(rows[k], 0, w, 0, y, w, 1);
+                } else {
+                    System.arraycopy(rows[0], 0, rows[k], 0, w);
+                }
+            }
+            for (int x = 0; x < w; x++) {
+                int p0 = rows[0][x];
+                int r0 = (p0 >>> 16) & 0xFF;
+                int g0 = (p0 >>> 8) & 0xFF;
+                int b0 = p0 & 0xFF;
+                float l0 = (r0 * 3 + g0 * 6 + b0) / 10f;
+
+                float sumR = 0f, sumG = 0f, sumB = 0f, totalW = 0f;
+                for (int k = 0; k < count; k++) {
+                    int pk = rows[k][x];
+                    int rk = (pk >>> 16) & 0xFF;
+                    int gk = (pk >>> 8) & 0xFF;
+                    int bk = pk & 0xFF;
+                    float lk = (rk * 3 + gk * 6 + bk) / 10f;
+
+                    float dist = (lk / 255f) - 0.52f;
+                    float expW = Math.max(0.08f, (float) Math.exp(-dist * dist * 5.2));
+                    float ghostW = 1.15f;
+                    if (k > 0) {
+                        float diff = Math.abs(lk - Math.min(255f, l0 * (1.0f + k * 0.12f)));
+                        ghostW = (diff < 30f) ? 1.0f : ((diff < 68f) ? (68f - diff) / 38f : 0.08f);
+                    }
+                    float highGuard = (k > 0 && lk >= 248f && l0 < 232f) ? 0.05f : 1.0f;
+                    float wPix = expW * ghostW * highGuard;
+                    sumR += rk * wPix;
+                    sumG += gk * wPix;
+                    sumB += bk * wPix;
+                    totalW += wPix;
+                }
+                float inv = (totalW > 1e-4f) ? (1f / totalW) : 1f;
+                int fr = Math.max(0, Math.min(255, Math.round(sumR * inv)));
+                int fg = Math.max(0, Math.min(255, Math.round(sumG * inv)));
+                int fb = Math.max(0, Math.min(255, Math.round(sumB * inv)));
+                outRow[x] = (0xFF << 24) | (lut[fr] << 16) | (lut[fg] << 8) | lut[fb];
+            }
+            result.setPixels(outRow, 0, w, 0, y, w, 1);
+        }
+        return result;
+    }
+
+    private byte[] yuvToNv21(ImageProxy image) {
+        int w = image.getWidth();
+        int h = image.getHeight();
+        byte[] nv21 = new byte[w * h * 3 / 2];
+        ByteBuffer yBuf = image.getPlanes()[0].getBuffer();
+        ByteBuffer uBuf = image.getPlanes()[1].getBuffer();
+        ByteBuffer vBuf = image.getPlanes()[2].getBuffer();
+        int yRow = image.getPlanes()[0].getRowStride();
+        int yPix = image.getPlanes()[0].getPixelStride();
+        int pos = 0;
+        for (int r = 0; r < h; r++) {
+            for (int c = 0; c < w; c++) {
+                int idx = r * yRow + c * yPix;
+                nv21[pos++] = (idx < yBuf.limit()) ? yBuf.get(idx) : 0;
+            }
+        }
+        int vRow = image.getPlanes()[2].getRowStride();
+        int vPix = image.getPlanes()[2].getPixelStride();
+        int uRow = image.getPlanes()[1].getRowStride();
+        int uPix = image.getPlanes()[1].getPixelStride();
+        for (int r = 0; r < h / 2; r++) {
+            for (int c = 0; c < w / 2; c++) {
+                int vi = r * vRow + c * vPix;
+                int ui = r * uRow + c * uPix;
+                nv21[pos++] = (vi < vBuf.limit()) ? vBuf.get(vi) : (byte) -128;
+                nv21[pos++] = (ui < uBuf.limit()) ? uBuf.get(ui) : (byte) -128;
+            }
+        }
+        return nv21;
+    }
+}

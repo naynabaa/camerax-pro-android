@@ -37,6 +37,33 @@ android {
     }
 }
 
+// Auto-fetch official Google MediaPipe 468-landmark model if missing (non-blocking offline fallback)
+tasks.register("downloadFaceLandmarkerTask") {
+    doLast {
+        val assetDir = file("src/main/assets")
+        val modelFile = file("src/main/assets/face_landmarker.task")
+        if (!modelFile.exists() || modelFile.length() < 100_000L) {
+            try {
+                assetDir.mkdirs()
+                val url = java.net.URL("https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task")
+                url.openStream().use { input ->
+                    modelFile.outputStream().use { output ->
+                        input.copyTo(output)
+                    }
+                }
+                println("Downloaded MediaPipe face_landmarker.task (${modelFile.length()} bytes)")
+            } catch (t: Throwable) {
+                if (modelFile.exists()) modelFile.delete()
+                println("Notice: Offline/skipped face_landmarker.task download — runtime will use built-in FaceDetector fallback.")
+            }
+        }
+    }
+}
+
+tasks.matching { it.name == "preBuild" }.configureEach {
+    dependsOn("downloadFaceLandmarkerTask")
+}
+
 dependencies {
     // CameraX Stable Release Dependencies
     val cameraxVersion = "1.3.0"

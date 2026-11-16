@@ -35,6 +35,13 @@ jobs:
       - name: Make Gradle Wrapper Executable
         run: chmod +x gradlew || true
 
+      - name: Fetch MediaPipe 468 Face Mesh Model (with offline fallback)
+        run: |
+          mkdir -p app/src/main/assets
+          if [ ! -f "app/src/main/assets/face_landmarker.task" ]; then
+            curl -fSL --retry 2 "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task" -o app/src/main/assets/face_landmarker.task || rm -f app/src/main/assets/face_landmarker.task
+          fi
+
       - name: Build Debug APK with Gradle
         run: |
           if [ -f "./gradlew" ]; then

@@ -102,12 +102,46 @@ class ProOverlayView @JvmOverloads constructor(
             invalidate()
         }
 
-    // 2. Real-Time Mathematical Lighting: Live Histogram
+    // 2. Real-Time Mathematical Lighting: Live Histogram (Luma or RGB)
     var showHistogram: Boolean = false
         set(value) {
             field = value
             invalidate()
         }
+    var histogramRgbMode: Boolean = false
+        set(value) {
+            field = value
+            invalidate()
+        }
+
+    // Telemetry Watermark & Typography Banner
+    var showWatermark: Boolean = false
+        set(value) {
+            field = value
+            invalidate()
+        }
+    var watermarkText: String = "CAMERAX PRO · 4K 60FPS"
+        set(value) {
+            field = value
+            invalidate()
+        }
+    private var watermarkTypeface: Typeface = Typeface.MONOSPACE
+    private var watermarkTextColor: Int = Color.parseColor("#38BDF8")
+    private var watermarkGlowColor: Int = Color.parseColor("#0284C7")
+    fun setWatermarkStyle(tf: Typeface, textHex: String = "#38BDF8", glowHex: String = "#0284C7") {
+        watermarkTypeface = tf
+        try {
+            watermarkTextColor = Color.parseColor(textHex)
+            watermarkGlowColor = Color.parseColor(glowHex)
+        } catch (_: Exception) {
+            watermarkTextColor = Color.parseColor("#38BDF8")
+            watermarkGlowColor = Color.parseColor("#0284C7")
+        }
+        watermarkTextPaint.typeface = tf
+        watermarkTextPaint.color = watermarkTextColor
+        watermarkTextPaint.setShadowLayer(dpToPx(4f), 0f, 0f, watermarkGlowColor)
+        invalidate()
+    }
 
     // Waveform Monitor (IRE 0-100 column luminance exposure graph)
     var showWaveform: Boolean = false
@@ -202,6 +236,160 @@ class ProOverlayView @JvmOverloads constructor(
             invalidate()
         }
 
+    // Live Gyroscope Panorama Mode HUD State
+    var isPanoramaModeActive: Boolean = false
+        set(value) {
+            if (field != value) {
+                field = value
+                invalidate()
+            }
+        }
+
+    var isPanoramaCapturing: Boolean = false
+        set(value) {
+            if (field != value) {
+                field = value
+                invalidate()
+            }
+        }
+
+    var panoramaProgress: Float = 0f
+        set(value) {
+            field = value.coerceIn(0f, 1f)
+            invalidate()
+        }
+
+    var panoramaYawDeg: Float = 0f
+        set(value) {
+            field = value
+            invalidate()
+        }
+
+    var panoramaPitchDriftDeg: Float = 0f
+        set(value) {
+            field = value
+            invalidate()
+        }
+
+    var panoramaSliceCount: Int = 0
+        set(value) {
+            field = value
+            invalidate()
+        }
+
+    // Automated ImageAnalysis Panorama Alignment & Real-Time UI Guidance State
+    var panoramaGuidance: String = "READY"
+    var panoramaOverlapPercent: Int = 100
+    var panoramaAlignDx: Float = 0f
+    var panoramaAlignDy: Float = 0f
+    var panoramaConfidence: Float = 0f
+    var panoramaDirection: Int = 0 // 0 = undecided, +1 = right, -1 = left
+
+    fun updatePanoramaAnalysis(
+        guidance: String,
+        progress: Float,
+        overlapPct: Int,
+        dxNorm: Float,
+        dyNorm: Float,
+        confidence: Float,
+        yawDeg: Float,
+        pitchDriftDeg: Float,
+        sliceCount: Int,
+        direction: Int
+    ) {
+        panoramaGuidance = guidance
+        panoramaProgress = progress.coerceIn(0f, 1f)
+        panoramaOverlapPercent = overlapPct.coerceIn(0, 100)
+        panoramaAlignDx = dxNorm
+        panoramaAlignDy = dyNorm
+        panoramaConfidence = confidence.coerceIn(0f, 1f)
+        panoramaYawDeg = yawDeg
+        panoramaPitchDriftDeg = pitchDriftDeg
+        panoramaSliceCount = sliceCount
+        panoramaDirection = direction
+        if (isPanoramaModeActive && !isCleanScreen) {
+            postInvalidateOnAnimation()
+        }
+    }
+
+    // Automated Low-Light Detection & Multi-Frame Exposure Stacking HUD State (Night Mode)
+    var isNightModeHudActive: Boolean = false
+        set(value) {
+            if (field != value) {
+                field = value
+                invalidate()
+            }
+        }
+    var nightSceneIsLowLight: Boolean = false
+    var nightAvgLuma: Float = 128f
+    var nightDarkRatio: Float = 0f
+    var nightDwellProgress: Float = 0f
+    var nightRecommendedFrames: Int = 4
+    var nightStatusLabel: String = "STANDBY"
+    var isNightStackCapturing: Boolean = false
+    var nightStackCurrentFrame: Int = 0
+    var nightStackTotalFrames: Int = 4
+
+    fun updateNightAnalysis(
+        avgLuma: Float,
+        darkRatio: Float,
+        isLowLight: Boolean,
+        dwellProgress: Float,
+        recommendedFrames: Int,
+        statusLabel: String
+    ) {
+        nightAvgLuma = avgLuma
+        nightDarkRatio = darkRatio.coerceIn(0f, 1f)
+        nightSceneIsLowLight = isLowLight
+        nightDwellProgress = dwellProgress.coerceIn(0f, 1f)
+        nightRecommendedFrames = recommendedFrames.coerceIn(3, 5)
+        nightStatusLabel = statusLabel
+        if (!isCleanScreen && (isNightModeHudActive || isLowLight || isNightStackCapturing)) {
+            postInvalidateOnAnimation()
+        }
+    }
+
+    fun updateNightStackProgress(stacking: Boolean, currentFrame: Int, totalFrames: Int) {
+        isNightStackCapturing = stacking
+        nightStackCurrentFrame = currentFrame
+        nightStackTotalFrames = totalFrames.coerceAtLeast(1)
+        if (!isCleanScreen) {
+            postInvalidateOnAnimation()
+        }
+    }
+
+    // Eco Mode Battery & ImageAnalysis Frame-Rate Throttle HUD State
+    var isEcoModeActive: Boolean = false
+    var ecoTierLabel: String = "ECO"
+    var ecoBatteryPercent: Int = 100
+    var ecoAnalysisFpsCap: Int = 30
+
+    fun updateEcoStatus(active: Boolean, tierLabel: String, batteryPct: Int, fpsCap: Int) {
+        isEcoModeActive = active
+        ecoTierLabel = tierLabel
+        ecoBatteryPercent = batteryPct.coerceIn(0, 100)
+        ecoAnalysisFpsCap = fpsCap.coerceAtLeast(1)
+        if (!isCleanScreen) {
+            invalidate()
+        }
+    }
+
+    // Thermal Guard PowerManager Monitor HUD State (System Thermal Throttling & Resolution Scaling)
+    var isThermalThrottled: Boolean = false
+    var thermalTierLabel: String = "NOMINAL"
+    var thermalAnalysisFpsCap: Int = 30
+    var thermalCaptureCapLabel: String = "FULL"
+
+    fun updateThermalStatus(throttled: Boolean, tierLabel: String, fpsCap: Int, captureCapLabel: String) {
+        isThermalThrottled = throttled
+        thermalTierLabel = tierLabel
+        thermalAnalysisFpsCap = fpsCap.coerceAtLeast(1)
+        thermalCaptureCapLabel = captureCapLabel
+        if (!isCleanScreen) {
+            invalidate()
+        }
+    }
+
     var activeShootingEffect: String = "none"
         set(value) {
             field = value
@@ -265,9 +453,35 @@ class ProOverlayView @JvmOverloads constructor(
 
     var zebraThreshold: Int = 240 // 240-255 luminance (95%-100% clipped highlights)
     private val histogramBins = IntArray(256)
+    private val histogramBinsR = IntArray(256)
+    private val histogramBinsG = IntArray(256)
+    private val histogramBinsB = IntArray(256)
     private var overexposedZones = FloatArray(0)
     private var isShadowClipped = false
     private var isHighlightClipped = false
+
+    private val focusPeakingPoints = FloatArray(180 * 2)
+    private var focusPeakingCount: Int = 0
+
+    fun updateFocusPeakingAnalysis(pts: FloatArray, count: Int) {
+        val copyLen = Math.min(pts.size, focusPeakingPoints.size)
+        System.arraycopy(pts, 0, focusPeakingPoints, 0, copyLen)
+        focusPeakingCount = Math.min(count, 180)
+        if (showFocusPeaking && !isCleanScreen) {
+            postInvalidateOnAnimation()
+        }
+    }
+
+    fun updateRgbHistogramAnalysis(rBins: IntArray, gBins: IntArray, bBins: IntArray) {
+        if (rBins.size == 256 && gBins.size == 256 && bBins.size == 256) {
+            System.arraycopy(rBins, 0, histogramBinsR, 0, 256)
+            System.arraycopy(gBins, 0, histogramBinsG, 0, 256)
+            System.arraycopy(bBins, 0, histogramBinsB, 0, 256)
+            if (showHistogram && histogramRgbMode && !isCleanScreen) {
+                postInvalidateOnAnimation()
+            }
+        }
+    }
 
     fun updateLuminanceAnalysis(bins: IntArray, overexposed: FloatArray, balanceX: Float = 0.5f, balanceY: Float = 0.5f) {
         if (bins.size == 256) {
@@ -307,6 +521,26 @@ class ProOverlayView @JvmOverloads constructor(
             field = value
             if (showLevelGauge) invalidate()
         }
+
+    // Live CameraX ImageAnalysis Motion Blur Telemetry
+    @Volatile
+    var motionBlurMagnitude: Float = 0.0f
+    @Volatile
+    var motionBlurDirX: Float = 1.0f
+    @Volatile
+    var motionBlurDirY: Float = 0.0f
+    @Volatile
+    var motionBlurShutterLabel: String = "1/60s"
+
+    fun updateMotionBlurTelemetry(magnitude: Float, dirX: Float, dirY: Float, shutterLabel: String) {
+        motionBlurMagnitude = magnitude.coerceIn(0f, 1f)
+        motionBlurDirX = dirX.coerceIn(-1f, 1f)
+        motionBlurDirY = dirY.coerceIn(-1f, 1f)
+        motionBlurShutterLabel = shutterLabel
+        if (activeShootingEffect == "motion_blur" && !isCleanScreen) {
+            postInvalidateOnAnimation()
+        }
+    }
 
     // --- LIVE COLOR PRESET GRADING & TEXTURE EFFECTS PAINTS ---
     private val filterGradingPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -414,6 +648,21 @@ class ProOverlayView @JvmOverloads constructor(
         style = Paint.Style.FILL
         color = Color.parseColor("#3338BDF8")
     }
+    private val histoRedPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = dpToPx(1.25f)
+        color = Color.parseColor("#EF4444")
+    }
+    private val histoGreenPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = dpToPx(1.25f)
+        color = Color.parseColor("#22C55E")
+    }
+    private val histoBluePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = dpToPx(1.25f)
+        color = Color.parseColor("#3B82F6")
+    }
     private val histoClipWarningPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
         color = Color.parseColor("#EF4444")
@@ -426,6 +675,30 @@ class ProOverlayView @JvmOverloads constructor(
     private val histoRect = RectF()
     private val histoPath = Path()
     private val histoFillPath = Path()
+    private val histoRgbPath = Path()
+
+    private val watermarkBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+        color = Color.parseColor("#A6020617")
+    }
+    private val watermarkBorderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = dpToPx(1f)
+        color = Color.parseColor("#4D38BDF8")
+    }
+    private val watermarkDotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+        color = Color.parseColor("#EF4444")
+    }
+    private val watermarkTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+        color = Color.parseColor("#38BDF8")
+        textSize = dpToPx(10.5f)
+        typeface = Typeface.MONOSPACE
+        letterSpacing = 0.08f
+        setShadowLayer(dpToPx(4f), 0f, 0f, Color.parseColor("#0284C7"))
+    }
+    private val watermarkRect = RectF()
 
     // --- PRE-ALLOCATED ASPECT MATTE & VISUAL BALANCE PAINTS & RECTS ---
     private val mattePaint = Paint().apply {
@@ -825,6 +1098,46 @@ class ProOverlayView @JvmOverloads constructor(
         if (showAudioVuMeter) {
             drawAudioVuMeter(canvas, widthF, heightF)
         }
+
+        // 10. Draw Focus Peaking Sharp-Edge Contours
+        if (showFocusPeaking) {
+            drawFocusPeaking(canvas, widthF, heightF)
+        }
+
+        // 11. Draw Live Telemetry Watermark HUD Banner
+        if (showWatermark) {
+            drawWatermarkBanner(canvas, widthF, heightF)
+        }
+    }
+
+    private fun drawFocusPeaking(canvas: Canvas, w: Float, h: Float) {
+        if (focusPeakingCount <= 0) return
+        val len = dpToPx(3.5f)
+        for (i in 0 until focusPeakingCount) {
+            val px = focusPeakingPoints[i * 2] * w
+            val py = focusPeakingPoints[i * 2 + 1] * h
+            canvas.drawLine(px - len, py, px + len, py, focusPeakingPaint)
+            canvas.drawLine(px, py - len, px, py + len, focusPeakingPaint)
+        }
+    }
+
+    private fun drawWatermarkBanner(canvas: Canvas, w: Float, h: Float) {
+        val label = watermarkText.ifBlank { "CAMERAX PRO · 4K 60FPS" }
+        val textW = watermarkTextPaint.measureText(label)
+        val padH = dpToPx(10f)
+        val padV = dpToPx(6f)
+        val dotSpace = dpToPx(12f)
+        val boxW = textW + padH * 2f + dotSpace
+        val boxH = watermarkTextPaint.textSize + padV * 2f
+        val left = dpToPx(14f)
+        val bottom = h - dpToPx(150f)
+        val top = bottom - boxH
+        watermarkRect.set(left, top, left + boxW, bottom)
+        canvas.drawRoundRect(watermarkRect, dpToPx(6f), dpToPx(6f), watermarkBgPaint)
+        canvas.drawRoundRect(watermarkRect, dpToPx(6f), dpToPx(6f), watermarkBorderPaint)
+        canvas.drawCircle(left + padH + dpToPx(3f), top + boxH * 0.5f, dpToPx(3f), watermarkDotPaint)
+        val baseline = top + boxH * 0.5f + watermarkTextPaint.textSize * 0.34f
+        canvas.drawText(label, left + padH + dotSpace, baseline, watermarkTextPaint)
     }
 
     /**
@@ -879,48 +1192,70 @@ class ProOverlayView @JvmOverloads constructor(
         canvas.drawRoundRect(histoRect, dpToPx(8f), dpToPx(8f), histoBgPaint)
         canvas.drawRoundRect(histoRect, dpToPx(8f), dpToPx(8f), histoBorderPaint)
         
-        // Find max frequency for normalization
-        var maxFreq = 1
-        for (i in 0 until 256) {
-            if (histogramBins[i] > maxFreq) maxFreq = histogramBins[i]
-        }
-        
-        // Draw 256 frequency points
-        histoPath.reset()
-        histoFillPath.reset()
-        
         val graphInnerLeft = left + dpToPx(4f)
         val graphInnerRight = right - dpToPx(4f)
         val graphInnerBottom = bottom - dpToPx(4f)
         val graphInnerTop = top + dpToPx(14f)
         val graphInnerHeight = graphInnerBottom - graphInnerTop
         val graphInnerWidth = graphInnerRight - graphInnerLeft
-        
-        histoFillPath.moveTo(graphInnerLeft, graphInnerBottom)
-        
-        for (i in 0 until 256) {
-            val binX = graphInnerLeft + (i.toFloat() / 255f) * graphInnerWidth
-            val normalized = (histogramBins[i].toFloat() / maxFreq.toFloat()).coerceIn(0f, 1f)
-            val binY = graphInnerBottom - (normalized * graphInnerHeight)
-            
-            if (i == 0) {
-                histoPath.moveTo(binX, binY)
-            } else {
-                histoPath.lineTo(binX, binY)
+
+        if (histogramRgbMode) {
+            var maxRgb = 1
+            for (i in 0 until 256) {
+                if (histogramBinsR[i] > maxRgb) maxRgb = histogramBinsR[i]
+                if (histogramBinsG[i] > maxRgb) maxRgb = histogramBinsG[i]
+                if (histogramBinsB[i] > maxRgb) maxRgb = histogramBinsB[i]
             }
-            histoFillPath.lineTo(binX, binY)
+            fun drawChannel(bins: IntArray, paint: Paint) {
+                histoRgbPath.reset()
+                for (i in 0 until 256) {
+                    val bx = graphInnerLeft + (i.toFloat() / 255f) * graphInnerWidth
+                    val norm = (bins[i].toFloat() / maxRgb.toFloat()).coerceIn(0f, 1f)
+                    val by = graphInnerBottom - (norm * graphInnerHeight)
+                    if (i == 0) histoRgbPath.moveTo(bx, by) else histoRgbPath.lineTo(bx, by)
+                }
+                canvas.drawPath(histoRgbPath, paint)
+            }
+            drawChannel(histogramBinsR, histoRedPaint)
+            drawChannel(histogramBinsG, histoGreenPaint)
+            drawChannel(histogramBinsB, histoBluePaint)
+            canvas.drawText("HISTO RGB", left + dpToPx(6f), top + dpToPx(10f), histoTextPaint)
+        } else {
+            // Find max frequency for normalization
+            var maxFreq = 1
+            for (i in 0 until 256) {
+                if (histogramBins[i] > maxFreq) maxFreq = histogramBins[i]
+            }
+
+            // Draw 256 frequency points
+            histoPath.reset()
+            histoFillPath.reset()
+            histoFillPath.moveTo(graphInnerLeft, graphInnerBottom)
+
+            for (i in 0 until 256) {
+                val binX = graphInnerLeft + (i.toFloat() / 255f) * graphInnerWidth
+                val normalized = (histogramBins[i].toFloat() / maxFreq.toFloat()).coerceIn(0f, 1f)
+                val binY = graphInnerBottom - (normalized * graphInnerHeight)
+
+                if (i == 0) {
+                    histoPath.moveTo(binX, binY)
+                } else {
+                    histoPath.lineTo(binX, binY)
+                }
+                histoFillPath.lineTo(binX, binY)
+            }
+
+            histoFillPath.lineTo(graphInnerRight, graphInnerBottom)
+            histoFillPath.close()
+
+            // Draw fill & line
+            canvas.drawPath(histoFillPath, histoFillPaint)
+            canvas.drawPath(histoPath, histoLinePaint)
+
+            // Header Text & Clipping Indicators
+            canvas.drawText("HISTO LUMA", left + dpToPx(6f), top + dpToPx(10f), histoTextPaint)
         }
-        
-        histoFillPath.lineTo(graphInnerRight, graphInnerBottom)
-        histoFillPath.close()
-        
-        // Draw fill & line
-        canvas.drawPath(histoFillPath, histoFillPaint)
-        canvas.drawPath(histoPath, histoLinePaint)
-        
-        // Header Text & Clipping Indicators
-        canvas.drawText("HISTO LUMA", left + dpToPx(6f), top + dpToPx(10f), histoTextPaint)
-        
+
         if (isShadowClipped) {
             canvas.drawCircle(left + dpToPx(74f), top + dpToPx(7f), dpToPx(2.5f), histoClipWarningPaint)
         }
@@ -1535,6 +1870,64 @@ class ProOverlayView @JvmOverloads constructor(
                 canvas.drawRect(0f, 0f, w, h, filterGradingPaint)
                 filterGradingPaint.shader = null
             }
+            "portra_400", "filter_portra_400" -> {
+                filterGradingPaint.color = Color.parseColor("#1EFDE68A")
+                canvas.drawRect(0f, 0f, w, h, filterGradingPaint)
+            }
+            "fuji_400h", "filter_fuji_400h" -> {
+                filterGradingPaint.color = Color.parseColor("#1EA7F3D0")
+                canvas.drawRect(0f, 0f, w, h, filterGradingPaint)
+            }
+            "teal_orange", "filter_teal_orange" -> {
+                filterGradingPaint.shader = LinearGradient(
+                    0f, 0f, 0f, h,
+                    intArrayOf(Color.parseColor("#2CF59E0B"), Color.parseColor("#380D9488")),
+                    floatArrayOf(0.2f, 0.85f),
+                    Shader.TileMode.CLAMP
+                )
+                canvas.drawRect(0f, 0f, w, h, filterGradingPaint)
+                filterGradingPaint.shader = null
+            }
+            "noir_contrast", "filter_noir_contrast" -> {
+                filterSecondaryPaint.shader = RadialGradient(
+                    w * 0.5f, h * 0.5f, Math.max(w, h) * 0.70f,
+                    intArrayOf(Color.TRANSPARENT, Color.parseColor("#66000000")),
+                    floatArrayOf(0.42f, 1.0f),
+                    Shader.TileMode.CLAMP
+                )
+                canvas.drawRect(0f, 0f, w, h, filterSecondaryPaint)
+                filterSecondaryPaint.shader = null
+            }
+            "sunset_warmth", "filter_sunset_warmth" -> {
+                filterGradingPaint.shader = LinearGradient(
+                    0f, 0f, 0f, h,
+                    intArrayOf(Color.parseColor("#30F59E0B"), Color.parseColor("#24EF4444")),
+                    null, Shader.TileMode.CLAMP
+                )
+                canvas.drawRect(0f, 0f, w, h, filterGradingPaint)
+                filterGradingPaint.shader = null
+            }
+            "matrix_code", "filter_matrix_code" -> {
+                filterGradingPaint.color = Color.parseColor("#2E10B981")
+                canvas.drawRect(0f, 0f, w, h, filterGradingPaint)
+            }
+            "pastel_dream", "filter_pastel_dream" -> {
+                filterGradingPaint.shader = LinearGradient(
+                    0f, 0f, w, h,
+                    intArrayOf(Color.parseColor("#28EC4899"), Color.parseColor("#26A855F7")),
+                    null, Shader.TileMode.CLAMP
+                )
+                canvas.drawRect(0f, 0f, w, h, filterGradingPaint)
+                filterGradingPaint.shader = null
+            }
+            "nordic_blue", "filter_nordic_mood", "filter_nordic_blue" -> {
+                filterGradingPaint.color = Color.parseColor("#2693C5FD")
+                canvas.drawRect(0f, 0f, w, h, filterGradingPaint)
+            }
+            "super8_vintage", "filter_super8_retro", "filter_super8_vintage" -> {
+                filterGradingPaint.color = Color.parseColor("#2DFEF08A")
+                canvas.drawRect(0f, 0f, w, h, filterGradingPaint)
+            }
             else -> {
                 // Custom User Filters
                 val customColor = when {
@@ -1737,26 +2130,7 @@ class ProOverlayView @JvmOverloads constructor(
                 filterSecondaryPaint.shader = null
             }
             "panorama" -> {
-                // Smooth panorama stitch rail + animated sweep reticle
-                val bandH = h * 0.22f
-                filterGradingPaint.color = Color.parseColor("#70000000")
-                canvas.drawRect(0f, 0f, w, bandH, filterGradingPaint)
-                canvas.drawRect(0f, h - bandH, w, h, filterGradingPaint)
-
-                val railPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                    style = Paint.Style.STROKE
-                    strokeWidth = dpToPx(1.5f)
-                    color = Color.parseColor("#AA38BDF8")
-                }
-                canvas.drawRect(w * 0.08f, h * 0.45f, w * 0.92f, h * 0.55f, railPaint)
-                canvas.drawLine(w * 0.12f, h * 0.5f, w * 0.88f, h * 0.5f, railPaint)
-                val sweepX = w * (0.16f + 0.68f * ((Math.sin(timeSec * 0.9).toFloat() + 1f) * 0.5f))
-                val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                    color = Color.parseColor("#FACC15")
-                    style = Paint.Style.FILL
-                }
-                canvas.drawCircle(sweepX, h * 0.5f, dpToPx(5.5f), dotPaint)
-                needsAnim = true
+                // Handled dynamically below when either Panorama Mode OR Panorama Effect is active
             }
             "soft_halation" -> {
                 // Vintage red-orange halation highlight bloom
@@ -1924,24 +2298,49 @@ class ProOverlayView @JvmOverloads constructor(
                 needsAnim = true
             }
             "motion_blur" -> {
-                // Horizontal shutter-drag directional motion streaks
+                // Directional shutter-drag streaks driven by live CameraX ImageAnalysis Y-plane motion vectors
+                val dirLen = Math.hypot(motionBlurDirX.toDouble(), motionBlurDirY.toDouble()).toFloat().coerceAtLeast(0.001f)
+                val ux = motionBlurDirX / dirLen
+                val uy = motionBlurDirY / dirLen
+                val mag = motionBlurMagnitude.coerceIn(0f, 1f)
                 val streakPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                     style = Paint.Style.STROKE
                     strokeCap = Paint.Cap.ROUND
                 }
+                val baseLen = w * (0.14f + 0.34f * mag)
+                val alphaInt = (42 + (120 * mag).toInt()).coerceIn(42, 165)
                 for (i in 0..6) {
-                    val my = h * (0.20f + i * 0.09f)
-                    val mx = (((timeSec * (0.65 + (i % 3) * 0.22)) + i * 0.17) % 1.0).toFloat() * w
-                    val len = w * 0.38f
-                    streakPaint.strokeWidth = dpToPx(3f + (i % 3))
+                    val phase = (((timeSec * (0.55 + mag * 1.15 + (i % 3) * 0.18)) + i * 0.16) % 1.0).toFloat()
+                    val cx = w * (0.16f + 0.68f * ((i * 0.23f + phase) % 1.0f))
+                    val cy = h * (0.20f + i * 0.09f)
+                    val halfL = baseLen * (0.45f + (i % 3) * 0.14f)
+                    val x1 = cx - ux * halfL
+                    val y1 = cy - uy * halfL
+                    val x2 = cx + ux * halfL
+                    val y2 = cy + uy * halfL
+                    streakPaint.strokeWidth = dpToPx(2.2f + (i % 3) * 0.9f + mag * 2.0f)
                     streakPaint.shader = LinearGradient(
-                        mx - len * 0.5f, my, mx + len * 0.5f, my,
-                        intArrayOf(Color.TRANSPARENT, Color.parseColor("#44E2E8F0"), Color.TRANSPARENT),
+                        x1, y1, x2, y2,
+                        intArrayOf(Color.TRANSPARENT, Color.argb(alphaInt, 226, 232, 240), Color.TRANSPARENT),
                         null, Shader.TileMode.CLAMP
                     )
-                    canvas.drawLine(mx - len * 0.5f, my, mx + len * 0.5f, my, streakPaint)
+                    canvas.drawLine(x1, y1, x2, y2, streakPaint)
                 }
                 streakPaint.shader = null
+
+                val velPct = (mag * 100f).toInt().coerceIn(0, 100)
+                val badgePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.parseColor("#E6E2E8F0")
+                    textSize = dpToPx(11f)
+                    typeface = Typeface.MONOSPACE
+                    isFakeBoldText = true
+                }
+                canvas.drawText(
+                    "MOTION BLUR · VEL ${velPct}% · ${motionBlurShutterLabel}",
+                    dpToPx(20f),
+                    h - dpToPx(125f),
+                    badgePaint
+                )
                 needsAnim = true
             }
             "action_stabilization" -> {
@@ -2320,6 +2719,324 @@ class ProOverlayView @JvmOverloads constructor(
             )
             canvas.drawRect(0f, 0f, w, h, filterSecondaryPaint)
             filterSecondaryPaint.shader = null
+        }
+
+        // 5. Real-Time Gyroscope Panorama Sweep Rail & Alignment Guide
+        if (isPanoramaModeActive || effect == "panorama") {
+            val bandH = h * 0.23f
+            filterGradingPaint.color = Color.parseColor(if (isPanoramaCapturing) "#99000000" else "#66000000")
+            canvas.drawRect(0f, 0f, w, bandH, filterGradingPaint)
+            canvas.drawRect(0f, h - bandH, w, h, filterGradingPaint)
+
+            val railLeft = w * 0.08f
+            val railRight = w * 0.92f
+            val railW = railRight - railLeft
+            val railTop = h * 0.44f
+            val railBottom = h * 0.56f
+            val railMidY = h * 0.50f
+
+            val boxPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                style = Paint.Style.STROKE
+                strokeWidth = dpToPx(1.6f)
+                color = Color.parseColor(if (isPanoramaCapturing) "#FACC15" else "#AA38BDF8")
+            }
+            canvas.drawRect(railLeft, railTop, railRight, railBottom, boxPaint)
+
+            // Center horizon reference line
+            val centerLinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                style = Paint.Style.STROKE
+                strokeWidth = dpToPx(1.2f)
+                color = Color.parseColor("#80FFFFFF")
+            }
+            canvas.drawLine(railLeft + dpToPx(10f), railMidY, railRight - dpToPx(10f), railMidY, centerLinePaint)
+
+            // Progress fill bar inside rail
+            val fillFrac = if (isPanoramaCapturing) panoramaProgress.coerceIn(0f, 1f) else 0f
+            if (fillFrac > 0.005f) {
+                val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.parseColor("#3810B981")
+                    style = Paint.Style.FILL
+                }
+                val startX = if (panoramaYawDeg >= 0f) railLeft else (railRight - railW * fillFrac)
+                val endX = if (panoramaYawDeg >= 0f) (railLeft + railW * fillFrac) else railRight
+                canvas.drawRect(startX, railTop, endX, railBottom, fillPaint)
+            }
+
+            // Moving gyro + optical alignment cursor with vertical drift indicator
+            val effectiveDir = if (panoramaDirection != 0) panoramaDirection else if (panoramaYawDeg >= 0f) 1 else -1
+            val sweepX = if (isPanoramaCapturing) {
+                if (effectiveDir >= 0) railLeft + railW * fillFrac else railRight - railW * fillFrac
+            } else {
+                w * (0.18f + 0.64f * ((Math.sin(timeSec * 0.9).toFloat() + 1f) * 0.5f))
+            }
+            val driftOffset = panoramaPitchDriftDeg + (-panoramaAlignDy * 40f)
+            val driftPx = (driftOffset * dpToPx(2.2f)).coerceIn(-h * 0.045f, h * 0.045f)
+            val isLevel = Math.abs(panoramaPitchDriftDeg) <= 4.2f && Math.abs(panoramaAlignDy) <= 0.065f
+            val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.parseColor(
+                    when {
+                        panoramaGuidance == "AUTO_CAPTURED" -> "#22D3EE"
+                        panoramaGuidance == "SLOW_DOWN" -> "#F59E0B"
+                        isPanoramaCapturing && isLevel -> "#10B981"
+                        isPanoramaCapturing -> "#F59E0B"
+                        else -> "#FACC15"
+                    }
+                )
+                style = Paint.Style.FILL
+            }
+            canvas.drawCircle(sweepX, railMidY + driftPx, dpToPx(6.5f), dotPaint)
+
+            // Real-Time UI Directional Panning Arrows & Vertical Pitch Correction Chevrons
+            val arrowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                style = Paint.Style.STROKE
+                strokeWidth = dpToPx(2.6f)
+                strokeCap = Paint.Cap.ROUND
+                strokeJoin = Paint.Join.ROUND
+                color = Color.parseColor(
+                    when (panoramaGuidance) {
+                        "SLOW_DOWN" -> "#F59E0B"
+                        "AUTO_CAPTURED" -> "#10B981"
+                        else -> "#38BDF8"
+                    }
+                )
+            }
+            val chevronSize = dpToPx(9f)
+            val arrowPath = Path()
+            if (!isPanoramaCapturing || panoramaDirection == 0) {
+                // Draw pulsing left & right arrows in standby so user knows either pan direction works
+                val pulseGap = dpToPx(18f + (Math.sin(timeSec * 4.2).toFloat() * 4f))
+                // Right chevron ahead of cursor
+                val rx = (w * 0.5f + pulseGap + dpToPx(22f)).coerceAtMost(railRight - dpToPx(14f))
+                arrowPath.moveTo(rx - chevronSize, railMidY - chevronSize * 0.75f)
+                arrowPath.lineTo(rx, railMidY)
+                arrowPath.lineTo(rx - chevronSize, railMidY + chevronSize * 0.75f)
+                // Left chevron behind cursor
+                val lx = (w * 0.5f - pulseGap - dpToPx(22f)).coerceAtLeast(railLeft + dpToPx(14f))
+                arrowPath.moveTo(lx + chevronSize, railMidY - chevronSize * 0.75f)
+                arrowPath.lineTo(lx, railMidY)
+                arrowPath.lineTo(lx + chevronSize, railMidY + chevronSize * 0.75f)
+                canvas.drawPath(arrowPath, arrowPaint)
+            } else {
+                // Active guided directional arrow (double chevron leading the pan cursor)
+                val leadOffset = dpToPx(18f) * effectiveDir
+                val baseArrowX = (sweepX + leadOffset).coerceIn(railLeft + dpToPx(14f), railRight - dpToPx(14f))
+                for (stepIdx in 0..1) {
+                    val ax = (baseArrowX + effectiveDir * stepIdx * dpToPx(9f))
+                        .coerceIn(railLeft + dpToPx(8f), railRight - dpToPx(8f))
+                    arrowPath.moveTo(ax - effectiveDir * chevronSize * 0.85f, railMidY - chevronSize * 0.75f)
+                    arrowPath.lineTo(ax, railMidY)
+                    arrowPath.lineTo(ax - effectiveDir * chevronSize * 0.85f, railMidY + chevronSize * 0.75f)
+                }
+                canvas.drawPath(arrowPath, arrowPaint)
+
+                // Draw shaft connecting reticle toward leading arrow
+                canvas.drawLine(sweepX + effectiveDir * dpToPx(8f), railMidY, baseArrowX, railMidY, arrowPaint)
+
+                // Vertical Tilt Up / Tilt Down UI correction arrow if off horizon
+                if (panoramaGuidance == "TILT_UP" || panoramaGuidance == "TILT_DOWN") {
+                    val vPaint = Paint(arrowPaint).apply {
+                        color = Color.parseColor("#F59E0B")
+                        strokeWidth = dpToPx(2.4f)
+                    }
+                    val vDir = if (panoramaGuidance == "TILT_UP") -1f else 1f
+                    val vy = railMidY + vDir * dpToPx(20f)
+                    val vPath = Path().apply {
+                        moveTo(sweepX - dpToPx(7f), vy - vDir * dpToPx(6f))
+                        lineTo(sweepX, vy)
+                        lineTo(sweepX + dpToPx(7f), vy - vDir * dpToPx(6f))
+                    }
+                    canvas.drawPath(vPath, vPaint)
+                }
+            }
+
+            val panoLabelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.parseColor("#F8FAFC")
+                textSize = dpToPx(10.5f)
+                typeface = Typeface.MONOSPACE
+                isFakeBoldText = true
+                textAlign = Paint.Align.CENTER
+            }
+            val statusLine = if (isPanoramaCapturing) {
+                val guideText = when (panoramaGuidance) {
+                    "TILT_UP" -> "TILT UP ▲"
+                    "TILT_DOWN" -> "TILT DOWN ▼"
+                    "SLOW_DOWN" -> "SLOW DOWN"
+                    "AUTO_CAPTURED" -> "FRAME LOCKED"
+                    "PAN_LEFT" -> "PAN LEFT ◀"
+                    else -> "PAN RIGHT ▶"
+                }
+                "AUTO-PANO · ${panoramaSliceCount}/14 F · OVERLAP ${panoramaOverlapPercent}% · $guideText"
+            } else {
+                "TAP SHUTTER FOR AUTO-PANORAMA · FOLLOW ARROWS ▶"
+            }
+            canvas.drawText(statusLine, w * 0.5f, railTop - dpToPx(10f), panoLabelPaint)
+
+            if (isPanoramaCapturing) {
+                val alignSubPaint = Paint(panoLabelPaint).apply {
+                    color = Color.parseColor("#CBD5E1")
+                    textSize = dpToPx(9.5f)
+                }
+                val dxPct = (panoramaAlignDx * 100f).toInt()
+                val dyPct = (panoramaAlignDy * 100f).toInt()
+                val confPct = (panoramaConfidence * 100f).toInt()
+                canvas.drawText(
+                    "IMAGEANALYSIS ALIGN: dx=${dxPct}% dy=${dyPct}% · CONF ${confPct}%",
+                    w * 0.5f,
+                    railBottom + dpToPx(16f),
+                    alignSubPaint
+                )
+            }
+            needsAnim = true
+        }
+
+        // Low-Light ImageAnalysis Detection & Multi-Frame Night Exposure Stacking HUD
+        if (!isCleanScreen && !isPanoramaModeActive && (isNightModeHudActive || nightSceneIsLowLight || isNightStackCapturing)) {
+            val cardW = (w * 0.68f).coerceAtMost(dpToPx(290f))
+            val cardH = dpToPx(38f)
+            val left = (w - cardW) * 0.5f
+            val top = h * 0.165f
+            val rect = RectF(left, top, left + cardW, top + cardH)
+
+            filterGradingPaint.style = Paint.Style.FILL
+            filterGradingPaint.color = Color.parseColor(if (isNightStackCapturing) "#B31E1B4B" else "#990F172A")
+            canvas.drawRoundRect(rect, dpToPx(10f), dpToPx(10f), filterGradingPaint)
+
+            val borderP = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                style = Paint.Style.STROKE
+                strokeWidth = dpToPx(1.2f)
+                color = Color.parseColor(
+                    when {
+                        isNightStackCapturing -> "#A855F7"
+                        nightSceneIsLowLight -> "#818CF8"
+                        else -> "#475569"
+                    }
+                )
+            }
+            canvas.drawRoundRect(rect, dpToPx(10f), dpToPx(10f), borderP)
+
+            val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                style = Paint.Style.FILL
+                color = Color.parseColor(
+                    when {
+                        isNightStackCapturing -> "#F43F5E"
+                        nightSceneIsLowLight -> "#818CF8"
+                        else -> "#94A3B8"
+                    }
+                )
+            }
+            canvas.drawCircle(left + dpToPx(14f), top + dpToPx(15f), dpToPx(4f), dotPaint)
+
+            val nightTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.parseColor("#E0E7FF")
+                textSize = dpToPx(9.8f)
+                typeface = Typeface.MONOSPACE
+                isFakeBoldText = true
+            }
+            val avgYInt = nightAvgLuma.toInt().coerceIn(0, 255)
+            val hudText = when {
+                isNightStackCapturing -> "NIGHT STACK · FRAME ${nightStackCurrentFrame}/${nightStackTotalFrames} · HOLD STEADY"
+                nightSceneIsLowLight && nightDwellProgress > 0.05f && nightDwellProgress < 0.99f ->
+                    "LOW LIGHT (Y=${avgYInt}) · AUTO-STACK ${(nightDwellProgress * 100f).toInt()}%"
+                nightSceneIsLowLight ->
+                    "LOW LIGHT DETECTED (Y=${avgYInt}) · ${nightRecommendedFrames}x EV STACK"
+                else -> "NIGHT · LUMA Y=${avgYInt} · ${nightRecommendedFrames}x STACK READY"
+            }
+            canvas.drawText(hudText, left + dpToPx(24f), top + dpToPx(18.5f), nightTextPaint)
+
+            val barLeft = left + dpToPx(12f)
+            val barRight = left + cardW - dpToPx(12f)
+            val barTop = top + dpToPx(26f)
+            val barBottom = barTop + dpToPx(4f)
+            filterGradingPaint.color = Color.parseColor("#334155")
+            canvas.drawRoundRect(RectF(barLeft, barTop, barRight, barBottom), dpToPx(2f), dpToPx(2f), filterGradingPaint)
+
+            val barProgress = when {
+                isNightStackCapturing -> (nightStackCurrentFrame.toFloat() / nightStackTotalFrames.coerceAtLeast(1)).coerceIn(0.08f, 1f)
+                nightSceneIsLowLight -> nightDwellProgress.coerceIn(0.06f, 1f)
+                else -> (avgYInt / 255f).coerceIn(0.05f, 1f)
+            }
+            filterGradingPaint.color = Color.parseColor(
+                when {
+                    isNightStackCapturing -> "#C084FC"
+                    nightSceneIsLowLight -> "#818CF8"
+                    else -> "#38BDF8"
+                }
+            )
+            val fillRight = barLeft + (barRight - barLeft) * barProgress
+            canvas.drawRoundRect(RectF(barLeft, barTop, fillRight, barBottom), dpToPx(2f), dpToPx(2f), filterGradingPaint)
+
+            if (isNightStackCapturing || (nightSceneIsLowLight && nightDwellProgress > 0.02f)) {
+                needsAnim = true
+            }
+        }
+
+        // Eco Mode Telemetry Pill (Low Battery -> Scaled ImageAnalysis FPS + AR Disabled)
+        if (!isCleanScreen && isEcoModeActive) {
+            val pillW = (w * 0.56f).coerceAtMost(dpToPx(248f))
+            val pillH = dpToPx(24f)
+            val pillLeft = (w - pillW) * 0.5f
+            val pillTop = h * 0.112f
+            val pillRect = RectF(pillLeft, pillTop, pillLeft + pillW, pillTop + pillH)
+
+            filterGradingPaint.style = Paint.Style.FILL
+            filterGradingPaint.color = Color.parseColor(if (ecoTierLabel == "ULTRA ECO") "#CC7F1D1D" else "#CC064E3B")
+            canvas.drawRoundRect(pillRect, dpToPx(6f), dpToPx(6f), filterGradingPaint)
+
+            val ecoBorderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                style = Paint.Style.STROKE
+                strokeWidth = dpToPx(1.1f)
+                color = Color.parseColor(if (ecoTierLabel == "ULTRA ECO") "#F87171" else "#34D399")
+            }
+            canvas.drawRoundRect(pillRect, dpToPx(6f), dpToPx(6f), ecoBorderPaint)
+
+            val ecoTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.parseColor("#ECFDF5")
+                textSize = dpToPx(9.2f)
+                typeface = Typeface.MONOSPACE
+                isFakeBoldText = true
+                textAlign = Paint.Align.CENTER
+            }
+            canvas.drawText(
+                "${ecoTierLabel} ${ecoBatteryPercent}% · ${ecoAnalysisFpsCap}FPS · AR OFF",
+                w * 0.5f,
+                pillTop + dpToPx(15.5f),
+                ecoTextPaint
+            )
+        }
+
+        // Thermal Monitoring Pill (PowerManager Thermal Status -> Scaled Analysis Complexity & Capture Resolution)
+        if (!isCleanScreen && isThermalThrottled) {
+            val isCriticalThermal = thermalTierLabel == "CRITICAL" || thermalTierLabel == "EMERGENCY"
+            val tPillW = (w * 0.62f).coerceAtMost(dpToPx(270f))
+            val tPillH = dpToPx(24f)
+            val tPillLeft = (w - tPillW) * 0.5f
+            val tPillTop = if (isEcoModeActive) h * 0.112f + dpToPx(28f) else h * 0.112f
+            val tPillRect = RectF(tPillLeft, tPillTop, tPillLeft + tPillW, tPillTop + tPillH)
+
+            filterGradingPaint.style = Paint.Style.FILL
+            filterGradingPaint.color = Color.parseColor(if (isCriticalThermal) "#CC7F1D1D" else "#CC78350F")
+            canvas.drawRoundRect(tPillRect, dpToPx(6f), dpToPx(6f), filterGradingPaint)
+
+            val thermalBorderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                style = Paint.Style.STROKE
+                strokeWidth = dpToPx(1.1f)
+                color = Color.parseColor(if (isCriticalThermal) "#F87171" else "#FBBF24")
+            }
+            canvas.drawRoundRect(tPillRect, dpToPx(6f), dpToPx(6f), thermalBorderPaint)
+
+            val thermalTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.parseColor("#FEF3C7")
+                textSize = dpToPx(9.0f)
+                typeface = Typeface.MONOSPACE
+                isFakeBoldText = true
+                textAlign = Paint.Align.CENTER
+            }
+            canvas.drawText(
+                "THERMAL ${thermalTierLabel} · ${thermalAnalysisFpsCap}FPS · ${thermalCaptureCapLabel}",
+                w * 0.5f,
+                tPillTop + dpToPx(15.5f),
+                thermalTextPaint
+            )
         }
 
         if (needsAnim) {
