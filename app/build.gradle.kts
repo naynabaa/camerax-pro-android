@@ -1,3 +1,7 @@
+import java.io.InputStream
+import java.io.OutputStream
+import java.net.URI
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -45,9 +49,9 @@ tasks.register("downloadFaceLandmarkerTask") {
         if (!modelFile.exists() || modelFile.length() < 100_000L) {
             try {
                 assetDir.mkdirs()
-                val url = java.net.URL("https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task")
-                url.openStream().use { input ->
-                    modelFile.outputStream().use { output ->
+                val url = URI.create("https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task").toURL()
+                url.openStream().use { input: InputStream ->
+                    modelFile.outputStream().use { output: OutputStream ->
                         input.copyTo(output)
                     }
                 }
