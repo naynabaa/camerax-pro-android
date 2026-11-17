@@ -549,7 +549,7 @@ class MainActivity : AppCompatActivity() {
         viewBinding.proOverlayView.sensorAspectRatio = currentAspectRatio
         viewBinding.tvVideoQualityPill.text = selectedVideoQualityLabel
         viewBinding.proOverlayView.showWatermark = false
-        viewBinding.switchWatermark.isChecked = false
+        viewBinding.proStudioDrawer.switchWatermark.isChecked = false
         viewBinding.proOverlayView.watermarkText = "CAMERAX PRO · STUDIO"
         if (false) {
             setAspectMatteMode(ProOverlayView.AspectMatte.CINE_239)
@@ -747,9 +747,9 @@ class MainActivity : AppCompatActivity() {
 
         if (telemetry.isEnabled) {
             val modeTxt = if (telemetry.isSyntheticDemo) "SIM" else if (telemetry.gyroAvailable) "GYRO" else "ROT"
-            viewBinding.tvGyroEisStatus.text = "$modeTxt EIS · -${telemetry.shakeReductionPct}% shake · ${String.format(Locale.US, "%.1f", telemetry.angularVelocityDegPerSec)}°/s"
+            viewBinding.proStudioDrawer.tvGyroEisStatus.text = "$modeTxt EIS · -${telemetry.shakeReductionPct}% shake · ${String.format(Locale.US, "%.1f", telemetry.angularVelocityDegPerSec)}°/s"
         } else {
-            viewBinding.tvGyroEisStatus.text = if (::gyroStabilizer.isInitialized && gyroStabilizer.isGyroHardwareAvailable) {
+            viewBinding.proStudioDrawer.tvGyroEisStatus.text = if (::gyroStabilizer.isInitialized && gyroStabilizer.isGyroHardwareAvailable) {
                 "Sensor.TYPE_GYROSCOPE · Preview & Video EIS"
             } else {
                 "Rotation Vector / Demo Shake · Preview & Video EIS"
@@ -898,20 +898,20 @@ class MainActivity : AppCompatActivity() {
 
         // Top Toolbar: Creative Filters / Effects Drawer (strictly Filters, Lens, and Effects only)
         viewBinding.btnFilter.setOnClickListener {
-            val isVisible = viewBinding.effectsStudioDrawer.visibility == View.VISIBLE
+            val isVisible = viewBinding.effectsStudioDrawer.root.visibility == View.VISIBLE
             if (isVisible) {
-                viewBinding.effectsStudioDrawer.visibility = View.GONE
+                viewBinding.effectsStudioDrawer.root.visibility = View.GONE
                 isLastActionCreative = false
             } else {
-                viewBinding.proStudioDrawer.visibility = View.GONE
+                viewBinding.proStudioDrawer.root.visibility = View.GONE
                 viewBinding.layoutGuideFloatingBar.visibility = View.GONE
-                viewBinding.effectsStudioDrawer.visibility = View.VISIBLE
+                viewBinding.effectsStudioDrawer.root.visibility = View.VISIBLE
                 selectCreativeCategory(currentCreativeTarget, fromUser = true)
             }
             window.decorView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
         }
-        viewBinding.btnCloseEffectsDrawer.setOnClickListener {
-            viewBinding.effectsStudioDrawer.visibility = View.GONE
+        viewBinding.effectsStudioDrawer.btnCloseEffectsDrawer.setOnClickListener {
+            viewBinding.effectsStudioDrawer.root.visibility = View.GONE
             isLastActionCreative = false
             window.decorView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
         }
@@ -921,9 +921,9 @@ class MainActivity : AppCompatActivity() {
             val isVisible = viewBinding.layoutGuideFloatingBar.visibility == View.VISIBLE
             viewBinding.layoutGuideFloatingBar.visibility = if (isVisible) View.GONE else View.VISIBLE
             if (!isVisible) {
-                viewBinding.effectsStudioDrawer.visibility = View.GONE
+                viewBinding.effectsStudioDrawer.root.visibility = View.GONE
                 isLastActionCreative = false
-                viewBinding.proStudioDrawer.visibility = View.GONE
+                viewBinding.proStudioDrawer.root.visibility = View.GONE
             }
             window.decorView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
         }
@@ -946,11 +946,11 @@ class MainActivity : AppCompatActivity() {
         viewBinding.btnQuickGridCinematic.setOnClickListener { setGridMode(ProOverlayView.GridType.CINEMATIC_239) }
 
         // Creative Drawer Category Switcher Buttons (FILTERS, LENSES, EFFECTS, ART, TOON)
-        viewBinding.btnCategoryFilters.setOnClickListener { selectCreativeCategory(CreativeTarget.FILTERS, fromUser = true) }
-        viewBinding.btnCategoryLenses.setOnClickListener { selectCreativeCategory(CreativeTarget.LENSES, fromUser = true) }
-        viewBinding.btnCategoryEffects.setOnClickListener { selectCreativeCategory(CreativeTarget.EFFECTS, fromUser = true) }
-        viewBinding.btnCategoryArt.setOnClickListener { selectCreativeCategory(CreativeTarget.ART, fromUser = true) }
-        viewBinding.btnCategoryToon.setOnClickListener { selectCreativeCategory(CreativeTarget.TOON, fromUser = true) }
+        viewBinding.effectsStudioDrawer.btnCategoryFilters.setOnClickListener { selectCreativeCategory(CreativeTarget.FILTERS, fromUser = true) }
+        viewBinding.effectsStudioDrawer.btnCategoryLenses.setOnClickListener { selectCreativeCategory(CreativeTarget.LENSES, fromUser = true) }
+        viewBinding.effectsStudioDrawer.btnCategoryEffects.setOnClickListener { selectCreativeCategory(CreativeTarget.EFFECTS, fromUser = true) }
+        viewBinding.effectsStudioDrawer.btnCategoryArt.setOnClickListener { selectCreativeCategory(CreativeTarget.ART, fromUser = true) }
+        viewBinding.effectsStudioDrawer.btnCategoryToon.setOnClickListener { selectCreativeCategory(CreativeTarget.TOON, fromUser = true) }
 
         // Top Toolbar: Self-Timer Toggle (Photo Mode)
         viewBinding.btnTimer.setOnClickListener { cycleCountdownTimer() }
@@ -963,10 +963,10 @@ class MainActivity : AppCompatActivity() {
 
         // Top Toolbar: Clean Screen 1-Tap Toggle (Hide all HUD overlays)
         viewBinding.btnCleanScreen.setOnClickListener { toggleCleanScreen() }
-        viewBinding.btnCleanView.setOnClickListener {
+        viewBinding.proStudioDrawer.btnCleanView.setOnClickListener {
             toggleCleanScreen()
-            viewBinding.proStudioDrawer.visibility = View.GONE
-            viewBinding.effectsStudioDrawer.visibility = View.GONE
+            viewBinding.proStudioDrawer.root.visibility = View.GONE
+            viewBinding.effectsStudioDrawer.root.visibility = View.GONE
             isLastActionCreative = false
             viewBinding.layoutGuideFloatingBar.visibility = View.GONE
         }
@@ -975,118 +975,118 @@ class MainActivity : AppCompatActivity() {
         viewBinding.btnProStudio.setOnClickListener {
             toggleProDrawer()
         }
-        viewBinding.btnCloseProDrawer.setOnClickListener {
-            viewBinding.proStudioDrawer.visibility = View.GONE
+        viewBinding.proStudioDrawer.btnCloseProDrawer.setOnClickListener {
+            viewBinding.proStudioDrawer.root.visibility = View.GONE
         }
 
         // Top Toolbar: Audio Mute Toggle
         viewBinding.btnAudioMute.setOnClickListener { toggleAudioMute() }
 
         // 4 Category Tabs Bar for Camera Pro Tools
-        viewBinding.tabCategoryGrids.setOnClickListener { selectShelfTab(ShelfCategory.GRIDS) }
-        viewBinding.tabCategoryExposure.setOnClickListener { selectShelfTab(ShelfCategory.EXPOSURE) }
-        viewBinding.tabCategoryOptics.setOnClickListener { selectShelfTab(ShelfCategory.OPTICS) }
-        viewBinding.tabCategoryAudio.setOnClickListener { selectShelfTab(ShelfCategory.AUDIO) }
+        viewBinding.proStudioDrawer.tabCategoryGrids.setOnClickListener { selectShelfTab(ShelfCategory.GRIDS) }
+        viewBinding.proStudioDrawer.tabCategoryExposure.setOnClickListener { selectShelfTab(ShelfCategory.EXPOSURE) }
+        viewBinding.proStudioDrawer.tabCategoryOptics.setOnClickListener { selectShelfTab(ShelfCategory.OPTICS) }
+        viewBinding.proStudioDrawer.tabCategoryAudio.setOnClickListener { selectShelfTab(ShelfCategory.AUDIO) }
 
         // TAB 0: Looks, Filters (including Video Cinema LUTs), AR Lenses & Effects
-        viewBinding.btnFilterNormal.setOnClickListener { setFilterPreset("normal") }
-        viewBinding.btnFilterLutRec709.setOnClickListener { setFilterPreset("lut_rec709") }
-        viewBinding.btnFilterLutFlatLog.setOnClickListener { setFilterPreset("lut_flat_log") }
-        viewBinding.btnFilterLutTealOrange.setOnClickListener { setFilterPreset("lut_teal_orange") }
-        viewBinding.btnFilterLutBleachBypass.setOnClickListener { setFilterPreset("lut_bleach_bypass") }
-        viewBinding.btnFilterLutAnamorphicCyan.setOnClickListener { setFilterPreset("lut_anamorphic_cyan") }
-        viewBinding.btnFilterLutMatteCinema.setOnClickListener { setFilterPreset("lut_matte_cinema") }
-        viewBinding.btnFilterLutMidnightNeon.setOnClickListener { setFilterPreset("lut_midnight_neon") }
-        viewBinding.btnFilterLutWarmDoc.setOnClickListener { setFilterPreset("lut_warm_documentary") }
-        viewBinding.btnFilterLutNoirCinema.setOnClickListener { setFilterPreset("lut_noir_cinema") }
-        viewBinding.btnFilterGoldenNostalgia.setOnClickListener { setFilterPreset("golden_nostalgia") }
-        viewBinding.btnFilterVelvia.setOnClickListener { setFilterPreset("velvia_landscape") }
-        viewBinding.btnFilterNordicSlate.setOnClickListener { setFilterPreset("nordic_slate") }
-        viewBinding.btnFilterArcticMist.setOnClickListener { setFilterPreset("arctic_mist") }
-        viewBinding.btnFilterClassicMono.setOnClickListener { setFilterPreset("classic_mono") }
-        viewBinding.btnFilterNoir.setOnClickListener { setFilterPreset("high_contrast_noir") }
-        viewBinding.btnFilterIlfordGrain.setOnClickListener { setFilterPreset("ilford_grain") }
-        viewBinding.btnFilterSilverGelatin.setOnClickListener { setFilterPreset("silver_gelatin") }
-        viewBinding.btnFilterAntiqueSepia.setOnClickListener { setFilterPreset("antique_sepia") }
-        viewBinding.btnFilterCinematic.setOnClickListener { setFilterPreset("cinematic") }
-        viewBinding.btnFilterVintage.setOnClickListener { setFilterPreset("vintage") }
-        viewBinding.btnFilterBW.setOnClickListener { setFilterPreset("bw") }
-        viewBinding.btnFilterCyber.setOnClickListener { setFilterPreset("cyberpunk") }
-        viewBinding.btnFilterHDR.setOnClickListener { setFilterPreset("hdr") }
-        viewBinding.btnFilterComicBook.setOnClickListener { setFilterPreset("comic_book") }
-        viewBinding.btnFilterPortra400.setOnClickListener { setFilterPreset("portra_400") }
-        viewBinding.btnFilterFuji400h.setOnClickListener { setFilterPreset("fuji_400h") }
-        viewBinding.btnFilterTealOrange.setOnClickListener { setFilterPreset("teal_orange") }
-        viewBinding.btnFilterNoirContrast.setOnClickListener { setFilterPreset("noir_contrast") }
-        viewBinding.btnFilterSunsetWarmth.setOnClickListener { setFilterPreset("sunset_warmth") }
-        viewBinding.btnFilterMatrixCode.setOnClickListener { setFilterPreset("matrix_code") }
-        viewBinding.btnFilterPastelDream.setOnClickListener { setFilterPreset("pastel_dream") }
-        viewBinding.btnFilterNordicBlue.setOnClickListener { setFilterPreset("nordic_blue") }
-        viewBinding.btnFilterSuper8Vintage.setOnClickListener { setFilterPreset("super8_vintage") }
+        viewBinding.effectsStudioDrawer.btnFilterNormal.setOnClickListener { setFilterPreset("normal") }
+        viewBinding.effectsStudioDrawer.btnFilterLutRec709.setOnClickListener { setFilterPreset("lut_rec709") }
+        viewBinding.effectsStudioDrawer.btnFilterLutFlatLog.setOnClickListener { setFilterPreset("lut_flat_log") }
+        viewBinding.effectsStudioDrawer.btnFilterLutTealOrange.setOnClickListener { setFilterPreset("lut_teal_orange") }
+        viewBinding.effectsStudioDrawer.btnFilterLutBleachBypass.setOnClickListener { setFilterPreset("lut_bleach_bypass") }
+        viewBinding.effectsStudioDrawer.btnFilterLutAnamorphicCyan.setOnClickListener { setFilterPreset("lut_anamorphic_cyan") }
+        viewBinding.effectsStudioDrawer.btnFilterLutMatteCinema.setOnClickListener { setFilterPreset("lut_matte_cinema") }
+        viewBinding.effectsStudioDrawer.btnFilterLutMidnightNeon.setOnClickListener { setFilterPreset("lut_midnight_neon") }
+        viewBinding.effectsStudioDrawer.btnFilterLutWarmDoc.setOnClickListener { setFilterPreset("lut_warm_documentary") }
+        viewBinding.effectsStudioDrawer.btnFilterLutNoirCinema.setOnClickListener { setFilterPreset("lut_noir_cinema") }
+        viewBinding.effectsStudioDrawer.btnFilterGoldenNostalgia.setOnClickListener { setFilterPreset("golden_nostalgia") }
+        viewBinding.effectsStudioDrawer.btnFilterVelvia.setOnClickListener { setFilterPreset("velvia_landscape") }
+        viewBinding.effectsStudioDrawer.btnFilterNordicSlate.setOnClickListener { setFilterPreset("nordic_slate") }
+        viewBinding.effectsStudioDrawer.btnFilterArcticMist.setOnClickListener { setFilterPreset("arctic_mist") }
+        viewBinding.effectsStudioDrawer.btnFilterClassicMono.setOnClickListener { setFilterPreset("classic_mono") }
+        viewBinding.effectsStudioDrawer.btnFilterNoir.setOnClickListener { setFilterPreset("high_contrast_noir") }
+        viewBinding.effectsStudioDrawer.btnFilterIlfordGrain.setOnClickListener { setFilterPreset("ilford_grain") }
+        viewBinding.effectsStudioDrawer.btnFilterSilverGelatin.setOnClickListener { setFilterPreset("silver_gelatin") }
+        viewBinding.effectsStudioDrawer.btnFilterAntiqueSepia.setOnClickListener { setFilterPreset("antique_sepia") }
+        viewBinding.effectsStudioDrawer.btnFilterCinematic.setOnClickListener { setFilterPreset("cinematic") }
+        viewBinding.effectsStudioDrawer.btnFilterVintage.setOnClickListener { setFilterPreset("vintage") }
+        viewBinding.effectsStudioDrawer.btnFilterBW.setOnClickListener { setFilterPreset("bw") }
+        viewBinding.effectsStudioDrawer.btnFilterCyber.setOnClickListener { setFilterPreset("cyberpunk") }
+        viewBinding.effectsStudioDrawer.btnFilterHDR.setOnClickListener { setFilterPreset("hdr") }
+        viewBinding.effectsStudioDrawer.btnFilterComicBook.setOnClickListener { setFilterPreset("comic_book") }
+        viewBinding.effectsStudioDrawer.btnFilterPortra400.setOnClickListener { setFilterPreset("portra_400") }
+        viewBinding.effectsStudioDrawer.btnFilterFuji400h.setOnClickListener { setFilterPreset("fuji_400h") }
+        viewBinding.effectsStudioDrawer.btnFilterTealOrange.setOnClickListener { setFilterPreset("teal_orange") }
+        viewBinding.effectsStudioDrawer.btnFilterNoirContrast.setOnClickListener { setFilterPreset("noir_contrast") }
+        viewBinding.effectsStudioDrawer.btnFilterSunsetWarmth.setOnClickListener { setFilterPreset("sunset_warmth") }
+        viewBinding.effectsStudioDrawer.btnFilterMatrixCode.setOnClickListener { setFilterPreset("matrix_code") }
+        viewBinding.effectsStudioDrawer.btnFilterPastelDream.setOnClickListener { setFilterPreset("pastel_dream") }
+        viewBinding.effectsStudioDrawer.btnFilterNordicBlue.setOnClickListener { setFilterPreset("nordic_blue") }
+        viewBinding.effectsStudioDrawer.btnFilterSuper8Vintage.setOnClickListener { setFilterPreset("super8_vintage") }
 
-        viewBinding.btnArNone.setOnClickListener { setArLens("none") }
-        viewBinding.btnArMesh.setOnClickListener { setArLens("mesh_contour") }
-        viewBinding.btnArVisor.setOnClickListener { setArLens("cyberpunk_visor") }
-        viewBinding.btnArCrown.setOnClickListener { setArLens("golden_crown") }
-        viewBinding.btnArHud.setOnClickListener { setArLens("scifi_hud") }
-        viewBinding.btnArComicFrame.setOnClickListener { setArLens("comic_frame") }
-        viewBinding.btnArComicOnomatopoeia.setOnClickListener { toggleComicOnomatopoeia() }
-        viewBinding.btnArTextStudio.setOnClickListener { showArTextStudioDialog() }
-        viewBinding.btnArCalibrate.setOnClickListener { toggleArCalibrationDrawer() }
-        viewBinding.btnArBatch.setOnClickListener { toggleArBatchMode() }
+        viewBinding.effectsStudioDrawer.btnArNone.setOnClickListener { setArLens("none") }
+        viewBinding.effectsStudioDrawer.btnArMesh.setOnClickListener { setArLens("mesh_contour") }
+        viewBinding.effectsStudioDrawer.btnArVisor.setOnClickListener { setArLens("cyberpunk_visor") }
+        viewBinding.effectsStudioDrawer.btnArCrown.setOnClickListener { setArLens("golden_crown") }
+        viewBinding.effectsStudioDrawer.btnArHud.setOnClickListener { setArLens("scifi_hud") }
+        viewBinding.effectsStudioDrawer.btnArComicFrame.setOnClickListener { setArLens("comic_frame") }
+        viewBinding.effectsStudioDrawer.btnArComicOnomatopoeia.setOnClickListener { toggleComicOnomatopoeia() }
+        viewBinding.effectsStudioDrawer.btnArTextStudio.setOnClickListener { showArTextStudioDialog() }
+        viewBinding.effectsStudioDrawer.btnArCalibrate.setOnClickListener { toggleArCalibrationDrawer() }
+        viewBinding.effectsStudioDrawer.btnArBatch.setOnClickListener { toggleArBatchMode() }
 
-        viewBinding.btnEffectOff.setOnClickListener { setShootingEffect("none") }
-        viewBinding.btnArtOff.setOnClickListener { setShootingEffect("none") }
-        viewBinding.btnToonOff.setOnClickListener { setShootingEffect("none") }
-        viewBinding.btnEffectBokeh.setOnClickListener { setShootingEffect("portrait_bokeh") }
-        viewBinding.btnEffectLongExp.setOnClickListener { setShootingEffect("long_exposure") }
-        viewBinding.btnEffectLightPaint.setOnClickListener { setShootingEffect("light_painting") }
-        viewBinding.btnEffectStarTrails.setOnClickListener { setShootingEffect("star_trails") }
-        viewBinding.btnEffectNightSight.setOnClickListener { setShootingEffect("night_sight") }
-        viewBinding.btnEffectMacro.setOnClickListener { setShootingEffect("macro_focus") }
-        viewBinding.btnEffectTiltShift.setOnClickListener { setShootingEffect("tilt_shift") }
-        viewBinding.btnEffectDoubleExp.setOnClickListener { setShootingEffect("double_exposure") }
-        viewBinding.btnEffectPanorama.setOnClickListener { setShootingEffect("panorama") }
-        viewBinding.btnEffectFilmGrain.setOnClickListener { setShootingEffect("film_grain") }
-        viewBinding.btnEffectHalation.setOnClickListener { setShootingEffect("soft_halation") }
-        viewBinding.btnEffectVignette.setOnClickListener { setShootingEffect("vignette") }
-        viewBinding.btnEffectVideoBokeh.setOnClickListener { setShootingEffect("video_bokeh") }
-        viewBinding.btnEffectSlowMotion.setOnClickListener { setShootingEffect("slow_motion_120_240") }
-        viewBinding.btnEffectTimeLapse.setOnClickListener { setShootingEffect("time_lapse") }
-        viewBinding.btnEffectHyperlapse.setOnClickListener { setShootingEffect("hyperlapse") }
-        viewBinding.btnEffectAnamorphicFlare.setOnClickListener { setShootingEffect("anamorphic_flare") }
-        viewBinding.btnEffectDollyZoom.setOnClickListener { setShootingEffect("dolly_zoom") }
-        viewBinding.btnEffectMotionBlur.setOnClickListener { setShootingEffect("motion_blur") }
-        viewBinding.btnEffectHorizonLock.setOnClickListener { setShootingEffect("action_stabilization") }
-        viewBinding.btnEffectSuper8.setOnClickListener { setShootingEffect("vintage_super8") }
-        viewBinding.btnEffectOilCanvas.setOnClickListener { setShootingEffect("oil_canvas") }
-        viewBinding.btnEffectCharcoalSketch.setOnClickListener { setShootingEffect("charcoal_sketch") }
-        viewBinding.btnEffectWatercolorWash.setOnClickListener { setShootingEffect("watercolor_wash") }
-        viewBinding.btnEffectInkLine.setOnClickListener { setShootingEffect("ink_and_line") }
-        viewBinding.btnEffectPastelChalk.setOnClickListener { setShootingEffect("pastel_chalk") }
-        viewBinding.btnEffectHalftonePrint.setOnClickListener { setShootingEffect("halftone_print") }
-        viewBinding.btnEffectCyanotype.setOnClickListener { setShootingEffect("cyanotype") }
-        viewBinding.btnEffectWoodcut.setOnClickListener { setShootingEffect("woodcut_engraving") }
-        viewBinding.btnEffectLithograph.setOnClickListener { setShootingEffect("lithograph") }
-        viewBinding.btnEffectPrism.setOnClickListener { setShootingEffect("prism_refraction") }
-        viewBinding.btnEffectKaleidoscope.setOnClickListener { setShootingEffect("kaleidoscope") }
-        viewBinding.btnEffectSolarize.setOnClickListener { setShootingEffect("solarize") }
-        viewBinding.btnEffectFilm16mm.setOnClickListener { setShootingEffect("film_16mm") }
-        viewBinding.btnEffectVhsTape.setOnClickListener { setShootingEffect("vhs_tape") }
-        viewBinding.btnEffectCrtMonitor.setOnClickListener { setShootingEffect("crt_monitor") }
-        viewBinding.btnEffectStopMotion.setOnClickListener { setShootingEffect("stop_motion") }
-        viewBinding.btnEffectNeonEdge.setOnClickListener { setShootingEffect("neon_edge") }
-        viewBinding.btnEffectNoirNovel.setOnClickListener { setShootingEffect("noir_graphic_novel") }
-        viewBinding.btnEffectThermalVision.setOnClickListener { setShootingEffect("thermal_vision") }
-        viewBinding.btnEffectCelShaded.setOnClickListener { setShootingEffect("cel_shaded_studio") }
-        viewBinding.btnEffectGraphicNoir.setOnClickListener { setShootingEffect("graphic_novel_noir") }
-        viewBinding.btnEffectMangaInk.setOnClickListener { setShootingEffect("manga_ink") }
-        viewBinding.btnEffectPopArt.setOnClickListener { setShootingEffect("pop_art_print") }
-        viewBinding.btnEffectLineArt.setOnClickListener { setShootingEffect("line_art_minimalist") }
-        viewBinding.btnEffectLigneClaire.setOnClickListener { setShootingEffect("ligne_claire") }
-        viewBinding.btnEffectClayVinyl.setOnClickListener { setShootingEffect("clay_vinyl_3d") }
+        viewBinding.effectsStudioDrawer.btnEffectOff.setOnClickListener { setShootingEffect("none") }
+        viewBinding.effectsStudioDrawer.btnArtOff.setOnClickListener { setShootingEffect("none") }
+        viewBinding.effectsStudioDrawer.btnToonOff.setOnClickListener { setShootingEffect("none") }
+        viewBinding.effectsStudioDrawer.btnEffectBokeh.setOnClickListener { setShootingEffect("portrait_bokeh") }
+        viewBinding.effectsStudioDrawer.btnEffectLongExp.setOnClickListener { setShootingEffect("long_exposure") }
+        viewBinding.effectsStudioDrawer.btnEffectLightPaint.setOnClickListener { setShootingEffect("light_painting") }
+        viewBinding.effectsStudioDrawer.btnEffectStarTrails.setOnClickListener { setShootingEffect("star_trails") }
+        viewBinding.effectsStudioDrawer.btnEffectNightSight.setOnClickListener { setShootingEffect("night_sight") }
+        viewBinding.effectsStudioDrawer.btnEffectMacro.setOnClickListener { setShootingEffect("macro_focus") }
+        viewBinding.effectsStudioDrawer.btnEffectTiltShift.setOnClickListener { setShootingEffect("tilt_shift") }
+        viewBinding.effectsStudioDrawer.btnEffectDoubleExp.setOnClickListener { setShootingEffect("double_exposure") }
+        viewBinding.effectsStudioDrawer.btnEffectPanorama.setOnClickListener { setShootingEffect("panorama") }
+        viewBinding.effectsStudioDrawer.btnEffectFilmGrain.setOnClickListener { setShootingEffect("film_grain") }
+        viewBinding.effectsStudioDrawer.btnEffectHalation.setOnClickListener { setShootingEffect("soft_halation") }
+        viewBinding.effectsStudioDrawer.btnEffectVignette.setOnClickListener { setShootingEffect("vignette") }
+        viewBinding.effectsStudioDrawer.btnEffectVideoBokeh.setOnClickListener { setShootingEffect("video_bokeh") }
+        viewBinding.effectsStudioDrawer.btnEffectSlowMotion.setOnClickListener { setShootingEffect("slow_motion_120_240") }
+        viewBinding.effectsStudioDrawer.btnEffectTimeLapse.setOnClickListener { setShootingEffect("time_lapse") }
+        viewBinding.effectsStudioDrawer.btnEffectHyperlapse.setOnClickListener { setShootingEffect("hyperlapse") }
+        viewBinding.effectsStudioDrawer.btnEffectAnamorphicFlare.setOnClickListener { setShootingEffect("anamorphic_flare") }
+        viewBinding.effectsStudioDrawer.btnEffectDollyZoom.setOnClickListener { setShootingEffect("dolly_zoom") }
+        viewBinding.effectsStudioDrawer.btnEffectMotionBlur.setOnClickListener { setShootingEffect("motion_blur") }
+        viewBinding.effectsStudioDrawer.btnEffectHorizonLock.setOnClickListener { setShootingEffect("action_stabilization") }
+        viewBinding.effectsStudioDrawer.btnEffectSuper8.setOnClickListener { setShootingEffect("vintage_super8") }
+        viewBinding.effectsStudioDrawer.btnEffectOilCanvas.setOnClickListener { setShootingEffect("oil_canvas") }
+        viewBinding.effectsStudioDrawer.btnEffectCharcoalSketch.setOnClickListener { setShootingEffect("charcoal_sketch") }
+        viewBinding.effectsStudioDrawer.btnEffectWatercolorWash.setOnClickListener { setShootingEffect("watercolor_wash") }
+        viewBinding.effectsStudioDrawer.btnEffectInkLine.setOnClickListener { setShootingEffect("ink_and_line") }
+        viewBinding.effectsStudioDrawer.btnEffectPastelChalk.setOnClickListener { setShootingEffect("pastel_chalk") }
+        viewBinding.effectsStudioDrawer.btnEffectHalftonePrint.setOnClickListener { setShootingEffect("halftone_print") }
+        viewBinding.effectsStudioDrawer.btnEffectCyanotype.setOnClickListener { setShootingEffect("cyanotype") }
+        viewBinding.effectsStudioDrawer.btnEffectWoodcut.setOnClickListener { setShootingEffect("woodcut_engraving") }
+        viewBinding.effectsStudioDrawer.btnEffectLithograph.setOnClickListener { setShootingEffect("lithograph") }
+        viewBinding.effectsStudioDrawer.btnEffectPrism.setOnClickListener { setShootingEffect("prism_refraction") }
+        viewBinding.effectsStudioDrawer.btnEffectKaleidoscope.setOnClickListener { setShootingEffect("kaleidoscope") }
+        viewBinding.effectsStudioDrawer.btnEffectSolarize.setOnClickListener { setShootingEffect("solarize") }
+        viewBinding.effectsStudioDrawer.btnEffectFilm16mm.setOnClickListener { setShootingEffect("film_16mm") }
+        viewBinding.effectsStudioDrawer.btnEffectVhsTape.setOnClickListener { setShootingEffect("vhs_tape") }
+        viewBinding.effectsStudioDrawer.btnEffectCrtMonitor.setOnClickListener { setShootingEffect("crt_monitor") }
+        viewBinding.effectsStudioDrawer.btnEffectStopMotion.setOnClickListener { setShootingEffect("stop_motion") }
+        viewBinding.effectsStudioDrawer.btnEffectNeonEdge.setOnClickListener { setShootingEffect("neon_edge") }
+        viewBinding.effectsStudioDrawer.btnEffectNoirNovel.setOnClickListener { setShootingEffect("noir_graphic_novel") }
+        viewBinding.effectsStudioDrawer.btnEffectThermalVision.setOnClickListener { setShootingEffect("thermal_vision") }
+        viewBinding.effectsStudioDrawer.btnEffectCelShaded.setOnClickListener { setShootingEffect("cel_shaded_studio") }
+        viewBinding.effectsStudioDrawer.btnEffectGraphicNoir.setOnClickListener { setShootingEffect("graphic_novel_noir") }
+        viewBinding.effectsStudioDrawer.btnEffectMangaInk.setOnClickListener { setShootingEffect("manga_ink") }
+        viewBinding.effectsStudioDrawer.btnEffectPopArt.setOnClickListener { setShootingEffect("pop_art_print") }
+        viewBinding.effectsStudioDrawer.btnEffectLineArt.setOnClickListener { setShootingEffect("line_art_minimalist") }
+        viewBinding.effectsStudioDrawer.btnEffectLigneClaire.setOnClickListener { setShootingEffect("ligne_claire") }
+        viewBinding.effectsStudioDrawer.btnEffectClayVinyl.setOnClickListener { setShootingEffect("clay_vinyl_3d") }
 
-        viewBinding.switchFilmGrain.setOnCheckedChangeListener { _, isChecked ->
+        viewBinding.effectsStudioDrawer.switchFilmGrain.setOnCheckedChangeListener { _, isChecked ->
             viewBinding.proOverlayView.enableFilmGrain = isChecked
             if (!isUpdatingEffectSwitches) {
                 currentCreativeTarget = CreativeTarget.EFFECTS
@@ -1103,7 +1103,7 @@ class MainActivity : AppCompatActivity() {
                 showHudNotice("35mm Film Grain ${if (isChecked) "ON" else "OFF"}")
             }
         }
-        viewBinding.switchDateStamp.setOnCheckedChangeListener { _, isChecked ->
+        viewBinding.effectsStudioDrawer.switchDateStamp.setOnCheckedChangeListener { _, isChecked ->
             viewBinding.proOverlayView.enableDateStamp = isChecked
             if (!isUpdatingEffectSwitches) {
                 currentCreativeTarget = CreativeTarget.EFFECTS
@@ -1112,7 +1112,7 @@ class MainActivity : AppCompatActivity() {
                 showHudNotice("Retro Date Stamp ${if (isChecked) "ON" else "OFF"}")
             }
         }
-        viewBinding.switchCineFlare.setOnCheckedChangeListener { _, isChecked ->
+        viewBinding.effectsStudioDrawer.switchCineFlare.setOnCheckedChangeListener { _, isChecked ->
             viewBinding.proOverlayView.enableCineFlare = isChecked
             if (!isUpdatingEffectSwitches) {
                 currentCreativeTarget = CreativeTarget.EFFECTS
@@ -1131,41 +1131,41 @@ class MainActivity : AppCompatActivity() {
         }
 
         // TAB 1: Framing Grids Symmetrical Buttons
-        viewBinding.btnGridOff.setOnClickListener { setGridMode(ProOverlayView.GridType.NONE) }
-        viewBinding.btnGridThirds.setOnClickListener { setGridMode(ProOverlayView.GridType.RULE_OF_THIRDS) }
-        viewBinding.btnGridPhi.setOnClickListener { setGridMode(ProOverlayView.GridType.GOLDEN_RATIO_PHI) }
-        viewBinding.btnGridSpiral.setOnClickListener { setGridMode(ProOverlayView.GridType.GOLDEN_SPIRAL) }
-        viewBinding.btnGridDiagonal.setOnClickListener { setGridMode(ProOverlayView.GridType.DIAGONAL_SYMMETRY) }
-        viewBinding.btnGridCinematic.setOnClickListener { setGridMode(ProOverlayView.GridType.CINEMATIC_239) }
+        viewBinding.proStudioDrawer.btnGridOff.setOnClickListener { setGridMode(ProOverlayView.GridType.NONE) }
+        viewBinding.proStudioDrawer.btnGridThirds.setOnClickListener { setGridMode(ProOverlayView.GridType.RULE_OF_THIRDS) }
+        viewBinding.proStudioDrawer.btnGridPhi.setOnClickListener { setGridMode(ProOverlayView.GridType.GOLDEN_RATIO_PHI) }
+        viewBinding.proStudioDrawer.btnGridSpiral.setOnClickListener { setGridMode(ProOverlayView.GridType.GOLDEN_SPIRAL) }
+        viewBinding.proStudioDrawer.btnGridDiagonal.setOnClickListener { setGridMode(ProOverlayView.GridType.DIAGONAL_SYMMETRY) }
+        viewBinding.proStudioDrawer.btnGridCinematic.setOnClickListener { setGridMode(ProOverlayView.GridType.CINEMATIC_239) }
 
         // Spiral Rotation Axis (0°, 90°, 180°, 270°)
-        viewBinding.btnSpiral0.setOnClickListener { setSpiralOrientation(0) }
-        viewBinding.btnSpiral90.setOnClickListener { setSpiralOrientation(1) }
-        viewBinding.btnSpiral180.setOnClickListener { setSpiralOrientation(2) }
-        viewBinding.btnSpiral270.setOnClickListener { setSpiralOrientation(3) }
+        viewBinding.proStudioDrawer.btnSpiral0.setOnClickListener { setSpiralOrientation(0) }
+        viewBinding.proStudioDrawer.btnSpiral90.setOnClickListener { setSpiralOrientation(1) }
+        viewBinding.proStudioDrawer.btnSpiral180.setOnClickListener { setSpiralOrientation(2) }
+        viewBinding.proStudioDrawer.btnSpiral270.setOnClickListener { setSpiralOrientation(3) }
 
         // Aspect Ratio Mattes Symmetrical Buttons
-        viewBinding.btnMatteOff.setOnClickListener { setAspectMatteMode(ProOverlayView.AspectMatte.NONE) }
-        viewBinding.btnMatte169.setOnClickListener { setAspectMatteMode(ProOverlayView.AspectMatte.WIDESCREEN_16_9) }
-        viewBinding.btnMatteCine.setOnClickListener { setAspectMatteMode(ProOverlayView.AspectMatte.CINE_239) }
-        viewBinding.btnMatteSquare.setOnClickListener { setAspectMatteMode(ProOverlayView.AspectMatte.SQUARE_1_1) }
-        viewBinding.btnMatte916.setOnClickListener { setAspectMatteMode(ProOverlayView.AspectMatte.VERTICAL_9_16) }
-        viewBinding.btnMatte45.setOnClickListener { setAspectMatteMode(ProOverlayView.AspectMatte.PORTRAIT_4_5) }
+        viewBinding.proStudioDrawer.btnMatteOff.setOnClickListener { setAspectMatteMode(ProOverlayView.AspectMatte.NONE) }
+        viewBinding.proStudioDrawer.btnMatte169.setOnClickListener { setAspectMatteMode(ProOverlayView.AspectMatte.WIDESCREEN_16_9) }
+        viewBinding.proStudioDrawer.btnMatteCine.setOnClickListener { setAspectMatteMode(ProOverlayView.AspectMatte.CINE_239) }
+        viewBinding.proStudioDrawer.btnMatteSquare.setOnClickListener { setAspectMatteMode(ProOverlayView.AspectMatte.SQUARE_1_1) }
+        viewBinding.proStudioDrawer.btnMatte916.setOnClickListener { setAspectMatteMode(ProOverlayView.AspectMatte.VERTICAL_9_16) }
+        viewBinding.proStudioDrawer.btnMatte45.setOnClickListener { setAspectMatteMode(ProOverlayView.AspectMatte.PORTRAIT_4_5) }
 
         // Gyro & Balance Switches
-        viewBinding.switchHorizonLevel.setOnCheckedChangeListener { _, isChecked ->
+        viewBinding.proStudioDrawer.switchHorizonLevel.setOnCheckedChangeListener { _, isChecked ->
             viewBinding.proOverlayView.showLevelGauge = isChecked
-            viewBinding.tvHorizonLevelStatus.text = if (isChecked) "0.0° Level · Pitch and roll active" else "Horizon Level Gyro: Inactive"
+            viewBinding.proStudioDrawer.tvHorizonLevelStatus.text = if (isChecked) "0.0° Level · Pitch and roll active" else "Horizon Level Gyro: Inactive"
             updateActiveInstrumentsCount()
         }
-        viewBinding.switchGyroEis.setOnCheckedChangeListener { _, isChecked ->
+        viewBinding.proStudioDrawer.switchGyroEis.setOnCheckedChangeListener { _, isChecked ->
             isGyroEisEnabled = isChecked
             if (::gyroStabilizer.isInitialized) {
                 // Auto-enable synthetic tremor demo if hardware gyroscope sensor is absent (e.g. emulator)
                 if (isChecked && !gyroStabilizer.isGyroHardwareAvailable && !gyroStabilizer.isSyntheticShakeDemo) {
                     gyroStabilizer.setSyntheticShakeDemo(true)
-                    viewBinding.btnGyroSimShake.setBackgroundResource(R.drawable.bg_cinema_button_active)
-                    viewBinding.btnGyroSimShake.setTextColor(Color.parseColor("#0F172A"))
+                    viewBinding.proStudioDrawer.btnGyroSimShake.setBackgroundResource(R.drawable.bg_cinema_button_active)
+                    viewBinding.proStudioDrawer.btnGyroSimShake.setTextColor(Color.parseColor("#0F172A"))
                 }
                 gyroStabilizer.setEnabled(isChecked)
             }
@@ -1177,82 +1177,82 @@ class MainActivity : AppCompatActivity() {
                 if (isChecked) "Gyro EIS ON · Preview & Video Stabilized (1.22x Crop)" else "Gyro EIS OFF"
             )
         }
-        viewBinding.btnGyroSimShake.setOnClickListener {
+        viewBinding.proStudioDrawer.btnGyroSimShake.setOnClickListener {
             if (!::gyroStabilizer.isInitialized) return@setOnClickListener
             val nextDemo = !gyroStabilizer.isSyntheticShakeDemo
             gyroStabilizer.setSyntheticShakeDemo(nextDemo)
             if (nextDemo && !isGyroEisEnabled) {
-                viewBinding.switchGyroEis.isChecked = true
+                viewBinding.proStudioDrawer.switchGyroEis.isChecked = true
             }
             if (nextDemo) {
-                viewBinding.btnGyroSimShake.setBackgroundResource(R.drawable.bg_cinema_button_active)
-                viewBinding.btnGyroSimShake.setTextColor(Color.parseColor("#0F172A"))
+                viewBinding.proStudioDrawer.btnGyroSimShake.setBackgroundResource(R.drawable.bg_cinema_button_active)
+                viewBinding.proStudioDrawer.btnGyroSimShake.setTextColor(Color.parseColor("#0F172A"))
                 showHudNotice("Gyro EIS Shake Simulator ON")
             } else {
-                viewBinding.btnGyroSimShake.setBackgroundResource(R.drawable.bg_cinema_button_inactive)
-                viewBinding.btnGyroSimShake.setTextColor(Color.parseColor("#94A3B8"))
+                viewBinding.proStudioDrawer.btnGyroSimShake.setBackgroundResource(R.drawable.bg_cinema_button_inactive)
+                viewBinding.proStudioDrawer.btnGyroSimShake.setTextColor(Color.parseColor("#94A3B8"))
                 showHudNotice("Live Hardware Gyroscope Active")
             }
         }
-        viewBinding.switchVisualBalance.setOnCheckedChangeListener { _, isChecked ->
+        viewBinding.proStudioDrawer.switchVisualBalance.setOnCheckedChangeListener { _, isChecked ->
             viewBinding.proOverlayView.showVisualBalance = isChecked
-            viewBinding.tvVisualBalanceStatus.text = if (isChecked) "Balanced subject framing active" else "Visual Balance Reticle: Inactive"
+            viewBinding.proStudioDrawer.tvVisualBalanceStatus.text = if (isChecked) "Balanced subject framing active" else "Visual Balance Reticle: Inactive"
             updateActiveInstrumentsCount()
         }
 
         // TAB 2: Exposure Switches & Instruments
-        viewBinding.switchZebra.setOnCheckedChangeListener { _, isChecked ->
+        viewBinding.proStudioDrawer.switchZebra.setOnCheckedChangeListener { _, isChecked ->
             viewBinding.proOverlayView.showZebraStripes = isChecked
-            viewBinding.tvZebraStatus.text = if (isChecked) "Clipping warning (${viewBinding.proOverlayView.zebraThreshold}% IRE)" else "Zebra warning disabled"
+            viewBinding.proStudioDrawer.tvZebraStatus.text = if (isChecked) "Clipping warning (${viewBinding.proOverlayView.zebraThreshold}% IRE)" else "Zebra warning disabled"
             updateActiveInstrumentsCount()
         }
-        viewBinding.btnZebraThreshold.setOnClickListener {
+        viewBinding.proStudioDrawer.btnZebraThreshold.setOnClickListener {
             val next = if (viewBinding.proOverlayView.zebraThreshold == 240) 250 else 240
             viewBinding.proOverlayView.zebraThreshold = next
-            viewBinding.btnZebraThreshold.text = if (next == 250) "98%" else "95%"
-            viewBinding.tvZebraStatus.text = "Clipping warning (${if (next == 250) "98%" else "95%"} IRE)"
+            viewBinding.proStudioDrawer.btnZebraThreshold.text = if (next == 250) "98%" else "95%"
+            viewBinding.proStudioDrawer.tvZebraStatus.text = "Clipping warning (${if (next == 250) "98%" else "95%"} IRE)"
             // silent (no popup)
         }
-        viewBinding.switchWaveform.setOnCheckedChangeListener { _, isChecked ->
+        viewBinding.proStudioDrawer.switchWaveform.setOnCheckedChangeListener { _, isChecked ->
             viewBinding.proOverlayView.showWaveform = isChecked
             updateActiveInstrumentsCount()
         }
-        viewBinding.switchHistogram.setOnCheckedChangeListener { _, isChecked ->
+        viewBinding.proStudioDrawer.switchHistogram.setOnCheckedChangeListener { _, isChecked ->
             viewBinding.proOverlayView.showHistogram = isChecked
             updateActiveInstrumentsCount()
         }
-        viewBinding.switchVectorScope.setOnCheckedChangeListener { _, isChecked ->
+        viewBinding.proStudioDrawer.switchVectorScope.setOnCheckedChangeListener { _, isChecked ->
             viewBinding.proOverlayView.showVectorScope = isChecked
             updateActiveInstrumentsCount()
         }
 
         // TAB 3: Optics Lenses (0.6x, 1x, 2x, 5x)
-        viewBinding.btnLens06.setOnClickListener { setZoomLevel(0.6f, 0) }
-        viewBinding.btnLens1.setOnClickListener { setZoomLevel(1.0f, 1) }
-        viewBinding.btnLens2.setOnClickListener { setZoomLevel(2.0f, 2) }
-        viewBinding.btnLens5.setOnClickListener { setZoomLevel(5.0f, 3) }
+        viewBinding.proStudioDrawer.btnLens06.setOnClickListener { setZoomLevel(0.6f, 0) }
+        viewBinding.proStudioDrawer.btnLens1.setOnClickListener { setZoomLevel(1.0f, 1) }
+        viewBinding.proStudioDrawer.btnLens2.setOnClickListener { setZoomLevel(2.0f, 2) }
+        viewBinding.proStudioDrawer.btnLens5.setOnClickListener { setZoomLevel(5.0f, 3) }
 
         // De-Squeeze (OFF, 1.33x, 1.55x, 1.8x, 2.0x)
-        viewBinding.btnSqueezeOff.setOnClickListener { setDeSqueeze("OFF", 0) }
-        viewBinding.btnSqueeze133.setOnClickListener { setDeSqueeze("1.33x", 1) }
-        viewBinding.btnSqueeze155.setOnClickListener { setDeSqueeze("1.55x", 2) }
-        viewBinding.btnSqueeze180.setOnClickListener { setDeSqueeze("1.8x", 3) }
-        viewBinding.btnSqueeze200.setOnClickListener { setDeSqueeze("2.0x", 4) }
+        viewBinding.proStudioDrawer.btnSqueezeOff.setOnClickListener { setDeSqueeze("OFF", 0) }
+        viewBinding.proStudioDrawer.btnSqueeze133.setOnClickListener { setDeSqueeze("1.33x", 1) }
+        viewBinding.proStudioDrawer.btnSqueeze155.setOnClickListener { setDeSqueeze("1.55x", 2) }
+        viewBinding.proStudioDrawer.btnSqueeze180.setOnClickListener { setDeSqueeze("1.8x", 3) }
+        viewBinding.proStudioDrawer.btnSqueeze200.setOnClickListener { setDeSqueeze("2.0x", 4) }
 
         // TAB 4: Audio Switches
-        viewBinding.switchAudioVuMeter.setOnCheckedChangeListener { _, isChecked ->
+        viewBinding.proStudioDrawer.switchAudioVuMeter.setOnCheckedChangeListener { _, isChecked ->
             viewBinding.proOverlayView.showAudioVuMeter = isChecked
             updateActiveInstrumentsCount()
         }
-        viewBinding.switchMicInput.setOnCheckedChangeListener { _, isChecked ->
+        viewBinding.proStudioDrawer.switchMicInput.setOnCheckedChangeListener { _, isChecked ->
             isAudioMuted = !isChecked
             updateAudioMuteUI()
         }
-        viewBinding.switchMultiCamPip.setOnCheckedChangeListener { _, isChecked ->
+        viewBinding.proStudioDrawer.switchMultiCamPip.setOnCheckedChangeListener { _, isChecked ->
             if (isUpdatingPipSwitch) return@setOnCheckedChangeListener
             if (recording != null) {
                 isUpdatingPipSwitch = true
-                viewBinding.switchMultiCamPip.isChecked = isMultiCamPipEnabled
+                viewBinding.proStudioDrawer.switchMultiCamPip.isChecked = isMultiCamPipEnabled
                 isUpdatingPipSwitch = false
                 Toast.makeText(this, "Stop video recording before changing Multi-Cam PiP", Toast.LENGTH_SHORT).show()
                 return@setOnCheckedChangeListener
@@ -1371,9 +1371,9 @@ class MainActivity : AppCompatActivity() {
         val secondaryIsFront = (lensFacing == CameraSelector.DEFAULT_BACK_CAMERA)
         viewBinding.tvPipBadge.text = if (secondaryIsFront) "PIP · FRONT" else "PIP · REAR"
         if (!isMultiCamPipEnabled) {
-            viewBinding.tvMultiCamPipStatus.text = "Live concurrent dual-camera PiP director view"
+            viewBinding.proStudioDrawer.tvMultiCamPipStatus.text = "Live concurrent dual-camera PiP director view"
         } else {
-            viewBinding.tvMultiCamPipStatus.text = if (secondaryIsFront) {
+            viewBinding.proStudioDrawer.tvMultiCamPipStatus.text = if (secondaryIsFront) {
                 "Dual-Cam active: Rear main + Front PiP"
             } else {
                 "Dual-Cam active: Front main + Rear PiP"
@@ -1392,10 +1392,10 @@ class MainActivity : AppCompatActivity() {
         isMultiCamPipEnabled = false
         concurrentCamera = null
         isUpdatingPipSwitch = true
-        viewBinding.switchMultiCamPip.isChecked = false
+        viewBinding.proStudioDrawer.switchMultiCamPip.isChecked = false
         isUpdatingPipSwitch = false
         viewBinding.pipCardContainer.visibility = View.GONE
-        viewBinding.tvMultiCamPipStatus.text = "Unsupported on device HAL — single camera active"
+        viewBinding.proStudioDrawer.tvMultiCamPipStatus.text = "Unsupported on device HAL — single camera active"
         updateActiveInstrumentsCount()
         Toast.makeText(this, reason, Toast.LENGTH_LONG).show()
     }
@@ -2533,18 +2533,18 @@ class MainActivity : AppCompatActivity() {
                 hasSavedPreNightExposure = false
             }
 
-            viewBinding.exposureSlider.max = max - min
-            viewBinding.exposureSlider.progress = (activeIndex - min).coerceIn(0, max - min)
+            viewBinding.proStudioDrawer.exposureSlider.max = max - min
+            viewBinding.proStudioDrawer.exposureSlider.progress = (activeIndex - min).coerceIn(0, max - min)
 
-            viewBinding.exposureLayout.visibility = View.VISIBLE
+            viewBinding.proStudioDrawer.exposureLayout.visibility = View.VISIBLE
             updateExposureLabel(activeIndex, exposureState.exposureCompensationStep.toFloat())
         } else {
-            viewBinding.exposureLayout.visibility = View.GONE
+            viewBinding.proStudioDrawer.exposureLayout.visibility = View.GONE
         }
     }
 
     private fun setupExposureSlider() {
-        viewBinding.exposureSlider.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+        viewBinding.proStudioDrawer.exposureSlider.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                 if (!fromUser) return
                 val exposureState = camera?.cameraInfo?.exposureState ?: return
@@ -2562,24 +2562,24 @@ class MainActivity : AppCompatActivity() {
     private fun updateExposureLabel(index: Int, step: Float) {
         val evValue = index * step
         val prefix = if (evValue > 0) "+" else ""
-        viewBinding.tvExposureValue.text = String.format(Locale.US, "EV %s%.1f", prefix, evValue)
+        viewBinding.proStudioDrawer.tvExposureValue.text = String.format(Locale.US, "EV %s%.1f", prefix, evValue)
     }
 
     private var lastActiveGrid = ProOverlayView.GridType.RULE_OF_THIRDS
 
     private fun selectShelfTab(category: ShelfCategory) {
         currentShelfTab = category
-        viewBinding.layoutCategoryGrids.visibility = if (category == ShelfCategory.GRIDS) View.VISIBLE else View.GONE
-        viewBinding.layoutCategoryExposure.visibility = if (category == ShelfCategory.EXPOSURE) View.VISIBLE else View.GONE
-        viewBinding.layoutCategoryOptics.visibility = if (category == ShelfCategory.OPTICS) View.VISIBLE else View.GONE
-        viewBinding.layoutCategoryAudio.visibility = if (category == ShelfCategory.AUDIO) View.VISIBLE else View.GONE
+        viewBinding.proStudioDrawer.layoutCategoryGrids.visibility = if (category == ShelfCategory.GRIDS) View.VISIBLE else View.GONE
+        viewBinding.proStudioDrawer.layoutCategoryExposure.visibility = if (category == ShelfCategory.EXPOSURE) View.VISIBLE else View.GONE
+        viewBinding.proStudioDrawer.layoutCategoryOptics.visibility = if (category == ShelfCategory.OPTICS) View.VISIBLE else View.GONE
+        viewBinding.proStudioDrawer.layoutCategoryAudio.visibility = if (category == ShelfCategory.AUDIO) View.VISIBLE else View.GONE
 
         // Update tab styles: Single un-bordered row, sharp solid neon yellow horizontal line (2dp thick) positioned exactly beneath active text
         val tabs = listOf(
-            Triple(viewBinding.tabCategoryGrids, viewBinding.indicatorGrids, ShelfCategory.GRIDS),
-            Triple(viewBinding.tabCategoryExposure, viewBinding.indicatorExposure, ShelfCategory.EXPOSURE),
-            Triple(viewBinding.tabCategoryOptics, viewBinding.indicatorOptics, ShelfCategory.OPTICS),
-            Triple(viewBinding.tabCategoryAudio, viewBinding.indicatorAudio, ShelfCategory.AUDIO)
+            Triple(viewBinding.proStudioDrawer.tabCategoryGrids, viewBinding.proStudioDrawer.indicatorGrids, ShelfCategory.GRIDS),
+            Triple(viewBinding.proStudioDrawer.tabCategoryExposure, viewBinding.proStudioDrawer.indicatorExposure, ShelfCategory.EXPOSURE),
+            Triple(viewBinding.proStudioDrawer.tabCategoryOptics, viewBinding.proStudioDrawer.indicatorOptics, ShelfCategory.OPTICS),
+            Triple(viewBinding.proStudioDrawer.tabCategoryAudio, viewBinding.proStudioDrawer.indicatorAudio, ShelfCategory.AUDIO)
         )
         for ((tabView, indicatorView, cat) in tabs) {
             val isActive = cat == category
@@ -2596,9 +2596,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateArtStripModeOrder() {
-        val container = viewBinding.layoutArtContainer
-        val picGroup = viewBinding.layoutPictureArtGroup
-        val vidGroup = viewBinding.layoutVideoArtGroup
+        val container = viewBinding.effectsStudioDrawer.layoutArtContainer
+        val picGroup = viewBinding.effectsStudioDrawer.layoutPictureArtGroup
+        val vidGroup = viewBinding.effectsStudioDrawer.layoutVideoArtGroup
         val isVideoMode = (cameraMode == CameraMode.VIDEO || cameraMode == CameraMode.SLOW_MO)
         container.removeView(picGroup)
         container.removeView(vidGroup)
@@ -2623,26 +2623,26 @@ class MainActivity : AppCompatActivity() {
         val isArt = target == CreativeTarget.ART
         val isToon = target == CreativeTarget.TOON
 
-        viewBinding.btnCategoryFilters.setBackgroundResource(if (isFilter) R.drawable.bg_cinema_button_active else R.drawable.bg_cinema_button_inactive)
-        viewBinding.btnCategoryFilters.setTextColor(Color.parseColor(if (isFilter) "#0F172A" else "#94A3B8"))
+        viewBinding.effectsStudioDrawer.btnCategoryFilters.setBackgroundResource(if (isFilter) R.drawable.bg_cinema_button_active else R.drawable.bg_cinema_button_inactive)
+        viewBinding.effectsStudioDrawer.btnCategoryFilters.setTextColor(Color.parseColor(if (isFilter) "#0F172A" else "#94A3B8"))
 
-        viewBinding.btnCategoryLenses.setBackgroundResource(if (isLens) R.drawable.bg_cinema_button_active else R.drawable.bg_cinema_button_inactive)
-        viewBinding.btnCategoryLenses.setTextColor(Color.parseColor(if (isLens) "#0F172A" else "#94A3B8"))
+        viewBinding.effectsStudioDrawer.btnCategoryLenses.setBackgroundResource(if (isLens) R.drawable.bg_cinema_button_active else R.drawable.bg_cinema_button_inactive)
+        viewBinding.effectsStudioDrawer.btnCategoryLenses.setTextColor(Color.parseColor(if (isLens) "#0F172A" else "#94A3B8"))
 
-        viewBinding.btnCategoryEffects.setBackgroundResource(if (isEffect) R.drawable.bg_cinema_button_active else R.drawable.bg_cinema_button_inactive)
-        viewBinding.btnCategoryEffects.setTextColor(Color.parseColor(if (isEffect) "#0F172A" else "#94A3B8"))
+        viewBinding.effectsStudioDrawer.btnCategoryEffects.setBackgroundResource(if (isEffect) R.drawable.bg_cinema_button_active else R.drawable.bg_cinema_button_inactive)
+        viewBinding.effectsStudioDrawer.btnCategoryEffects.setTextColor(Color.parseColor(if (isEffect) "#0F172A" else "#94A3B8"))
 
-        viewBinding.btnCategoryArt.setBackgroundResource(if (isArt) R.drawable.bg_cinema_button_active else R.drawable.bg_cinema_button_inactive)
-        viewBinding.btnCategoryArt.setTextColor(Color.parseColor(if (isArt) "#0F172A" else "#94A3B8"))
+        viewBinding.effectsStudioDrawer.btnCategoryArt.setBackgroundResource(if (isArt) R.drawable.bg_cinema_button_active else R.drawable.bg_cinema_button_inactive)
+        viewBinding.effectsStudioDrawer.btnCategoryArt.setTextColor(Color.parseColor(if (isArt) "#0F172A" else "#94A3B8"))
 
-        viewBinding.btnCategoryToon.setBackgroundResource(if (isToon) R.drawable.bg_cinema_button_active else R.drawable.bg_cinema_button_inactive)
-        viewBinding.btnCategoryToon.setTextColor(Color.parseColor(if (isToon) "#0F172A" else "#94A3B8"))
+        viewBinding.effectsStudioDrawer.btnCategoryToon.setBackgroundResource(if (isToon) R.drawable.bg_cinema_button_active else R.drawable.bg_cinema_button_inactive)
+        viewBinding.effectsStudioDrawer.btnCategoryToon.setTextColor(Color.parseColor(if (isToon) "#0F172A" else "#94A3B8"))
 
-        viewBinding.scrollFiltersStrip.visibility = if (isFilter) View.VISIBLE else View.GONE
-        viewBinding.scrollLensesStrip.visibility = if (isLens) View.VISIBLE else View.GONE
-        viewBinding.scrollEffectsStrip.visibility = if (isEffect) View.VISIBLE else View.GONE
-        viewBinding.scrollArtStrip.visibility = if (isArt) View.VISIBLE else View.GONE
-        viewBinding.scrollToonStrip.visibility = if (isToon) View.VISIBLE else View.GONE
+        viewBinding.effectsStudioDrawer.scrollFiltersStrip.visibility = if (isFilter) View.VISIBLE else View.GONE
+        viewBinding.effectsStudioDrawer.scrollLensesStrip.visibility = if (isLens) View.VISIBLE else View.GONE
+        viewBinding.effectsStudioDrawer.scrollEffectsStrip.visibility = if (isEffect) View.VISIBLE else View.GONE
+        viewBinding.effectsStudioDrawer.scrollArtStrip.visibility = if (isArt) View.VISIBLE else View.GONE
+        viewBinding.effectsStudioDrawer.scrollToonStrip.visibility = if (isToon) View.VISIBLE else View.GONE
 
         if (isArt) {
             updateArtStripModeOrder()
@@ -2765,8 +2765,8 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
-        viewBinding.tvEffectsActiveStatus.text = statusText
-        viewBinding.tvEffectsActiveStatus.isSelected = true
+        viewBinding.effectsStudioDrawer.tvEffectsActiveStatus.text = statusText
+        viewBinding.effectsStudioDrawer.tvEffectsActiveStatus.isSelected = true
     }
 
     private fun scrollChipIntoView(scrollView: android.widget.HorizontalScrollView, child: View) {
@@ -3641,47 +3641,47 @@ class MainActivity : AppCompatActivity() {
         applyLivePreviewColorMatrix()
 
         val filterButtons = listOf(
-            viewBinding.btnFilterNormal to "normal",
-            viewBinding.btnFilterLutRec709 to "lut_rec709",
-            viewBinding.btnFilterLutFlatLog to "lut_flat_log",
-            viewBinding.btnFilterLutTealOrange to "lut_teal_orange",
-            viewBinding.btnFilterLutBleachBypass to "lut_bleach_bypass",
-            viewBinding.btnFilterLutAnamorphicCyan to "lut_anamorphic_cyan",
-            viewBinding.btnFilterLutMatteCinema to "lut_matte_cinema",
-            viewBinding.btnFilterLutMidnightNeon to "lut_midnight_neon",
-            viewBinding.btnFilterLutWarmDoc to "lut_warm_documentary",
-            viewBinding.btnFilterLutNoirCinema to "lut_noir_cinema",
-            viewBinding.btnFilterGoldenNostalgia to "golden_nostalgia",
-            viewBinding.btnFilterVelvia to "velvia_landscape",
-            viewBinding.btnFilterNordicSlate to "nordic_slate",
-            viewBinding.btnFilterArcticMist to "arctic_mist",
-            viewBinding.btnFilterClassicMono to "classic_mono",
-            viewBinding.btnFilterNoir to "high_contrast_noir",
-            viewBinding.btnFilterIlfordGrain to "ilford_grain",
-            viewBinding.btnFilterSilverGelatin to "silver_gelatin",
-            viewBinding.btnFilterAntiqueSepia to "antique_sepia",
-            viewBinding.btnFilterCinematic to "cinematic",
-            viewBinding.btnFilterVintage to "vintage",
-            viewBinding.btnFilterBW to "bw",
-            viewBinding.btnFilterCyber to "cyberpunk",
-            viewBinding.btnFilterHDR to "hdr",
-            viewBinding.btnFilterComicBook to "comic_book",
-            viewBinding.btnFilterPortra400 to "portra_400",
-            viewBinding.btnFilterFuji400h to "fuji_400h",
-            viewBinding.btnFilterTealOrange to "teal_orange",
-            viewBinding.btnFilterNoirContrast to "noir_contrast",
-            viewBinding.btnFilterSunsetWarmth to "sunset_warmth",
-            viewBinding.btnFilterMatrixCode to "matrix_code",
-            viewBinding.btnFilterPastelDream to "pastel_dream",
-            viewBinding.btnFilterNordicBlue to "nordic_blue",
-            viewBinding.btnFilterSuper8Vintage to "super8_vintage"
+            viewBinding.effectsStudioDrawer.btnFilterNormal to "normal",
+            viewBinding.effectsStudioDrawer.btnFilterLutRec709 to "lut_rec709",
+            viewBinding.effectsStudioDrawer.btnFilterLutFlatLog to "lut_flat_log",
+            viewBinding.effectsStudioDrawer.btnFilterLutTealOrange to "lut_teal_orange",
+            viewBinding.effectsStudioDrawer.btnFilterLutBleachBypass to "lut_bleach_bypass",
+            viewBinding.effectsStudioDrawer.btnFilterLutAnamorphicCyan to "lut_anamorphic_cyan",
+            viewBinding.effectsStudioDrawer.btnFilterLutMatteCinema to "lut_matte_cinema",
+            viewBinding.effectsStudioDrawer.btnFilterLutMidnightNeon to "lut_midnight_neon",
+            viewBinding.effectsStudioDrawer.btnFilterLutWarmDoc to "lut_warm_documentary",
+            viewBinding.effectsStudioDrawer.btnFilterLutNoirCinema to "lut_noir_cinema",
+            viewBinding.effectsStudioDrawer.btnFilterGoldenNostalgia to "golden_nostalgia",
+            viewBinding.effectsStudioDrawer.btnFilterVelvia to "velvia_landscape",
+            viewBinding.effectsStudioDrawer.btnFilterNordicSlate to "nordic_slate",
+            viewBinding.effectsStudioDrawer.btnFilterArcticMist to "arctic_mist",
+            viewBinding.effectsStudioDrawer.btnFilterClassicMono to "classic_mono",
+            viewBinding.effectsStudioDrawer.btnFilterNoir to "high_contrast_noir",
+            viewBinding.effectsStudioDrawer.btnFilterIlfordGrain to "ilford_grain",
+            viewBinding.effectsStudioDrawer.btnFilterSilverGelatin to "silver_gelatin",
+            viewBinding.effectsStudioDrawer.btnFilterAntiqueSepia to "antique_sepia",
+            viewBinding.effectsStudioDrawer.btnFilterCinematic to "cinematic",
+            viewBinding.effectsStudioDrawer.btnFilterVintage to "vintage",
+            viewBinding.effectsStudioDrawer.btnFilterBW to "bw",
+            viewBinding.effectsStudioDrawer.btnFilterCyber to "cyberpunk",
+            viewBinding.effectsStudioDrawer.btnFilterHDR to "hdr",
+            viewBinding.effectsStudioDrawer.btnFilterComicBook to "comic_book",
+            viewBinding.effectsStudioDrawer.btnFilterPortra400 to "portra_400",
+            viewBinding.effectsStudioDrawer.btnFilterFuji400h to "fuji_400h",
+            viewBinding.effectsStudioDrawer.btnFilterTealOrange to "teal_orange",
+            viewBinding.effectsStudioDrawer.btnFilterNoirContrast to "noir_contrast",
+            viewBinding.effectsStudioDrawer.btnFilterSunsetWarmth to "sunset_warmth",
+            viewBinding.effectsStudioDrawer.btnFilterMatrixCode to "matrix_code",
+            viewBinding.effectsStudioDrawer.btnFilterPastelDream to "pastel_dream",
+            viewBinding.effectsStudioDrawer.btnFilterNordicBlue to "nordic_blue",
+            viewBinding.effectsStudioDrawer.btnFilterSuper8Vintage to "super8_vintage"
         ) + dynamicFilterChips
         for ((btn, name) in filterButtons) {
             val isActive = name == preset
             if (isActive) {
                 btn.setBackgroundResource(R.drawable.bg_cinema_button_active)
                 btn.setTextColor(Color.parseColor("#0F172A"))
-                scrollChipIntoView(viewBinding.scrollFiltersStrip, btn)
+                scrollChipIntoView(viewBinding.effectsStudioDrawer.scrollFiltersStrip, btn)
             } else {
                 btn.setBackgroundResource(R.drawable.bg_cinema_button_inactive)
                 btn.setTextColor(Color.parseColor("#94A3B8"))
@@ -3739,19 +3739,19 @@ class MainActivity : AppCompatActivity() {
         }
         syncOverlayToVideoProcessor()
         val lensButtons = listOf(
-            viewBinding.btnArNone to "none",
-            viewBinding.btnArMesh to "mesh_contour",
-            viewBinding.btnArVisor to "cyberpunk_visor",
-            viewBinding.btnArCrown to "golden_crown",
-            viewBinding.btnArHud to "scifi_hud",
-            viewBinding.btnArComicFrame to "comic_frame"
+            viewBinding.effectsStudioDrawer.btnArNone to "none",
+            viewBinding.effectsStudioDrawer.btnArMesh to "mesh_contour",
+            viewBinding.effectsStudioDrawer.btnArVisor to "cyberpunk_visor",
+            viewBinding.effectsStudioDrawer.btnArCrown to "golden_crown",
+            viewBinding.effectsStudioDrawer.btnArHud to "scifi_hud",
+            viewBinding.effectsStudioDrawer.btnArComicFrame to "comic_frame"
         ) + dynamicLensChips
         for ((btn, name) in lensButtons) {
             val isActive = name == lens
             if (isActive) {
                 btn.setBackgroundResource(R.drawable.bg_cinema_button_active)
                 btn.setTextColor(Color.parseColor("#0F172A"))
-                scrollChipIntoView(viewBinding.scrollLensesStrip, btn)
+                scrollChipIntoView(viewBinding.effectsStudioDrawer.scrollLensesStrip, btn)
             } else {
                 btn.setBackgroundResource(R.drawable.bg_cinema_button_inactive)
                 btn.setTextColor(Color.parseColor("#94A3B8"))
@@ -3777,13 +3777,13 @@ class MainActivity : AppCompatActivity() {
     private fun toggleComicOnomatopoeia() {
         val next = !viewBinding.arFaceOverlayView.enableComicOnomatopoeia
         viewBinding.arFaceOverlayView.enableComicOnomatopoeia = next
-        viewBinding.btnArComicOnomatopoeia.setBackgroundResource(
+        viewBinding.effectsStudioDrawer.btnArComicOnomatopoeia.setBackgroundResource(
             if (next) R.drawable.bg_cinema_button_active else R.drawable.bg_cinema_button_inactive
         )
-        viewBinding.btnArComicOnomatopoeia.setTextColor(
+        viewBinding.effectsStudioDrawer.btnArComicOnomatopoeia.setTextColor(
             Color.parseColor(if (next) "#0F172A" else "#FACC15")
         )
-        viewBinding.btnArComicOnomatopoeia.text = if (next) "POW! ON" else "POW! COMIC"
+        viewBinding.effectsStudioDrawer.btnArComicOnomatopoeia.text = if (next) "POW! ON" else "POW! COMIC"
         if (next && !isAudioMuted) {
             playCameraCue(ToneGenerator.TONE_PROP_BEEP2, 110)
             comicSfxHelper?.playComicBurst(comicSfxPow, comicSfxBam, comicSfxZap, 0.72f, isAudioMuted)
@@ -3819,32 +3819,32 @@ class MainActivity : AppCompatActivity() {
     private fun updateShootingEffectButtons() {
         val isVideoMode = (cameraMode == CameraMode.VIDEO || cameraMode == CameraMode.SLOW_MO)
         val effectButtons = listOf(
-            viewBinding.btnEffectOff to "none",
-            viewBinding.btnEffectBokeh to "portrait_bokeh",
-            viewBinding.btnEffectLongExp to "long_exposure",
-            viewBinding.btnEffectLightPaint to "light_painting",
-            viewBinding.btnEffectStarTrails to "star_trails",
-            viewBinding.btnEffectNightSight to "night_sight",
-            viewBinding.btnEffectMacro to "macro_focus",
-            viewBinding.btnEffectTiltShift to "tilt_shift",
-            viewBinding.btnEffectDoubleExp to "double_exposure",
-            viewBinding.btnEffectPanorama to "panorama",
-            viewBinding.btnEffectFilmGrain to "film_grain",
-            viewBinding.btnEffectHalation to "soft_halation",
-            viewBinding.btnEffectVignette to "vignette",
-            viewBinding.btnEffectVideoBokeh to "video_bokeh",
-            viewBinding.btnEffectSlowMotion to "slow_motion_120_240",
-            viewBinding.btnEffectTimeLapse to "time_lapse",
-            viewBinding.btnEffectHyperlapse to "hyperlapse",
-            viewBinding.btnEffectAnamorphicFlare to "anamorphic_flare",
-            viewBinding.btnEffectDollyZoom to "dolly_zoom",
-            viewBinding.btnEffectMotionBlur to "motion_blur",
-            viewBinding.btnEffectHorizonLock to "action_stabilization",
-            viewBinding.btnEffectSuper8 to "vintage_super8",
-            viewBinding.btnEffectFilm16mm to "film_16mm",
-            viewBinding.btnEffectVhsTape to "vhs_tape",
-            viewBinding.btnEffectCrtMonitor to "crt_monitor",
-            viewBinding.btnEffectStopMotion to "stop_motion"
+            viewBinding.effectsStudioDrawer.btnEffectOff to "none",
+            viewBinding.effectsStudioDrawer.btnEffectBokeh to "portrait_bokeh",
+            viewBinding.effectsStudioDrawer.btnEffectLongExp to "long_exposure",
+            viewBinding.effectsStudioDrawer.btnEffectLightPaint to "light_painting",
+            viewBinding.effectsStudioDrawer.btnEffectStarTrails to "star_trails",
+            viewBinding.effectsStudioDrawer.btnEffectNightSight to "night_sight",
+            viewBinding.effectsStudioDrawer.btnEffectMacro to "macro_focus",
+            viewBinding.effectsStudioDrawer.btnEffectTiltShift to "tilt_shift",
+            viewBinding.effectsStudioDrawer.btnEffectDoubleExp to "double_exposure",
+            viewBinding.effectsStudioDrawer.btnEffectPanorama to "panorama",
+            viewBinding.effectsStudioDrawer.btnEffectFilmGrain to "film_grain",
+            viewBinding.effectsStudioDrawer.btnEffectHalation to "soft_halation",
+            viewBinding.effectsStudioDrawer.btnEffectVignette to "vignette",
+            viewBinding.effectsStudioDrawer.btnEffectVideoBokeh to "video_bokeh",
+            viewBinding.effectsStudioDrawer.btnEffectSlowMotion to "slow_motion_120_240",
+            viewBinding.effectsStudioDrawer.btnEffectTimeLapse to "time_lapse",
+            viewBinding.effectsStudioDrawer.btnEffectHyperlapse to "hyperlapse",
+            viewBinding.effectsStudioDrawer.btnEffectAnamorphicFlare to "anamorphic_flare",
+            viewBinding.effectsStudioDrawer.btnEffectDollyZoom to "dolly_zoom",
+            viewBinding.effectsStudioDrawer.btnEffectMotionBlur to "motion_blur",
+            viewBinding.effectsStudioDrawer.btnEffectHorizonLock to "action_stabilization",
+            viewBinding.effectsStudioDrawer.btnEffectSuper8 to "vintage_super8",
+            viewBinding.effectsStudioDrawer.btnEffectFilm16mm to "film_16mm",
+            viewBinding.effectsStudioDrawer.btnEffectVhsTape to "vhs_tape",
+            viewBinding.effectsStudioDrawer.btnEffectCrtMonitor to "crt_monitor",
+            viewBinding.effectsStudioDrawer.btnEffectStopMotion to "stop_motion"
         )
         val activeShootingId = if (artEffectIds.contains(currentShootingEffect) || toonEffectIds.contains(currentShootingEffect)) "none" else currentShootingEffect
         for ((btn, id) in effectButtons) {
@@ -3858,7 +3858,7 @@ class MainActivity : AppCompatActivity() {
             if (isActive) {
                 btn.setBackgroundResource(R.drawable.bg_cinema_button_active)
                 btn.setTextColor(Color.parseColor("#0F172A"))
-                scrollChipIntoView(viewBinding.scrollEffectsStrip, btn)
+                scrollChipIntoView(viewBinding.effectsStudioDrawer.scrollEffectsStrip, btn)
             } else {
                 btn.setBackgroundResource(R.drawable.bg_cinema_button_inactive)
                 btn.setTextColor(Color.parseColor("#94A3B8"))
@@ -3870,22 +3870,22 @@ class MainActivity : AppCompatActivity() {
 
     private fun updateArtEffectButtons() {
         val artButtons = listOf(
-            viewBinding.btnArtOff to "none",
-            viewBinding.btnEffectOilCanvas to "oil_canvas",
-            viewBinding.btnEffectCharcoalSketch to "charcoal_sketch",
-            viewBinding.btnEffectWatercolorWash to "watercolor_wash",
-            viewBinding.btnEffectInkLine to "ink_and_line",
-            viewBinding.btnEffectPastelChalk to "pastel_chalk",
-            viewBinding.btnEffectHalftonePrint to "halftone_print",
-            viewBinding.btnEffectCyanotype to "cyanotype",
-            viewBinding.btnEffectWoodcut to "woodcut_engraving",
-            viewBinding.btnEffectLithograph to "lithograph",
-            viewBinding.btnEffectPrism to "prism_refraction",
-            viewBinding.btnEffectKaleidoscope to "kaleidoscope",
-            viewBinding.btnEffectSolarize to "solarize",
-            viewBinding.btnEffectNeonEdge to "neon_edge",
-            viewBinding.btnEffectNoirNovel to "noir_graphic_novel",
-            viewBinding.btnEffectThermalVision to "thermal_vision"
+            viewBinding.effectsStudioDrawer.btnArtOff to "none",
+            viewBinding.effectsStudioDrawer.btnEffectOilCanvas to "oil_canvas",
+            viewBinding.effectsStudioDrawer.btnEffectCharcoalSketch to "charcoal_sketch",
+            viewBinding.effectsStudioDrawer.btnEffectWatercolorWash to "watercolor_wash",
+            viewBinding.effectsStudioDrawer.btnEffectInkLine to "ink_and_line",
+            viewBinding.effectsStudioDrawer.btnEffectPastelChalk to "pastel_chalk",
+            viewBinding.effectsStudioDrawer.btnEffectHalftonePrint to "halftone_print",
+            viewBinding.effectsStudioDrawer.btnEffectCyanotype to "cyanotype",
+            viewBinding.effectsStudioDrawer.btnEffectWoodcut to "woodcut_engraving",
+            viewBinding.effectsStudioDrawer.btnEffectLithograph to "lithograph",
+            viewBinding.effectsStudioDrawer.btnEffectPrism to "prism_refraction",
+            viewBinding.effectsStudioDrawer.btnEffectKaleidoscope to "kaleidoscope",
+            viewBinding.effectsStudioDrawer.btnEffectSolarize to "solarize",
+            viewBinding.effectsStudioDrawer.btnEffectNeonEdge to "neon_edge",
+            viewBinding.effectsStudioDrawer.btnEffectNoirNovel to "noir_graphic_novel",
+            viewBinding.effectsStudioDrawer.btnEffectThermalVision to "thermal_vision"
         )
         val activeArtId = if (artEffectIds.contains(currentShootingEffect)) currentShootingEffect else "none"
         for ((btn, id) in artButtons) {
@@ -3893,7 +3893,7 @@ class MainActivity : AppCompatActivity() {
             if (isActive) {
                 btn.setBackgroundResource(R.drawable.bg_cinema_button_active)
                 btn.setTextColor(Color.parseColor("#0F172A"))
-                scrollChipIntoView(viewBinding.scrollArtStrip, btn)
+                scrollChipIntoView(viewBinding.effectsStudioDrawer.scrollArtStrip, btn)
             } else {
                 btn.setBackgroundResource(R.drawable.bg_cinema_button_inactive)
                 btn.setTextColor(Color.parseColor("#94A3B8"))
@@ -3903,14 +3903,14 @@ class MainActivity : AppCompatActivity() {
 
     private fun updateToonEffectButtons() {
         val toonButtons = listOf(
-            viewBinding.btnToonOff to "none",
-            viewBinding.btnEffectCelShaded to "cel_shaded_studio",
-            viewBinding.btnEffectGraphicNoir to "graphic_novel_noir",
-            viewBinding.btnEffectMangaInk to "manga_ink",
-            viewBinding.btnEffectPopArt to "pop_art_print",
-            viewBinding.btnEffectLineArt to "line_art_minimalist",
-            viewBinding.btnEffectLigneClaire to "ligne_claire",
-            viewBinding.btnEffectClayVinyl to "clay_vinyl_3d"
+            viewBinding.effectsStudioDrawer.btnToonOff to "none",
+            viewBinding.effectsStudioDrawer.btnEffectCelShaded to "cel_shaded_studio",
+            viewBinding.effectsStudioDrawer.btnEffectGraphicNoir to "graphic_novel_noir",
+            viewBinding.effectsStudioDrawer.btnEffectMangaInk to "manga_ink",
+            viewBinding.effectsStudioDrawer.btnEffectPopArt to "pop_art_print",
+            viewBinding.effectsStudioDrawer.btnEffectLineArt to "line_art_minimalist",
+            viewBinding.effectsStudioDrawer.btnEffectLigneClaire to "ligne_claire",
+            viewBinding.effectsStudioDrawer.btnEffectClayVinyl to "clay_vinyl_3d"
         )
         val activeToonId = if (toonEffectIds.contains(currentShootingEffect)) currentShootingEffect else "none"
         for ((btn, id) in toonButtons) {
@@ -3918,7 +3918,7 @@ class MainActivity : AppCompatActivity() {
             if (isActive) {
                 btn.setBackgroundResource(R.drawable.bg_cinema_button_active)
                 btn.setTextColor(Color.parseColor("#0F172A"))
-                scrollChipIntoView(viewBinding.scrollToonStrip, btn)
+                scrollChipIntoView(viewBinding.effectsStudioDrawer.scrollToonStrip, btn)
             } else {
                 btn.setBackgroundResource(R.drawable.bg_cinema_button_inactive)
                 btn.setTextColor(Color.parseColor("#94A3B8"))
@@ -3959,11 +3959,11 @@ class MainActivity : AppCompatActivity() {
         isUpdatingEffectSwitches = true
         try {
             val isGrain = (effectId == "film_grain")
-            viewBinding.switchFilmGrain.isChecked = isGrain
+            viewBinding.effectsStudioDrawer.switchFilmGrain.isChecked = isGrain
             viewBinding.proOverlayView.enableFilmGrain = isGrain
 
             val isFlare = (effectId == "anamorphic_flare")
-            viewBinding.switchCineFlare.isChecked = isFlare
+            viewBinding.effectsStudioDrawer.switchCineFlare.isChecked = isFlare
             viewBinding.proOverlayView.enableCineFlare = isFlare
         } finally {
             isUpdatingEffectSwitches = false
@@ -4005,7 +4005,7 @@ class MainActivity : AppCompatActivity() {
 
         applyLivePreviewColorMatrix()
         updateShootingEffectButtons()
-        viewBinding.layoutEffectIntensity.visibility = if (effectId != "none") View.VISIBLE else View.GONE
+        viewBinding.effectsStudioDrawer.layoutEffectIntensity.visibility = if (effectId != "none") View.VISIBLE else View.GONE
         updateCreativeStatusUI()
         if (showNotice) {
             showHudNotice("Effect: ${getShootingEffectLabel(effectId)}")
@@ -4950,10 +4950,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun toggleProDrawer() {
-        val isVisible = viewBinding.proStudioDrawer.visibility == View.VISIBLE
-        viewBinding.proStudioDrawer.visibility = if (isVisible) View.GONE else View.VISIBLE
+        val isVisible = viewBinding.proStudioDrawer.root.visibility == View.VISIBLE
+        viewBinding.proStudioDrawer.root.visibility = if (isVisible) View.GONE else View.VISIBLE
         if (!isVisible) {
-            viewBinding.effectsStudioDrawer.visibility = View.GONE
+            viewBinding.effectsStudioDrawer.root.visibility = View.GONE
             isLastActionCreative = false
             selectShelfTab(currentShelfTab)
         }
@@ -4976,7 +4976,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun toggleAudioMute() {
         isAudioMuted = !isAudioMuted
-        viewBinding.switchMicInput.isChecked = !isAudioMuted
+        viewBinding.proStudioDrawer.switchMicInput.isChecked = !isAudioMuted
         updateAudioMuteUI()
     }
 
@@ -4984,12 +4984,12 @@ class MainActivity : AppCompatActivity() {
         if (isAudioMuted) {
             viewBinding.btnAudioMute.setImageResource(R.drawable.ic_volume_off)
             viewBinding.btnAudioMute.setColorFilter(Color.parseColor("#EF4444"))
-            viewBinding.tvMicInputStatus.text = "Microphone muted"
+            viewBinding.proStudioDrawer.tvMicInputStatus.text = "Microphone muted"
             // silent (no popup)
         } else {
             viewBinding.btnAudioMute.setImageResource(R.drawable.ic_volume_up)
             viewBinding.btnAudioMute.setColorFilter(Color.parseColor("#CCCCCC"))
-            viewBinding.tvMicInputStatus.text = "Studio stereo input active"
+            viewBinding.proStudioDrawer.tvMicInputStatus.text = "Studio stereo input active"
             // silent (no popup)
         }
     }
@@ -5008,10 +5008,10 @@ class MainActivity : AppCompatActivity() {
     private fun setSpiralOrientation(rot: Int) {
         viewBinding.proOverlayView.spiralOrientation = rot
         val spiralButtons = listOf(
-            viewBinding.btnSpiral0 to 0,
-            viewBinding.btnSpiral90 to 1,
-            viewBinding.btnSpiral180 to 2,
-            viewBinding.btnSpiral270 to 3
+            viewBinding.proStudioDrawer.btnSpiral0 to 0,
+            viewBinding.proStudioDrawer.btnSpiral90 to 1,
+            viewBinding.proStudioDrawer.btnSpiral180 to 2,
+            viewBinding.proStudioDrawer.btnSpiral270 to 3
         )
         for ((btn, r) in spiralButtons) {
             val isActive = r == rot
@@ -5028,11 +5028,11 @@ class MainActivity : AppCompatActivity() {
     private fun setDeSqueeze(label: String, index: Int) {
         currentDeSqueeze = label
         val squeezeButtons = listOf(
-            viewBinding.btnSqueezeOff to 0,
-            viewBinding.btnSqueeze133 to 1,
-            viewBinding.btnSqueeze155 to 2,
-            viewBinding.btnSqueeze180 to 3,
-            viewBinding.btnSqueeze200 to 4
+            viewBinding.proStudioDrawer.btnSqueezeOff to 0,
+            viewBinding.proStudioDrawer.btnSqueeze133 to 1,
+            viewBinding.proStudioDrawer.btnSqueeze155 to 2,
+            viewBinding.proStudioDrawer.btnSqueeze180 to 3,
+            viewBinding.proStudioDrawer.btnSqueeze200 to 4
         )
         for ((btn, idx) in squeezeButtons) {
             val isActive = idx == index
@@ -5065,11 +5065,11 @@ class MainActivity : AppCompatActivity() {
 
         if (count > 0) {
             viewBinding.viewStudioBadge.visibility = View.VISIBLE
-            viewBinding.tvDrawerSubtitle.text = "$count ACTIVE INSTRUMENTS"
+            viewBinding.proStudioDrawer.tvDrawerSubtitle.text = "$count ACTIVE INSTRUMENTS"
             viewBinding.btnProStudio.setColorFilter(Color.parseColor("#E2E8F0"))
         } else {
             viewBinding.viewStudioBadge.visibility = View.GONE
-            viewBinding.tvDrawerSubtitle.text = "INSTRUMENTS IN STANDBY"
+            viewBinding.proStudioDrawer.tvDrawerSubtitle.text = "INSTRUMENTS IN STANDBY"
             viewBinding.btnProStudio.setColorFilter(Color.parseColor("#CCCCCC"))
         }
     }
@@ -5098,7 +5098,7 @@ class MainActivity : AppCompatActivity() {
     private fun setGridMode(mode: ProOverlayView.GridType) {
         viewBinding.proOverlayView.currentGrid = mode
         val isSpiral = mode == ProOverlayView.GridType.GOLDEN_SPIRAL
-        viewBinding.layoutSpiralRotation.visibility = if (isSpiral) View.VISIBLE else View.GONE
+        viewBinding.proStudioDrawer.layoutSpiralRotation.visibility = if (isSpiral) View.VISIBLE else View.GONE
         viewBinding.layoutQuickSpiralRotate.visibility = if (isSpiral) View.VISIBLE else View.GONE
 
         // Update Guide button icon color and active badge
@@ -5108,12 +5108,12 @@ class MainActivity : AppCompatActivity() {
 
         // Update Pro Drawer grid buttons
         val gridButtons = listOf(
-            viewBinding.btnGridOff to ProOverlayView.GridType.NONE,
-            viewBinding.btnGridThirds to ProOverlayView.GridType.RULE_OF_THIRDS,
-            viewBinding.btnGridPhi to ProOverlayView.GridType.GOLDEN_RATIO_PHI,
-            viewBinding.btnGridSpiral to ProOverlayView.GridType.GOLDEN_SPIRAL,
-            viewBinding.btnGridDiagonal to ProOverlayView.GridType.DIAGONAL_SYMMETRY,
-            viewBinding.btnGridCinematic to ProOverlayView.GridType.CINEMATIC_239
+            viewBinding.proStudioDrawer.btnGridOff to ProOverlayView.GridType.NONE,
+            viewBinding.proStudioDrawer.btnGridThirds to ProOverlayView.GridType.RULE_OF_THIRDS,
+            viewBinding.proStudioDrawer.btnGridPhi to ProOverlayView.GridType.GOLDEN_RATIO_PHI,
+            viewBinding.proStudioDrawer.btnGridSpiral to ProOverlayView.GridType.GOLDEN_SPIRAL,
+            viewBinding.proStudioDrawer.btnGridDiagonal to ProOverlayView.GridType.DIAGONAL_SYMMETRY,
+            viewBinding.proStudioDrawer.btnGridCinematic to ProOverlayView.GridType.CINEMATIC_239
         )
         for ((btn, m) in gridButtons) {
             val isActive = m == mode
@@ -5156,12 +5156,12 @@ class MainActivity : AppCompatActivity() {
         viewBinding.proOverlayView.currentMatte = matte
 
         val matteButtons = listOf(
-            viewBinding.btnMatteOff to ProOverlayView.AspectMatte.NONE,
-            viewBinding.btnMatte169 to ProOverlayView.AspectMatte.WIDESCREEN_16_9,
-            viewBinding.btnMatteCine to ProOverlayView.AspectMatte.CINE_239,
-            viewBinding.btnMatteSquare to ProOverlayView.AspectMatte.SQUARE_1_1,
-            viewBinding.btnMatte916 to ProOverlayView.AspectMatte.VERTICAL_9_16,
-            viewBinding.btnMatte45 to ProOverlayView.AspectMatte.PORTRAIT_4_5
+            viewBinding.proStudioDrawer.btnMatteOff to ProOverlayView.AspectMatte.NONE,
+            viewBinding.proStudioDrawer.btnMatte169 to ProOverlayView.AspectMatte.WIDESCREEN_16_9,
+            viewBinding.proStudioDrawer.btnMatteCine to ProOverlayView.AspectMatte.CINE_239,
+            viewBinding.proStudioDrawer.btnMatteSquare to ProOverlayView.AspectMatte.SQUARE_1_1,
+            viewBinding.proStudioDrawer.btnMatte916 to ProOverlayView.AspectMatte.VERTICAL_9_16,
+            viewBinding.proStudioDrawer.btnMatte45 to ProOverlayView.AspectMatte.PORTRAIT_4_5
         )
         for ((btn, m) in matteButtons) {
             val isActive = m == matte
@@ -5206,7 +5206,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         // Drawer lens buttons
-        val lensButtons = listOf(viewBinding.btnLens06, viewBinding.btnLens1, viewBinding.btnLens2, viewBinding.btnLens5)
+        val lensButtons = listOf(viewBinding.proStudioDrawer.btnLens06, viewBinding.proStudioDrawer.btnLens1, viewBinding.proStudioDrawer.btnLens2, viewBinding.proStudioDrawer.btnLens5)
         for (i in lensButtons.indices) {
             val btn = lensButtons[i]
             val isActive = i == index
@@ -6681,7 +6681,7 @@ class MainActivity : AppCompatActivity() {
         setShootingEffect("none", showNotice = false)
 
         // Live Adjustments: Brightness, Contrast, Saturation
-        viewBinding.sbBrightness.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+        viewBinding.proStudioDrawer.sbBrightness.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
                 if (fromUser) {
                     val pct = progress - 100
@@ -6695,7 +6695,7 @@ class MainActivity : AppCompatActivity() {
             override fun onStopTrackingTouch(sb: SeekBar?) {}
         })
 
-        viewBinding.sbContrast.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+        viewBinding.proStudioDrawer.sbContrast.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
                 if (fromUser) {
                     val pct = progress - 100
@@ -6709,7 +6709,7 @@ class MainActivity : AppCompatActivity() {
             override fun onStopTrackingTouch(sb: SeekBar?) {}
         })
 
-        viewBinding.sbSaturation.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+        viewBinding.proStudioDrawer.sbSaturation.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
                 if (fromUser) {
                     val pct = progress - 100
@@ -6748,7 +6748,7 @@ class MainActivity : AppCompatActivity() {
             if (isNext) navigateNextGrid() else navigatePreviousGrid()
             return
         }
-        if (viewBinding.effectsStudioDrawer.visibility == View.VISIBLE) {
+        if (viewBinding.effectsStudioDrawer.root.visibility == View.VISIBLE) {
             if (isNext) navigateNextEffectOrFilter() else navigatePreviousEffectOrFilter()
             return
         }
@@ -6769,11 +6769,11 @@ class MainActivity : AppCompatActivity() {
                     isPointInView(viewBinding.proModeBar, ev.rawX, ev.rawY) ||
                     isPointInView(viewBinding.bottomControls, ev.rawX, ev.rawY) ||
                     isPointInView(viewBinding.zoomControls, ev.rawX, ev.rawY) ||
-                    isPointInView(viewBinding.proStudioDrawer, ev.rawX, ev.rawY) ||
+                    isPointInView(viewBinding.proStudioDrawer.root, ev.rawX, ev.rawY) ||
                     isPointInView(viewBinding.arCalibrationDrawer, ev.rawX, ev.rawY) ||
-                    (viewBinding.effectsStudioDrawer.visibility == View.VISIBLE && (
-                        isPointInView(viewBinding.layoutEffectsHeader, ev.rawX, ev.rawY) ||
-                        isPointInView(viewBinding.layoutEffectsSubItems, ev.rawX, ev.rawY)
+                    (viewBinding.effectsStudioDrawer.root.visibility == View.VISIBLE && (
+                        isPointInView(viewBinding.effectsStudioDrawer.layoutEffectsHeader, ev.rawX, ev.rawY) ||
+                        isPointInView(viewBinding.effectsStudioDrawer.layoutEffectsSubItems, ev.rawX, ev.rawY)
                     )) ||
                     (viewBinding.layoutGuideFloatingBar.visibility == View.VISIBLE && (
                         isPointInView(viewBinding.scrollGuideChips, ev.rawX, ev.rawY) ||
@@ -6844,11 +6844,11 @@ class MainActivity : AppCompatActivity() {
                 // Clean tap outside open drawers -> dismiss drawer without leaking tap
                 if (!isMultiTouchGesture && Math.abs(diffX) < 22 && Math.abs(diffY) < 22) {
                     var closedDrawer = false
-                    if (viewBinding.proStudioDrawer.visibility == View.VISIBLE &&
-                        !isPointInView(viewBinding.proStudioDrawer, ev.rawX, ev.rawY) &&
+                    if (viewBinding.proStudioDrawer.root.visibility == View.VISIBLE &&
+                        !isPointInView(viewBinding.proStudioDrawer.root, ev.rawX, ev.rawY) &&
                         !isPointInView(viewBinding.layoutBtnProStudio, ev.rawX, ev.rawY)
                     ) {
-                        viewBinding.proStudioDrawer.visibility = View.GONE
+                        viewBinding.proStudioDrawer.root.visibility = View.GONE
                         closedDrawer = true
                     }
                     if (viewBinding.layoutGuideFloatingBar.visibility == View.VISIBLE &&
@@ -6858,19 +6858,19 @@ class MainActivity : AppCompatActivity() {
                         viewBinding.layoutGuideFloatingBar.visibility = View.GONE
                         closedDrawer = true
                     }
-                    if (viewBinding.effectsStudioDrawer.visibility == View.VISIBLE &&
-                        !isPointInView(viewBinding.layoutEffectsHeader, ev.rawX, ev.rawY) &&
-                        !isPointInView(viewBinding.layoutEffectsSubItems, ev.rawX, ev.rawY) &&
+                    if (viewBinding.effectsStudioDrawer.root.visibility == View.VISIBLE &&
+                        !isPointInView(viewBinding.effectsStudioDrawer.layoutEffectsHeader, ev.rawX, ev.rawY) &&
+                        !isPointInView(viewBinding.effectsStudioDrawer.layoutEffectsSubItems, ev.rawX, ev.rawY) &&
                         !isPointInView(viewBinding.btnFilter, ev.rawX, ev.rawY) &&
                         !isPointInView(viewBinding.modeScrollView, ev.rawX, ev.rawY)
                     ) {
-                        viewBinding.effectsStudioDrawer.visibility = View.GONE
+                        viewBinding.effectsStudioDrawer.root.visibility = View.GONE
                         isLastActionCreative = false
                         closedDrawer = true
                     }
                     if (viewBinding.arCalibrationDrawer.visibility == View.VISIBLE &&
                         !isPointInView(viewBinding.arCalibrationDrawer, ev.rawX, ev.rawY) &&
-                        !isPointInView(viewBinding.btnArCalibrate, ev.rawX, ev.rawY)
+                        !isPointInView(viewBinding.effectsStudioDrawer.btnArCalibrate, ev.rawX, ev.rawY)
                     ) {
                         viewBinding.arCalibrationDrawer.visibility = View.GONE
                         closedDrawer = true
@@ -6918,7 +6918,7 @@ class MainActivity : AppCompatActivity() {
         val label = def?.name?.uppercase(Locale.ROOT) ?: "CYBER ORBITRON"
         val txtHex = def?.colorHex ?: "#38BDF8"
         val glwHex = def?.glowHex ?: "#0284C7"
-        viewBinding.tvWatermarkFontStatus.text = "Font: $label"
+        viewBinding.proStudioDrawer.tvWatermarkFontStatus.text = "Font: $label"
         viewBinding.proOverlayView.setWatermarkStyle(baseTf, txtHex, glwHex)
         if (!def?.family.isNullOrBlank()) {
             cameraFontHelper?.loadDownloadableFont(
@@ -6962,7 +6962,7 @@ class MainActivity : AppCompatActivity() {
                 filterPresetOrder.add(cf.id)
                 val chip = createStudioChipView(cf.name)
                 chip.setOnClickListener { setFilterPreset(cf.id) }
-                viewBinding.layoutFiltersContainer.addView(chip)
+                viewBinding.effectsStudioDrawer.layoutFiltersContainer.addView(chip)
                 dynamicFilterChips.add(chip to cf.id)
             }
         }
@@ -6971,7 +6971,7 @@ class MainActivity : AppCompatActivity() {
                 arLensOrder.add(cl.id)
                 val chip = createStudioChipView(cl.name)
                 chip.setOnClickListener { setArLens(cl.id) }
-                viewBinding.layoutLensesContainer.addView(chip)
+                viewBinding.effectsStudioDrawer.layoutLensesContainer.addView(chip)
                 dynamicLensChips.add(chip to cl.id)
             }
         }
@@ -6996,24 +6996,24 @@ class MainActivity : AppCompatActivity() {
         }
 
         // Histogram Mode Toggle (LUMA <-> RGB)
-        viewBinding.btnHistogramMode.setOnClickListener {
+        viewBinding.proStudioDrawer.btnHistogramMode.setOnClickListener {
             val nextRgb = !viewBinding.proOverlayView.histogramRgbMode
             viewBinding.proOverlayView.histogramRgbMode = nextRgb
-            viewBinding.btnHistogramMode.text = if (nextRgb) "RGB" else "LUMA"
+            viewBinding.proStudioDrawer.btnHistogramMode.text = if (nextRgb) "RGB" else "LUMA"
             viewBinding.proOverlayView.invalidate()
             showHudNotice(if (nextRgb) "Histogram: RGB Channels" else "Histogram: Luminance")
         }
 
         // Focus Peaking Toggle
-        viewBinding.switchFocusPeaking.setOnCheckedChangeListener { _, isChecked ->
+        viewBinding.proStudioDrawer.switchFocusPeaking.setOnCheckedChangeListener { _, isChecked ->
             viewBinding.proOverlayView.showFocusPeaking = isChecked
-            viewBinding.tvFocusPeakingStatus.text = if (isChecked) "Active · Cyan edge contour highlight" else "Focus Peaking: Inactive"
+            viewBinding.proStudioDrawer.tvFocusPeakingStatus.text = if (isChecked) "Active · Cyan edge contour highlight" else "Focus Peaking: Inactive"
             updateActiveInstrumentsCount()
             showHudNotice("Focus Peaking ${if (isChecked) "ON" else "OFF"}")
         }
 
         // Burst Buffer Limit Cycle (15 -> 30 -> 50 -> 100)
-        viewBinding.btnBurstLimit.setOnClickListener {
+        viewBinding.proStudioDrawer.btnBurstLimit.setOnClickListener {
             maxBurstBuffer = when (maxBurstBuffer) {
                 15 -> 30
                 30 -> 50
@@ -7021,19 +7021,19 @@ class MainActivity : AppCompatActivity() {
                 else -> 15
             }
             remainingBurstBuffer = maxBurstBuffer
-            viewBinding.btnBurstLimit.text = "${maxBurstBuffer} SHOTS"
-            viewBinding.tvBurstLimitStatus.text = "Buffer limit: ${maxBurstBuffer} RAW/JPEG frames"
+            viewBinding.proStudioDrawer.btnBurstLimit.text = "${maxBurstBuffer} SHOTS"
+            viewBinding.proStudioDrawer.tvBurstLimitStatus.text = "Buffer limit: ${maxBurstBuffer} RAW/JPEG frames"
             showHudNotice("Burst Limit: ${maxBurstBuffer} Shots")
         }
 
         // Typography & Watermark Banner
-        viewBinding.switchWatermark.setOnCheckedChangeListener { _, isChecked ->
+        viewBinding.proStudioDrawer.switchWatermark.setOnCheckedChangeListener { _, isChecked ->
             viewBinding.proOverlayView.showWatermark = isChecked
             updateActiveInstrumentsCount()
             viewBinding.proOverlayView.invalidate()
             showHudNotice("Watermark ${if (isChecked) "ON" else "OFF"}")
         }
-        viewBinding.btnCycleFont.setOnClickListener {
+        viewBinding.proStudioDrawer.btnCycleFont.setOnClickListener {
             if (injectedFonts.isNotEmpty()) {
                 activeFontIndex = (activeFontIndex + 1) % injectedFonts.size
                 applyActiveFontPreset()
@@ -7042,13 +7042,13 @@ class MainActivity : AppCompatActivity() {
         }
 
         // Creative Effect Intensity Slider (0% - 100%)
-        viewBinding.sbEffectIntensity.progress = (activeEffectIntensity * 100f).toInt().coerceIn(0, 100)
-        viewBinding.tvEffectIntensityVal.text = "${viewBinding.sbEffectIntensity.progress}%"
-        viewBinding.sbEffectIntensity.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+        viewBinding.effectsStudioDrawer.sbEffectIntensity.progress = (activeEffectIntensity * 100f).toInt().coerceIn(0, 100)
+        viewBinding.effectsStudioDrawer.tvEffectIntensityVal.text = "${viewBinding.effectsStudioDrawer.sbEffectIntensity.progress}%"
+        viewBinding.effectsStudioDrawer.sbEffectIntensity.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
                 if (fromUser) {
                     activeEffectIntensity = (progress / 100f).coerceIn(0f, 1f)
-                    viewBinding.tvEffectIntensityVal.text = "$progress%"
+                    viewBinding.effectsStudioDrawer.tvEffectIntensityVal.text = "$progress%"
                     openGLProcessor?.setEffectIntensity(currentShootingEffect, progress)
                 }
             }
@@ -7096,13 +7096,13 @@ class MainActivity : AppCompatActivity() {
         val show = viewBinding.arCalibrationDrawer.visibility != View.VISIBLE
         viewBinding.arCalibrationDrawer.visibility = if (show) View.VISIBLE else View.GONE
         if (show) {
-            viewBinding.proStudioDrawer.visibility = View.GONE
+            viewBinding.proStudioDrawer.root.visibility = View.GONE
             viewBinding.layoutGuideFloatingBar.visibility = View.GONE
         }
-        viewBinding.btnArCalibrate.setBackgroundResource(
+        viewBinding.effectsStudioDrawer.btnArCalibrate.setBackgroundResource(
             if (show) R.drawable.bg_cinema_button_active else R.drawable.bg_cinema_button_inactive
         )
-        viewBinding.btnArCalibrate.setTextColor(Color.parseColor(if (show) "#0F172A" else "#38BDF8"))
+        viewBinding.effectsStudioDrawer.btnArCalibrate.setTextColor(Color.parseColor(if (show) "#0F172A" else "#38BDF8"))
         window.decorView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
     }
 
@@ -7132,8 +7132,8 @@ class MainActivity : AppCompatActivity() {
     private fun setupArCalibrationControls() {
         viewBinding.btnCloseArCalibDrawer.setOnClickListener {
             viewBinding.arCalibrationDrawer.visibility = View.GONE
-            viewBinding.btnArCalibrate.setBackgroundResource(R.drawable.bg_cinema_button_inactive)
-            viewBinding.btnArCalibrate.setTextColor(Color.parseColor("#38BDF8"))
+            viewBinding.effectsStudioDrawer.btnArCalibrate.setBackgroundResource(R.drawable.bg_cinema_button_inactive)
+            viewBinding.effectsStudioDrawer.btnArCalibrate.setTextColor(Color.parseColor("#38BDF8"))
         }
         viewBinding.btnArCalibReset.setOnClickListener { resetArCalibrationValues() }
 
@@ -7348,11 +7348,11 @@ class MainActivity : AppCompatActivity() {
         } else {
             stopBatchLoop()
         }
-        viewBinding.btnArBatch.text = if (isBatchModeActive) "BATCH: ON" else "BATCH: OFF"
-        viewBinding.btnArBatch.setBackgroundResource(
+        viewBinding.effectsStudioDrawer.btnArBatch.text = if (isBatchModeActive) "BATCH: ON" else "BATCH: OFF"
+        viewBinding.effectsStudioDrawer.btnArBatch.setBackgroundResource(
             if (isBatchModeActive) R.drawable.bg_cinema_button_active else R.drawable.bg_cinema_button_inactive
         )
-        viewBinding.btnArBatch.setTextColor(Color.parseColor(if (isBatchModeActive) "#0F172A" else "#94A3B8"))
+        viewBinding.effectsStudioDrawer.btnArBatch.setTextColor(Color.parseColor(if (isBatchModeActive) "#0F172A" else "#94A3B8"))
     }
 
     private fun stepBatchQueue(delta: Int) {
@@ -7476,19 +7476,19 @@ class MainActivity : AppCompatActivity() {
                 } else {
                     overlay.addOrSelectArText(txt, chosenScale, chosenColor, chosenStyle)
                 }
-                viewBinding.btnArTextStudio.text = if (overlay.hasArTextItems()) "TEXT (${overlay.arTextItems.size})" else "Aa TEXT"
+                viewBinding.effectsStudioDrawer.btnArTextStudio.text = if (overlay.hasArTextItems()) "TEXT (${overlay.arTextItems.size})" else "Aa TEXT"
                 showHudNotice("Hold & drag AR text anywhere on screen")
             }
             .setNeutralButton("Add New") { _, _ ->
                 val txt = input.text.toString().trim().ifEmpty { "HELLO AR!" }
                 overlay.addOrSelectArText(txt, chosenScale, chosenColor, chosenStyle)
-                viewBinding.btnArTextStudio.text = "TEXT (${overlay.arTextItems.size})"
+                viewBinding.effectsStudioDrawer.btnArTextStudio.text = "TEXT (${overlay.arTextItems.size})"
                 showHudNotice("Added AR text — hold & drag to move")
             }
         if (selected != null) {
             builder.setNegativeButton("Delete") { _, _ ->
                 overlay.removeSelectedArText()
-                viewBinding.btnArTextStudio.text = if (overlay.hasArTextItems()) "TEXT (${overlay.arTextItems.size})" else "Aa TEXT"
+                viewBinding.effectsStudioDrawer.btnArTextStudio.text = if (overlay.hasArTextItems()) "TEXT (${overlay.arTextItems.size})" else "Aa TEXT"
             }
         } else {
             builder.setNegativeButton("Cancel", null)
