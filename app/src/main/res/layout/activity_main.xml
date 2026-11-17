@@ -1242,6 +1242,70 @@
                         app:trackTint="#475569" />
                 </LinearLayout>
 
+                <!-- Gyro-Stabilization (Software EIS for Preview & VideoCapture) Card -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:padding="12dp"
+                    android:background="@drawable/bg_card_cinema"
+                    android:layout_marginTop="6dp">
+
+                    <ImageView
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:src="@drawable/ic_compass"
+                        app:tint="#22D3EE"
+                        android:layout_marginEnd="10dp" />
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Gyro-Stabilization (EIS)"
+                            android:textColor="#F8FAFC"
+                            android:textSize="11.5sp"
+                            android:fontFamily="monospace"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:id="@+id/tvGyroEisStatus"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Sensor.TYPE_GYROSCOPE · Preview &amp; Video EIS"
+                            android:textColor="#94A3B8"
+                            android:textSize="9.5sp"
+                            android:fontFamily="monospace" />
+                    </LinearLayout>
+
+                    <TextView
+                        android:id="@+id/btnGyroSimShake"
+                        android:layout_width="wrap_content"
+                        android:layout_height="26dp"
+                        android:gravity="center"
+                        android:paddingHorizontal="8dp"
+                        android:layout_marginEnd="6dp"
+                        android:text="SIM SHAKE"
+                        android:textColor="#94A3B8"
+                        android:textSize="9sp"
+                        android:fontFamily="monospace"
+                        android:textStyle="bold"
+                        android:background="@drawable/bg_cinema_button_inactive" />
+
+                    <androidx.appcompat.widget.SwitchCompat
+                        android:id="@+id/switchGyroEis"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        app:thumbTint="#22D3EE"
+                        app:trackTint="#475569" />
+                </LinearLayout>
+
                 <!-- Smart Visual Balance Reticle Switch Card -->
                 <LinearLayout
                     android:layout_width="match_parent"

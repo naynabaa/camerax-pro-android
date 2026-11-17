@@ -21,6 +21,7 @@ import androidx.camera.core.SurfaceOutput
 import androidx.camera.core.SurfaceProcessor
 import androidx.camera.core.SurfaceRequest
 import androidx.core.util.Consumer
+import com.example.cameraxapp.stabilization.GyroStabilizer
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
@@ -176,7 +177,36 @@ class OpenGLSurfaceProcessor : SurfaceProcessor, SurfaceTexture.OnFrameAvailable
     @Volatile
     private var motionBlurMagnitude: Float = 0.18f
 
+    @Volatile
+    private var eisEnabled: Boolean = false
+
+    @Volatile
+    private var eisOverscanZoom: Float = 1.0f
+
+    @Volatile
+    private var eisTransX: Float = 0.0f
+
+    @Volatile
+    private var eisTransY: Float = 0.0f
+
+    @Volatile
+    private var eisRollDeg: Float = 0.0f
+
     fun getExecutor(): Executor = glExecutor
+
+    fun setGyroEisTransform(
+        enabled: Boolean,
+        overscanZoom: Float,
+        transXNorm: Float,
+        transYNorm: Float,
+        rollDeg: Float
+    ) {
+        eisEnabled = enabled
+        eisOverscanZoom = overscanZoom.coerceIn(1.0f, 1.45f)
+        eisTransX = transXNorm.coerceIn(-0.2f, 0.2f)
+        eisTransY = transYNorm.coerceIn(-0.2f, 0.2f)
+        eisRollDeg = rollDeg.coerceIn(-15f, 15f)
+    }
 
     fun setComicHalftoneParams(density: Float, dotSize: Float) {
         halftoneDensity = density.coerceIn(0.4f, 2.2f)
@@ -434,7 +464,16 @@ class OpenGLSurfaceProcessor : SurfaceProcessor, SurfaceTexture.OnFrameAvailable
                 val out = holder.surfaceOutput
                 EGL14.eglMakeCurrent(eglDisplay, holder.eglSurface, holder.eglSurface, eglContext)
 
-                Matrix.setIdentityM(mvpMatrix, 0)
+                GyroStabilizer.buildMvpMatrix(
+                    outMatrix = mvpMatrix,
+                    surfaceWidth = out.size.width,
+                    surfaceHeight = out.size.height,
+                    enabled = eisEnabled,
+                    overscanZoom = eisOverscanZoom,
+                    transXNorm = eisTransX,
+                    transYNorm = eisTransY,
+                    rollDeg = eisRollDeg
+                )
                 out.updateTransformMatrix(holderTexMatrix, texMatrix)
 
                 if (isMultiPassComic) {
@@ -1406,6 +1445,20 @@ class OpenGLSurfaceProcessor : SurfaceProcessor, SurfaceTexture.OnFrameAvailable
                 processor,
                 Consumer { error: Throwable ->
                     Log.e(TAG, "CameraEffect processing error: ${error.message}", error)
+                }
+            ) {}
+        }
+
+        /**
+         * Creates a Preview-only CameraEffect configuring OpenGLSurfaceProcessor for live Preview EIS
+         */
+        fun createPreviewCameraEffect(processor: OpenGLSurfaceProcessor, executor: Executor): CameraEffect {
+            return object : CameraEffect(
+                CameraEffect.PREVIEW,
+                executor,
+                processor,
+                Consumer { error: Throwable ->
+                    Log.e(TAG, "Preview CameraEffect processing error: ${error.message}", error)
                 }
             ) {}
         }

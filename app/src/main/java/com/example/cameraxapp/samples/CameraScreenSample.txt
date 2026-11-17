@@ -44,6 +44,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.content.PermissionChecker
 import com.example.cameraxapp.panorama.PanoramaStitcher
 import com.example.cameraxapp.power.ThermalGuardManager
+import com.example.cameraxapp.stabilization.GyroStabilizer
 import java.text.SimpleDateFormat
 import java.util.Locale
 import java.util.concurrent.Executors
@@ -96,6 +97,13 @@ fun CameraXScreen(modifier: Modifier = Modifier) {
     var thermalStatusLabel by remember { mutableStateOf("NOMINAL") }
     var thermalTier by remember { mutableStateOf(ThermalGuardManager.ThermalTier.NOMINAL) }
     val isThermalThrottled = thermalTier.severityRank >= ThermalGuardManager.ThermalTier.MODERATE.severityRank
+    var isGyroEisEnabled by remember { mutableStateOf(false) }
+    var isGyroSimShake by remember { mutableStateOf(false) }
+    var eisOverscanZoom by remember { mutableStateOf(1.0f) }
+    var eisCompXNorm by remember { mutableStateOf(0f) }
+    var eisCompYNorm by remember { mutableStateOf(0f) }
+    var eisRollDeg by remember { mutableStateOf(0f) }
+    var eisShakeReductionPct by remember { mutableStateOf(0) }
     val arTextItems = remember { mutableStateListOf<ComposeArTextItem>() }
     var showArTextDialog by remember { mutableStateOf(false) }
     var arTextDraft by remember { mutableStateOf("HELLO AR!") }
@@ -108,6 +116,15 @@ fun CameraXScreen(modifier: Modifier = Modifier) {
         ThermalGuardManager(context) { policy ->
             thermalStatusLabel = policy.statusLabel
             thermalTier = policy.tier
+        }
+    }
+    val gyroStabilizer = remember {
+        GyroStabilizer(context) { t ->
+            eisOverscanZoom = t.overscanZoom
+            eisCompXNorm = t.compXNorm
+            eisCompYNorm = t.compYNorm
+            eisRollDeg = t.compRollDeg
+            eisShakeReductionPct = t.shakeReductionPct
         }
     }
 
@@ -125,8 +142,10 @@ fun CameraXScreen(modifier: Modifier = Modifier) {
 
     DisposableEffect(Unit) {
         thermalGuard.register()
+        gyroStabilizer.register()
         onDispose {
             thermalGuard.unregister()
+            gyroStabilizer.unregister()
             panoramaStitcher.reset()
             panoramaSlices.forEach { if (!it.bitmap.isRecycled) it.bitmap.recycle() }
             panoramaSlices.clear()
@@ -211,22 +230,30 @@ fun CameraXScreen(modifier: Modifier = Modifier) {
     }
 
     Box(modifier = modifier.fillMaxSize().background(Color.Black)) {
-        // CameraX Preview
+        // CameraX Preview with Software Gyro-EIS Transform (1.22x overscan crop + gyro counter-motion)
         AndroidView(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    scaleX = eisOverscanZoom
+                    scaleY = eisOverscanZoom
+                    translationX = eisCompXNorm * size.width * 0.5f
+                    translationY = -eisCompYNorm * size.height * 0.5f
+                    rotationZ = eisRollDeg
+                },
             factory = { previewView }
         )
 
-        // Pro Mode Top Toolbar: Timer, Grid
-        if (cameraMode != CameraMode.VIDEO && cameraMode != CameraMode.SLOW_MO) {
-            Row(
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .fillMaxWidth()
-                    .padding(top = 40.dp, start = 16.dp, end = 16.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
+        // Pro Mode Top Toolbar: Timer, Gyro-EIS, AR Text, Grid (available in Preview & Video modes)
+        Row(
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .fillMaxWidth()
+                .padding(top = 40.dp, start = 16.dp, end = 16.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            if (cameraMode != CameraMode.VIDEO && cameraMode != CameraMode.SLOW_MO) {
                 Button(
                     onClick = {
                         countdownDuration = when (countdownDuration) { 0 -> 3; 3 -> 5; 5 -> 10; else -> 0 }
@@ -235,20 +262,58 @@ fun CameraXScreen(modifier: Modifier = Modifier) {
                 ) {
                     Text(if (countdownDuration == 0) "Timer Off" else "${countdownDuration}s", fontSize = 12.sp)
                 }
-
+            } else {
                 Button(
-                    onClick = { showArTextDialog = true },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0x88000000))
+                    onClick = {
+                        val nextDemo = !isGyroSimShake
+                        isGyroSimShake = nextDemo
+                        gyroStabilizer.setSyntheticShakeDemo(nextDemo)
+                        if (nextDemo && !isGyroEisEnabled) {
+                            isGyroEisEnabled = true
+                            gyroStabilizer.setEnabled(true)
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (isGyroSimShake) Color(0xCC0E7490) else Color(0x66000000)
+                    )
                 ) {
-                    Text(if (arTextItems.isEmpty()) "Aa TEXT" else "TEXT (${arTextItems.size})", fontSize = 12.sp, color = Color(0xFF34D399))
+                    Text(if (isGyroSimShake) "SIM SHAKE" else "LIVE GYRO", fontSize = 11.sp, color = Color.White)
                 }
+            }
 
-                IconButton(
-                    onClick = { showGrid = !showGrid },
-                    modifier = Modifier.background(Color(0x66000000), CircleShape)
-                ) {
-                    Icon(Icons.Default.GridOn, contentDescription = "Grid", tint = if (showGrid) Color.White else Color.Gray)
-                }
+            Button(
+                onClick = {
+                    val next = !isGyroEisEnabled
+                    isGyroEisEnabled = next
+                    if (next && !gyroStabilizer.isGyroHardwareAvailable && !isGyroSimShake) {
+                        isGyroSimShake = true
+                        gyroStabilizer.setSyntheticShakeDemo(true)
+                    }
+                    gyroStabilizer.setEnabled(next)
+                },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (isGyroEisEnabled) Color(0xCC0891B2) else Color(0x66000000)
+                )
+            ) {
+                Text(
+                    if (isGyroEisEnabled) "EIS ON -${eisShakeReductionPct}%" else "EIS OFF",
+                    fontSize = 11.sp,
+                    color = if (isGyroEisEnabled) Color(0xFFCFFAFE) else Color.White
+                )
+            }
+
+            Button(
+                onClick = { showArTextDialog = true },
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0x88000000))
+            ) {
+                Text(if (arTextItems.isEmpty()) "Aa TEXT" else "TEXT (${arTextItems.size})", fontSize = 11.sp, color = Color(0xFF34D399))
+            }
+
+            IconButton(
+                onClick = { showGrid = !showGrid },
+                modifier = Modifier.background(Color(0x66000000), CircleShape)
+            ) {
+                Icon(Icons.Default.GridOn, contentDescription = "Grid", tint = if (showGrid) Color.White else Color.Gray)
             }
         }
 

@@ -95,6 +95,7 @@ import com.example.cameraxapp.panorama.PanoramaStitcher
 import com.example.cameraxapp.night.NightExposureStacker
 import com.example.cameraxapp.power.EcoPowerManager
 import com.example.cameraxapp.power.ThermalGuardManager
+import com.example.cameraxapp.stabilization.GyroStabilizer
 import com.example.cameraxapp.ar.FaceMeshHelper
 import com.example.cameraxapp.ar.ARFaceOverlayView
 import com.example.cameraxapp.audio.ComicSoundEffectsHelper
@@ -344,6 +345,10 @@ class MainActivity : AppCompatActivity() {
     private var savedArLensBeforeThermal: String? = null
     private var savedPipBeforeThermal: Boolean = false
 
+    // Gyro-Stabilization (Software EIS) via Sensor.TYPE_GYROSCOPE -> OpenGLSurfaceProcessor & PreviewView
+    private lateinit var gyroStabilizer: GyroStabilizer
+    private var isGyroEisEnabled: Boolean = false
+
     private fun normalizeAngleDelta(fromDeg: Float, toDeg: Float): Float {
         return (((toDeg - fromDeg) + 540f) % 360f) - 180f
     }
@@ -359,11 +364,12 @@ class MainActivity : AppCompatActivity() {
                 smoothRollDeg = smoothRollDeg * 0.78f + rollDeg * 0.22f
                 viewBinding.proOverlayView.tiltRollDegrees = rollDeg
                 viewBinding.proOverlayView.tiltPitchDegrees = pitchDeg
+                val viewEisControlsRotation = (::gyroStabilizer.isInitialized && gyroStabilizer.isEnabled && cameraEffect == null)
                 if (currentShootingEffect == "action_stabilization") {
                     viewBinding.viewFinder.rotation = -smoothRollDeg.coerceIn(-45f, 45f)
                 } else if (currentShootingEffect == "hyperlapse") {
                     viewBinding.viewFinder.rotation = -(smoothRollDeg * 0.45f).coerceIn(-18f, 18f)
-                } else if (viewBinding.viewFinder.rotation != 0f) {
+                } else if (!viewEisControlsRotation && viewBinding.viewFinder.rotation != 0f) {
                     viewBinding.viewFinder.rotation = 0f
                 }
 
@@ -490,6 +496,18 @@ class MainActivity : AppCompatActivity() {
             runOnUiThread { applyThermalPolicy(policy) }
         }
 
+        // Initialize Gyro-Stabilization (Software EIS) Engine for Preview & VideoCapture
+        gyroStabilizer = GyroStabilizer(this) { telemetry ->
+            openGLProcessor?.setGyroEisTransform(
+                enabled = telemetry.isEnabled,
+                overscanZoom = telemetry.overscanZoom,
+                transXNorm = telemetry.compXNorm,
+                transYNorm = telemetry.compYNorm,
+                rollDeg = telemetry.compRollDeg
+            )
+            runOnUiThread { applyGyroEisTelemetry(telemetry) }
+        }
+
         // Initialize Filter, MediaPipe 468 Face Mesh, Comic SFX & Typography Engines
         filterManager = FilterManager(this)
         comicSfxHelper = ComicSoundEffectsHelper()
@@ -568,6 +586,9 @@ class MainActivity : AppCompatActivity() {
         if (::thermalGuardManager.isInitialized) {
             thermalGuardManager.register()
         }
+        if (::gyroStabilizer.isInitialized) {
+            gyroStabilizer.register()
+        }
         rotationSensor?.let {
             sensorManager.registerListener(sensorEventListener, it, SensorManager.SENSOR_DELAY_UI)
         }
@@ -580,6 +601,9 @@ class MainActivity : AppCompatActivity() {
         }
         if (::thermalGuardManager.isInitialized) {
             thermalGuardManager.unregister()
+        }
+        if (::gyroStabilizer.isInitialized) {
+            gyroStabilizer.unregister()
         }
         sensorManager.unregisterListener(sensorEventListener)
     }
@@ -705,6 +729,57 @@ class MainActivity : AppCompatActivity() {
                 bindCameraUseCases()
             }
             showHudNotice("THERMAL NOMINAL: Full CameraX Analysis & Capture Resolution Restored")
+        }
+    }
+
+    private fun applyGyroEisTelemetry(telemetry: GyroStabilizer.StabilizationTelemetry) {
+        viewBinding.proOverlayView.updateGyroEisTelemetry(
+            active = telemetry.isEnabled,
+            syntheticDemo = telemetry.isSyntheticDemo,
+            overscanZoom = telemetry.overscanZoom,
+            compXNorm = telemetry.compXNorm,
+            compYNorm = telemetry.compYNorm,
+            rawXNorm = telemetry.rawDeflectionX,
+            rawYNorm = telemetry.rawDeflectionY,
+            rollDeg = telemetry.compRollDeg,
+            reductionPct = telemetry.shakeReductionPct
+        )
+
+        if (telemetry.isEnabled) {
+            val modeTxt = if (telemetry.isSyntheticDemo) "SIM" else if (telemetry.gyroAvailable) "GYRO" else "ROT"
+            viewBinding.tvGyroEisStatus.text = "$modeTxt EIS · -${telemetry.shakeReductionPct}% shake · ${String.format(Locale.US, "%.1f", telemetry.angularVelocityDegPerSec)}°/s"
+        } else {
+            viewBinding.tvGyroEisStatus.text = if (::gyroStabilizer.isInitialized && gyroStabilizer.isGyroHardwareAvailable) {
+                "Sensor.TYPE_GYROSCOPE · Preview & Video EIS"
+            } else {
+                "Rotation Vector / Demo Shake · Preview & Video EIS"
+            }
+        }
+
+        // Apply View-level Preview EIS when CameraEffect is unbound (Photo modes or HAL fallback)
+        if (cameraEffect == null && currentShootingEffect != "dolly_zoom" && currentShootingEffect != "macro_focus") {
+            if (telemetry.isEnabled) {
+                val vw = viewBinding.viewFinder.width.toFloat().coerceAtLeast(1f)
+                val vh = viewBinding.viewFinder.height.toFloat().coerceAtLeast(1f)
+                viewBinding.viewFinder.scaleX = telemetry.overscanZoom
+                viewBinding.viewFinder.scaleY = telemetry.overscanZoom
+                viewBinding.viewFinder.translationX = telemetry.compXNorm * vw * 0.5f
+                viewBinding.viewFinder.translationY = -telemetry.compYNorm * vh * 0.5f
+                if (currentShootingEffect != "action_stabilization" && currentShootingEffect != "hyperlapse") {
+                    viewBinding.viewFinder.rotation = telemetry.compRollDeg
+                }
+            } else {
+                viewBinding.viewFinder.translationX = 0f
+                viewBinding.viewFinder.translationY = 0f
+                if (currentShootingEffect != "action_stabilization" && currentShootingEffect != "hyperlapse") {
+                    viewBinding.viewFinder.rotation = 0f
+                    viewBinding.viewFinder.scaleX = 1.0f
+                    viewBinding.viewFinder.scaleY = 1.0f
+                }
+            }
+        } else if (cameraEffect != null && (viewBinding.viewFinder.translationX != 0f || viewBinding.viewFinder.translationY != 0f)) {
+            viewBinding.viewFinder.translationX = 0f
+            viewBinding.viewFinder.translationY = 0f
         }
     }
 
@@ -1082,6 +1157,42 @@ class MainActivity : AppCompatActivity() {
             viewBinding.proOverlayView.showLevelGauge = isChecked
             viewBinding.tvHorizonLevelStatus.text = if (isChecked) "0.0° Level · Pitch and roll active" else "Horizon Level Gyro: Inactive"
             updateActiveInstrumentsCount()
+        }
+        viewBinding.switchGyroEis.setOnCheckedChangeListener { _, isChecked ->
+            isGyroEisEnabled = isChecked
+            if (::gyroStabilizer.isInitialized) {
+                // Auto-enable synthetic tremor demo if hardware gyroscope sensor is absent (e.g. emulator)
+                if (isChecked && !gyroStabilizer.isGyroHardwareAvailable && !gyroStabilizer.isSyntheticShakeDemo) {
+                    gyroStabilizer.setSyntheticShakeDemo(true)
+                    viewBinding.btnGyroSimShake.setBackgroundResource(R.drawable.bg_cinema_button_active)
+                    viewBinding.btnGyroSimShake.setTextColor(Color.parseColor("#0F172A"))
+                }
+                gyroStabilizer.setEnabled(isChecked)
+            }
+            if (!isPanoramaCapturing && !isNightStacking && recording == null) {
+                bindCameraUseCases()
+            }
+            updateActiveInstrumentsCount()
+            showHudNotice(
+                if (isChecked) "Gyro EIS ON · Preview & Video Stabilized (1.22x Crop)" else "Gyro EIS OFF"
+            )
+        }
+        viewBinding.btnGyroSimShake.setOnClickListener {
+            if (!::gyroStabilizer.isInitialized) return@setOnClickListener
+            val nextDemo = !gyroStabilizer.isSyntheticShakeDemo
+            gyroStabilizer.setSyntheticShakeDemo(nextDemo)
+            if (nextDemo && !isGyroEisEnabled) {
+                viewBinding.switchGyroEis.isChecked = true
+            }
+            if (nextDemo) {
+                viewBinding.btnGyroSimShake.setBackgroundResource(R.drawable.bg_cinema_button_active)
+                viewBinding.btnGyroSimShake.setTextColor(Color.parseColor("#0F172A"))
+                showHudNotice("Gyro EIS Shake Simulator ON")
+            } else {
+                viewBinding.btnGyroSimShake.setBackgroundResource(R.drawable.bg_cinema_button_inactive)
+                viewBinding.btnGyroSimShake.setTextColor(Color.parseColor("#94A3B8"))
+                showHudNotice("Live Hardware Gyroscope Active")
+            }
         }
         viewBinding.switchVisualBalance.setOnCheckedChangeListener { _, isChecked ->
             viewBinding.proOverlayView.showVisualBalance = isChecked
@@ -1910,7 +2021,30 @@ class MainActivity : AppCompatActivity() {
 
             val isPhotoType = cameraMode == CameraMode.PHOTO || cameraMode == CameraMode.PORTRAIT || cameraMode == CameraMode.NIGHT || cameraMode == CameraMode.PANORAMA
             if (isPhotoType) {
-                camera = cameraProvider.bindToLifecycle(this, effectiveSelector, preview, imageCapture!!, imageAnalysis!!)
+                val usePreviewEisEffect = (::gyroStabilizer.isInitialized && gyroStabilizer.isEnabled && !activeNightExt)
+                var boundPreviewWithEffect = false
+                if (usePreviewEisEffect) {
+                    val proc = openGLProcessor ?: OpenGLSurfaceProcessor().also { openGLProcessor = it }
+                    val t = gyroStabilizer.currentTelemetry
+                    proc.setGyroEisTransform(t.isEnabled, t.overscanZoom, t.compXNorm, t.compYNorm, t.compRollDeg)
+                    try {
+                        val effect = OpenGLSurfaceProcessor.createPreviewCameraEffect(proc, proc.getExecutor())
+                        val groupBuilder = UseCaseGroup.Builder()
+                            .addUseCase(preview)
+                            .addUseCase(imageCapture!!)
+                            .addUseCase(imageAnalysis!!)
+                            .addEffect(effect)
+                        camera = cameraProvider.bindToLifecycle(this, effectiveSelector, groupBuilder.build())
+                        cameraEffect = effect
+                        boundPreviewWithEffect = true
+                    } catch (effectErr: Exception) {
+                        Log.w(TAG, "Preview CameraEffect EIS unsupported on HAL, using View-level EIS fallback", effectErr)
+                        cameraEffect = null
+                    }
+                }
+                if (!boundPreviewWithEffect) {
+                    camera = cameraProvider.bindToLifecycle(this, effectiveSelector, preview, imageCapture!!, imageAnalysis!!)
+                }
             } else {
                 val proc = openGLProcessor ?: OpenGLSurfaceProcessor().also { openGLProcessor = it }
                 proc.setShootingEffect(currentShootingEffect)
@@ -1920,6 +2054,10 @@ class MainActivity : AppCompatActivity() {
                     viewBinding.proOverlayView.liveSaturationPercent
                 )
                 proc.setNightBoost(cameraMode == CameraMode.NIGHT || currentShootingEffect == "night_sight")
+                if (::gyroStabilizer.isInitialized) {
+                    val t = gyroStabilizer.currentTelemetry
+                    proc.setGyroEisTransform(t.isEnabled, t.overscanZoom, t.compXNorm, t.compYNorm, t.compRollDeg)
+                }
                 syncOverlayToVideoProcessor()
                 var boundWithEffect = false
                 try {
@@ -3851,11 +3989,16 @@ class MainActivity : AppCompatActivity() {
                 start()
             }
         } else {
+            val eisZoom = if (::gyroStabilizer.isInitialized && gyroStabilizer.isEnabled && cameraEffect == null) {
+                gyroStabilizer.overscanZoom
+            } else {
+                1.0f
+            }
             val cropScale = when (effectId) {
                 "macro_focus" -> 1.26f
                 "action_stabilization" -> 1.15f
                 "hyperlapse" -> 1.10f
-                else -> 1.0f
+                else -> eisZoom
             }
             viewBinding.viewFinder.animate().scaleX(cropScale).scaleY(cropScale).setDuration(180).start()
         }
@@ -4909,6 +5052,7 @@ class MainActivity : AppCompatActivity() {
         if (viewBinding.proOverlayView.currentGrid != ProOverlayView.GridType.NONE) count++
         if (viewBinding.proOverlayView.currentMatte != ProOverlayView.AspectMatte.NONE) count++
         if (viewBinding.proOverlayView.showLevelGauge) count++
+        if (isGyroEisEnabled) count++
         if (viewBinding.proOverlayView.showVisualBalance) count++
         if (viewBinding.proOverlayView.showFocusPeaking) count++
         if (viewBinding.proOverlayView.showZebraStripes) count++
@@ -7362,6 +7506,9 @@ class MainActivity : AppCompatActivity() {
         }
         if (::thermalGuardManager.isInitialized) {
             thermalGuardManager.unregister()
+        }
+        if (::gyroStabilizer.isInitialized) {
+            gyroStabilizer.unregister()
         }
         panoramaStitcher.reset()
         nightExposureStacker.reset()

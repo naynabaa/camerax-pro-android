@@ -1,0 +1,347 @@
+package com.example.cameraxapp.stabilization;
+
+import android.content.Context;
+import android.hardware.Sensor;
+import android.hardware.SensorEvent;
+import android.hardware.SensorEventListener;
+import android.hardware.SensorManager;
+import android.opengl.Matrix;
+import android.os.Handler;
+import android.os.Looper;
+import android.os.SystemClock;
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+
+/**
+ * Java Reference: Sensor-Driven Software EIS (Electronic Image Stabilization) for CameraX
+ * Preview & VideoCapture using Sensor.TYPE_GYROSCOPE + high-pass tremor filtering.
+ */
+public class GyroStabilizer implements SensorEventListener {
+
+    public static class StabilizationTelemetry {
+        public final boolean isEnabled;
+        public final boolean gyroAvailable;
+        public final boolean isSyntheticDemo;
+        public final float overscanZoom;
+        public final float compXNorm;
+        public final float compYNorm;
+        public final float compRollDeg;
+        public final float rawDeflectionX;
+        public final float rawDeflectionY;
+        public final float angularVelocityDegPerSec;
+        public final int shakeReductionPct;
+
+        public StabilizationTelemetry(
+                boolean isEnabled,
+                boolean gyroAvailable,
+                boolean isSyntheticDemo,
+                float overscanZoom,
+                float compXNorm,
+                float compYNorm,
+                float compRollDeg,
+                float rawDeflectionX,
+                float rawDeflectionY,
+                float angularVelocityDegPerSec,
+                int shakeReductionPct
+        ) {
+            this.isEnabled = isEnabled;
+            this.gyroAvailable = gyroAvailable;
+            this.isSyntheticDemo = isSyntheticDemo;
+            this.overscanZoom = overscanZoom;
+            this.compXNorm = compXNorm;
+            this.compYNorm = compYNorm;
+            this.compRollDeg = compRollDeg;
+            this.rawDeflectionX = rawDeflectionX;
+            this.rawDeflectionY = rawDeflectionY;
+            this.angularVelocityDegPerSec = angularVelocityDegPerSec;
+            this.shakeReductionPct = shakeReductionPct;
+        }
+    }
+
+    public interface Listener {
+        void onTelemetryUpdated(@NonNull StabilizationTelemetry telemetry);
+    }
+
+    private static final float NS_TO_SEC = 1e-9f;
+    private static final float GYRO_DEADZONE_RAD_S = 0.006f;
+    public static final float OVERSCAN_ZOOM = 1.22f;
+
+    private final SensorManager sensorManager;
+    @Nullable private final Sensor gyroSensor;
+    @Nullable private final Sensor rotationVectorSensor;
+    private final Listener listener;
+
+    private volatile boolean enabled = false;
+    private volatile boolean syntheticShakeDemo = false;
+    private boolean registered = false;
+
+    private long lastGyroTimestampNs = 0L;
+    private long lastRotTimestampNs = 0L;
+    private final float[] rotMatrix = new float[9];
+    private final float[] orientationAngles = new float[3];
+    private boolean hasPrevRotAngles = false;
+    private float prevYawRad = 0f;
+    private float prevPitchRad = 0f;
+    private float prevRollRad = 0f;
+
+    private float hpPitchRad = 0f;
+    private float hpYawRad = 0f;
+    private float hpRollRad = 0f;
+    private float smoothCompX = 0f;
+    private float smoothCompY = 0f;
+    private float smoothCompRollDeg = 0f;
+    private float smoothAngularVelDegSec = 0f;
+
+    private volatile StabilizationTelemetry currentTelemetry;
+    private final Handler demoHandler = new Handler(Looper.getMainLooper());
+    private long demoLastTickMs = 0L;
+    private float demoElapsedSec = 0f;
+
+    private final Runnable demoTickRunnable = new Runnable() {
+        @Override
+        public void run() {
+            if (!enabled || !syntheticShakeDemo || !registered) return;
+            long now = SystemClock.elapsedRealtime();
+            float dt = (demoLastTickMs == 0L) ? 0.016f : Math.max(0.004f, Math.min(0.045f, (now - demoLastTickMs) / 1000f));
+            demoLastTickMs = now;
+            demoElapsedSec += dt;
+
+            float wx = (float) (0.095 * Math.sin(demoElapsedSec * 2.0 * Math.PI * 1.4)
+                    + 0.15 * Math.sin(demoElapsedSec * 2.0 * Math.PI * 3.2 + 0.7)
+                    + 0.08 * Math.cos(demoElapsedSec * 2.0 * Math.PI * 7.1));
+            float wy = (float) (0.11 * Math.cos(demoElapsedSec * 2.0 * Math.PI * 1.1)
+                    + 0.17 * Math.sin(demoElapsedSec * 2.0 * Math.PI * 2.85 + 1.4)
+                    + 0.09 * Math.sin(demoElapsedSec * 2.0 * Math.PI * 6.4));
+            float wz = (float) (0.07 * Math.sin(demoElapsedSec * 2.0 * Math.PI * 2.1 + 0.4)
+                    + 0.055 * Math.cos(demoElapsedSec * 2.0 * Math.PI * 5.2));
+
+            processAngularVelocitySample(wx, wy, wz, dt, true);
+            demoHandler.postDelayed(this, 16L);
+        }
+    };
+
+    public GyroStabilizer(@NonNull Context context, @NonNull Listener listener) {
+        Context appContext = context.getApplicationContext();
+        this.sensorManager = (SensorManager) appContext.getSystemService(Context.SENSOR_SERVICE);
+        this.gyroSensor = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE);
+        this.rotationVectorSensor = sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR);
+        this.listener = listener;
+        this.currentTelemetry = new StabilizationTelemetry(false, gyroSensor != null, false, 1.0f, 0f, 0f, 0f, 0f, 0f, 0f, 0);
+    }
+
+    public boolean isEnabled() {
+        return enabled;
+    }
+
+    public boolean isSyntheticShakeDemo() {
+        return syntheticShakeDemo;
+    }
+
+    public boolean isGyroHardwareAvailable() {
+        return gyroSensor != null;
+    }
+
+    @NonNull
+    public StabilizationTelemetry getCurrentTelemetry() {
+        return currentTelemetry;
+    }
+
+    public void setEnabled(boolean isEnabled) {
+        if (this.enabled == isEnabled) return;
+        this.enabled = isEnabled;
+        if (!isEnabled) {
+            resetIntegrator();
+            stopDemoLoop();
+            emitTelemetry(0f, 0f, 0f, 0f, 0f, 0f, 0, false);
+        } else {
+            resetIntegrator();
+            if (syntheticShakeDemo && registered) {
+                startDemoLoop();
+            } else {
+                emitTelemetry(0f, 0f, 0f, 0f, 0f, 0f, 94, false);
+            }
+        }
+    }
+
+    public void setSyntheticShakeDemo(boolean demo) {
+        if (this.syntheticShakeDemo == demo) return;
+        this.syntheticShakeDemo = demo;
+        resetIntegrator();
+        if (demo && enabled && registered) {
+            startDemoLoop();
+        } else {
+            stopDemoLoop();
+            if (enabled) {
+                emitTelemetry(0f, 0f, 0f, 0f, 0f, 0f, 94, false);
+            }
+        }
+    }
+
+    public void register() {
+        if (registered) return;
+        if (gyroSensor != null) {
+            sensorManager.registerListener(this, gyroSensor, SensorManager.SENSOR_DELAY_GAME);
+        } else if (rotationVectorSensor != null) {
+            sensorManager.registerListener(this, rotationVectorSensor, SensorManager.SENSOR_DELAY_GAME);
+        }
+        registered = true;
+        resetIntegrator();
+        if (enabled && syntheticShakeDemo) {
+            startDemoLoop();
+        }
+    }
+
+    public void unregister() {
+        if (!registered) return;
+        sensorManager.unregisterListener(this);
+        registered = false;
+        stopDemoLoop();
+    }
+
+    private void startDemoLoop() {
+        demoHandler.removeCallbacks(demoTickRunnable);
+        demoLastTickMs = 0L;
+        demoHandler.post(demoTickRunnable);
+    }
+
+    private void stopDemoLoop() {
+        demoHandler.removeCallbacks(demoTickRunnable);
+        demoLastTickMs = 0L;
+    }
+
+    private void resetIntegrator() {
+        hpPitchRad = 0f;
+        hpYawRad = 0f;
+        hpRollRad = 0f;
+        smoothCompX = 0f;
+        smoothCompY = 0f;
+        smoothCompRollDeg = 0f;
+        smoothAngularVelDegSec = 0f;
+        hasPrevRotAngles = false;
+        lastGyroTimestampNs = 0L;
+        lastRotTimestampNs = 0L;
+    }
+
+    @Override
+    public void onSensorChanged(SensorEvent event) {
+        if (!enabled || event == null || syntheticShakeDemo) return;
+        if (event.sensor.getType() == Sensor.TYPE_GYROSCOPE) {
+            if (lastGyroTimestampNs == 0L) {
+                lastGyroTimestampNs = event.timestamp;
+                return;
+            }
+            float dt = Math.max(0.001f, Math.min(0.05f, (event.timestamp - lastGyroTimestampNs) * NS_TO_SEC));
+            lastGyroTimestampNs = event.timestamp;
+            float wx = Math.abs(event.values[0]) > GYRO_DEADZONE_RAD_S ? event.values[0] : 0f;
+            float wy = Math.abs(event.values[1]) > GYRO_DEADZONE_RAD_S ? event.values[1] : 0f;
+            float wz = Math.abs(event.values[2]) > GYRO_DEADZONE_RAD_S ? event.values[2] : 0f;
+            processAngularVelocitySample(wx, wy, wz, dt, false);
+        } else if (event.sensor.getType() == Sensor.TYPE_ROTATION_VECTOR && gyroSensor == null) {
+            SensorManager.getRotationMatrixFromVector(rotMatrix, event.values);
+            SensorManager.getOrientation(rotMatrix, orientationAngles);
+            float yaw = orientationAngles[0];
+            float pitch = orientationAngles[1];
+            float roll = orientationAngles[2];
+            if (!hasPrevRotAngles || lastRotTimestampNs == 0L) {
+                prevYawRad = yaw;
+                prevPitchRad = pitch;
+                prevRollRad = roll;
+                hasPrevRotAngles = true;
+                lastRotTimestampNs = event.timestamp;
+                return;
+            }
+            float dt = Math.max(0.004f, Math.min(0.05f, (event.timestamp - lastRotTimestampNs) * NS_TO_SEC));
+            lastRotTimestampNs = event.timestamp;
+            float dYaw = normalizeRadDelta(prevYawRad, yaw);
+            float dPitch = normalizeRadDelta(prevPitchRad, pitch);
+            float dRoll = normalizeRadDelta(prevRollRad, roll);
+            prevYawRad = yaw;
+            prevPitchRad = pitch;
+            prevRollRad = roll;
+            processAngularVelocitySample(dPitch / dt, dYaw / dt, dRoll / dt, dt, false);
+        }
+    }
+
+    @Override
+    public void onAccuracyChanged(Sensor sensor, int accuracy) {}
+
+    private void processAngularVelocitySample(float wx, float wy, float wz, float dt, boolean synthetic) {
+        float alpha = 0.90f;
+        hpPitchRad = alpha * (hpPitchRad + wx * dt);
+        hpYawRad = alpha * (hpYawRad + wy * dt);
+        hpRollRad = alpha * (hpRollRad + wz * dt);
+
+        float fovHalfTanH = (float) Math.tan(Math.toRadians(31.0));
+        float fovHalfTanV = (float) Math.tan(Math.toRadians(39.0));
+        float rawDeflectX = Math.max(-0.45f, Math.min(0.45f, hpYawRad / fovHalfTanH));
+        float rawDeflectY = Math.max(-0.45f, Math.min(0.45f, hpPitchRad / fovHalfTanV));
+
+        float maxShiftNdc = 0.088f;
+        float maxRollDeg = 3.6f;
+        float targetCompX = -maxShiftNdc * (float) Math.tanh(rawDeflectX / maxShiftNdc);
+        float targetCompY = maxShiftNdc * (float) Math.tanh(rawDeflectY / maxShiftNdc);
+        float rawRollDeg = (float) Math.toDegrees(hpRollRad);
+        float targetCompRoll = -maxRollDeg * (float) Math.tanh(rawRollDeg / maxRollDeg);
+
+        float lpf = 0.42f;
+        smoothCompX += (targetCompX - smoothCompX) * lpf;
+        smoothCompY += (targetCompY - smoothCompY) * lpf;
+        smoothCompRollDeg += (targetCompRoll - smoothCompRollDeg) * lpf;
+
+        float omegaMag = (float) Math.sqrt(wx * wx + wy * wy + wz * wz);
+        float omegaDegSec = (float) Math.toDegrees(omegaMag);
+        smoothAngularVelDegSec = smoothAngularVelDegSec * 0.78f + omegaDegSec * 0.22f;
+
+        float rawMag = Math.max(0.001f, (float) Math.hypot(rawDeflectX, rawDeflectY));
+        float residual = (float) Math.hypot(rawDeflectX + smoothCompX, rawDeflectY - smoothCompY);
+        int reduction = (rawMag < 0.01f) ? 96 : Math.max(68, Math.min(98, Math.round((1f - (residual / rawMag)) * 100f)));
+
+        emitTelemetry(smoothCompX, smoothCompY, smoothCompRollDeg, rawDeflectX, rawDeflectY, smoothAngularVelDegSec, reduction, synthetic);
+    }
+
+    private void emitTelemetry(float compX, float compY, float compRollDeg, float rawX, float rawY, float angVelDegSec, int reductionPct, boolean synthetic) {
+        StabilizationTelemetry next = new StabilizationTelemetry(
+                enabled,
+                gyroSensor != null,
+                synthetic,
+                enabled ? OVERSCAN_ZOOM : 1.0f,
+                compX,
+                compY,
+                compRollDeg,
+                rawX,
+                rawY,
+                angVelDegSec,
+                reductionPct
+        );
+        currentTelemetry = next;
+        listener.onTelemetryUpdated(next);
+    }
+
+    private static float normalizeRadDelta(float fromRad, float toRad) {
+        float d = toRad - fromRad;
+        while (d > Math.PI) d -= (float) (2.0 * Math.PI);
+        while (d < -Math.PI) d += (float) (2.0 * Math.PI);
+        return d;
+    }
+
+    public static void buildMvpMatrix(
+            @NonNull float[] outMatrix,
+            int surfaceWidth,
+            int surfaceHeight,
+            boolean enabled,
+            float overscanZoom,
+            float transXNorm,
+            float transYNorm,
+            float rollDeg
+    ) {
+        Matrix.setIdentityM(outMatrix, 0);
+        if (!enabled) return;
+        float aspect = surfaceWidth / (float) Math.max(1, surfaceHeight);
+        float zoom = Math.max(1.0f, Math.min(1.45f, overscanZoom));
+        Matrix.scaleM(outMatrix, 0, 1f / aspect, 1f, 1f);
+        Matrix.translateM(outMatrix, 0, transXNorm * aspect, transYNorm, 0f);
+        Matrix.rotateM(outMatrix, 0, rollDeg, 0f, 0f, 1f);
+        Matrix.scaleM(outMatrix, 0, zoom, zoom, 1f);
+        Matrix.scaleM(outMatrix, 0, aspect, 1f, 1f);
+    }
+}

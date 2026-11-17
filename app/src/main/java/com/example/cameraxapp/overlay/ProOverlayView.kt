@@ -390,6 +390,43 @@ class ProOverlayView @JvmOverloads constructor(
         }
     }
 
+    // Gyro-Stabilization (Software EIS) HUD Telemetry State
+    var isGyroEisActive: Boolean = false
+    var eisSyntheticDemo: Boolean = false
+    var eisOverscanZoom: Float = 1.0f
+    var eisCompXNorm: Float = 0f
+    var eisCompYNorm: Float = 0f
+    var eisRawXNorm: Float = 0f
+    var eisRawYNorm: Float = 0f
+    var eisRollDeg: Float = 0f
+    var eisShakeReductionPct: Int = 0
+
+    fun updateGyroEisTelemetry(
+        active: Boolean,
+        syntheticDemo: Boolean,
+        overscanZoom: Float,
+        compXNorm: Float,
+        compYNorm: Float,
+        rawXNorm: Float,
+        rawYNorm: Float,
+        rollDeg: Float,
+        reductionPct: Int
+    ) {
+        val wasActive = isGyroEisActive
+        isGyroEisActive = active
+        eisSyntheticDemo = syntheticDemo
+        eisOverscanZoom = overscanZoom
+        eisCompXNorm = compXNorm
+        eisCompYNorm = compYNorm
+        eisRawXNorm = rawXNorm
+        eisRawYNorm = rawYNorm
+        eisRollDeg = rollDeg
+        eisShakeReductionPct = reductionPct
+        if (!isCleanScreen && (active || wasActive)) {
+            postInvalidateOnAnimation()
+        }
+    }
+
     var activeShootingEffect: String = "none"
         set(value) {
             field = value
@@ -3036,6 +3073,104 @@ class ProOverlayView @JvmOverloads constructor(
                 w * 0.5f,
                 tPillTop + dpToPx(15.5f),
                 thermalTextPaint
+            )
+        }
+
+        // Gyro-Stabilization (Software EIS) Overscan Crop Frame & Live Gyro Vector Reticle
+        if (!isCleanScreen && isGyroEisActive) {
+            val cropRatio = (1f / eisOverscanZoom.coerceIn(1.05f, 1.45f)).coerceIn(0.68f, 0.96f)
+            val marginX = w * ((1f - cropRatio) * 0.5f)
+            val marginY = h * ((1f - cropRatio) * 0.5f)
+            val eisFramePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                style = Paint.Style.STROKE
+                strokeWidth = dpToPx(1.2f)
+                color = Color.parseColor("#6622D3EE")
+            }
+            val shiftPxX = (eisCompXNorm * w * 0.35f).coerceIn(-marginX * 0.8f, marginX * 0.8f)
+            val shiftPxY = (-eisCompYNorm * h * 0.35f).coerceIn(-marginY * 0.8f, marginY * 0.8f)
+            val frameLeft = marginX + shiftPxX
+            val frameTop = marginY + shiftPxY
+            val frameRight = w - marginX + shiftPxX
+            val frameBottom = h - marginY + shiftPxY
+            canvas.drawRect(frameLeft, frameTop, frameRight, frameBottom, eisFramePaint)
+
+            // Corner stabilization ticks
+            val tickLen = dpToPx(14f)
+            val cornerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                style = Paint.Style.STROKE
+                strokeWidth = dpToPx(2.2f)
+                color = Color.parseColor("#CC22D3EE")
+            }
+            canvas.drawLine(frameLeft, frameTop, frameLeft + tickLen, frameTop, cornerPaint)
+            canvas.drawLine(frameLeft, frameTop, frameLeft, frameTop + tickLen, cornerPaint)
+            canvas.drawLine(frameRight - tickLen, frameTop, frameRight, frameTop, cornerPaint)
+            canvas.drawLine(frameRight, frameTop, frameRight, frameTop + tickLen, cornerPaint)
+            canvas.drawLine(frameLeft, frameBottom - tickLen, frameLeft, frameBottom, cornerPaint)
+            canvas.drawLine(frameLeft, frameBottom, frameLeft + tickLen, frameBottom, cornerPaint)
+            canvas.drawLine(frameRight - tickLen, frameBottom, frameRight, frameBottom, cornerPaint)
+            canvas.drawLine(frameRight, frameBottom - tickLen, frameRight, frameBottom, cornerPaint)
+
+            // Dual-dot Gyro Vector Indicator (Raw tremor vs Stabilized lock) near bottom-right above controls
+            val gaugeCx = w - dpToPx(44f)
+            val gaugeCy = h - dpToPx(190f)
+            val gaugeR = dpToPx(20f)
+            val gaugeBg = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                style = Paint.Style.FILL
+                color = Color.parseColor("#990F172A")
+            }
+            canvas.drawCircle(gaugeCx, gaugeCy, gaugeR, gaugeBg)
+            canvas.drawCircle(gaugeCx, gaugeCy, gaugeR, eisFramePaint)
+
+            // Raw gyro shake dot (amber)
+            val rawDx = (eisRawXNorm * gaugeR * 2.2f).coerceIn(-gaugeR * 0.75f, gaugeR * 0.75f)
+            val rawDy = (eisRawYNorm * gaugeR * 2.2f).coerceIn(-gaugeR * 0.75f, gaugeR * 0.75f)
+            val rawDotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                style = Paint.Style.FILL
+                color = Color.parseColor("#F59E0B")
+            }
+            canvas.drawCircle(gaugeCx + rawDx, gaugeCy + rawDy, dpToPx(3.5f), rawDotPaint)
+
+            // Stabilized EIS lock crosshair (cyan/emerald)
+            val lockPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                style = Paint.Style.STROKE
+                strokeWidth = dpToPx(1.8f)
+                color = Color.parseColor("#34D399")
+            }
+            canvas.drawCircle(gaugeCx, gaugeCy, dpToPx(5.5f), lockPaint)
+
+            // EIS Telemetry Badge
+            var eisTop = h * 0.112f
+            if (isEcoModeActive) eisTop += dpToPx(28f)
+            if (isThermalThrottled) eisTop += dpToPx(28f)
+            val eisW = (w * 0.64f).coerceAtMost(dpToPx(276f))
+            val eisH = dpToPx(22f)
+            val eisLeft = (w - eisW) * 0.5f
+            val eisRect = RectF(eisLeft, eisTop, eisLeft + eisW, eisTop + eisH)
+
+            filterGradingPaint.style = Paint.Style.FILL
+            filterGradingPaint.color = Color.parseColor("#CC083344")
+            canvas.drawRoundRect(eisRect, dpToPx(6f), dpToPx(6f), filterGradingPaint)
+
+            val eisBorder = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                style = Paint.Style.STROKE
+                strokeWidth = dpToPx(1.1f)
+                color = Color.parseColor("#22D3EE")
+            }
+            canvas.drawRoundRect(eisRect, dpToPx(6f), dpToPx(6f), eisBorder)
+
+            val eisText = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.parseColor("#CFFAFE")
+                textSize = dpToPx(8.8f)
+                typeface = Typeface.MONOSPACE
+                isFakeBoldText = true
+                textAlign = Paint.Align.CENTER
+            }
+            val modePrefix = if (eisSyntheticDemo) "GYRO EIS SIM" else "GYRO EIS"
+            canvas.drawText(
+                "${modePrefix} · ${String.format(java.util.Locale.US, "%.2fx", eisOverscanZoom)} · -${eisShakeReductionPct}% SHAKE",
+                w * 0.5f,
+                eisTop + dpToPx(14.5f),
+                eisText
             )
         }
 

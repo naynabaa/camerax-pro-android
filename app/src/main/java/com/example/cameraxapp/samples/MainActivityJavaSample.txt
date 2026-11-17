@@ -51,6 +51,7 @@ import com.example.cameraxapp.overlay.ProOverlayView;
 import com.example.cameraxapp.panorama.PanoramaStitcher;
 import com.example.cameraxapp.power.EcoPowerManager;
 import com.example.cameraxapp.power.ThermalGuardManager;
+import com.example.cameraxapp.stabilization.GyroStabilizer;
 import com.google.common.util.concurrent.ListenableFuture;
 import java.io.OutputStream;
 
@@ -128,6 +129,8 @@ public class MainActivity extends AppCompatActivity {
     private EcoPowerManager.EcoTier lastEcoTier = EcoPowerManager.EcoTier.NORMAL;
     private ThermalGuardManager thermalGuardManager;
     private ThermalGuardManager.ThermalTier lastThermalTier = ThermalGuardManager.ThermalTier.NOMINAL;
+    private GyroStabilizer gyroStabilizer;
+    private boolean isGyroEisEnabled = false;
 
     private Camera camera;
     private ProcessCameraProvider cameraProvider;
@@ -154,6 +157,7 @@ public class MainActivity extends AppCompatActivity {
         cameraExecutor = Executors.newSingleThreadExecutor();
         ecoPowerManager = new EcoPowerManager(this, policy -> runOnUiThread(() -> applyEcoPolicy(policy)));
         thermalGuardManager = new ThermalGuardManager(this, policy -> runOnUiThread(() -> applyThermalPolicy(policy)));
+        gyroStabilizer = new GyroStabilizer(this, telemetry -> runOnUiThread(() -> applyGyroEisTelemetry(telemetry)));
 
         setupListeners();
         setupBurstMode();
@@ -172,6 +176,7 @@ public class MainActivity extends AppCompatActivity {
         super.onResume();
         if (ecoPowerManager != null) ecoPowerManager.register();
         if (thermalGuardManager != null) thermalGuardManager.register();
+        if (gyroStabilizer != null) gyroStabilizer.register();
     }
 
     @Override
@@ -179,6 +184,49 @@ public class MainActivity extends AppCompatActivity {
         super.onPause();
         if (ecoPowerManager != null) ecoPowerManager.unregister();
         if (thermalGuardManager != null) thermalGuardManager.unregister();
+        if (gyroStabilizer != null) gyroStabilizer.unregister();
+    }
+
+    private void applyGyroEisTelemetry(@NonNull GyroStabilizer.StabilizationTelemetry telemetry) {
+        if (proOverlayView != null) {
+            proOverlayView.updateGyroEisTelemetry(
+                    telemetry.isEnabled,
+                    telemetry.isSyntheticDemo,
+                    telemetry.overscanZoom,
+                    telemetry.compXNorm,
+                    telemetry.compYNorm,
+                    telemetry.rawDeflectionX,
+                    telemetry.rawDeflectionY,
+                    telemetry.compRollDeg,
+                    telemetry.shakeReductionPct
+            );
+        }
+        TextView tvEis = findViewById(R.id.tvGyroEisStatus);
+        if (tvEis != null) {
+            if (telemetry.isEnabled) {
+                String tag = telemetry.isSyntheticDemo ? "SIM" : (telemetry.gyroAvailable ? "GYRO" : "ROT");
+                tvEis.setText(String.format(Locale.US, "%s EIS · -%d%% shake · %.1f°/s", tag, telemetry.shakeReductionPct, telemetry.angularVelocityDegPerSec));
+            } else {
+                tvEis.setText("Sensor.TYPE_GYROSCOPE · Preview & Video EIS");
+            }
+        }
+        if (viewFinder != null) {
+            if (telemetry.isEnabled) {
+                float vw = Math.max(1f, viewFinder.getWidth());
+                float vh = Math.max(1f, viewFinder.getHeight());
+                viewFinder.setScaleX(telemetry.overscanZoom);
+                viewFinder.setScaleY(telemetry.overscanZoom);
+                viewFinder.setTranslationX(telemetry.compXNorm * vw * 0.5f);
+                viewFinder.setTranslationY(-telemetry.compYNorm * vh * 0.5f);
+                viewFinder.setRotation(telemetry.compRollDeg);
+            } else {
+                viewFinder.setScaleX(1.0f);
+                viewFinder.setScaleY(1.0f);
+                viewFinder.setTranslationX(0f);
+                viewFinder.setTranslationY(0f);
+                viewFinder.setRotation(0f);
+            }
+        }
     }
 
     private void applyEcoPolicy(@NonNull EcoPowerManager.EcoPolicy policy) {
@@ -311,6 +359,36 @@ public class MainActivity extends AppCompatActivity {
             btnCloseGuideBar.setOnClickListener(v -> {
                 View guideBar = findViewById(R.id.layoutGuideFloatingBar);
                 if (guideBar != null) guideBar.setVisibility(View.GONE);
+            });
+        }
+
+        androidx.appcompat.widget.SwitchCompat switchGyroEis = findViewById(R.id.switchGyroEis);
+        TextView btnGyroSimShake = findViewById(R.id.btnGyroSimShake);
+        if (switchGyroEis != null) {
+            switchGyroEis.setOnCheckedChangeListener((buttonView, isChecked) -> {
+                isGyroEisEnabled = isChecked;
+                if (gyroStabilizer != null) {
+                    if (isChecked && !gyroStabilizer.isGyroHardwareAvailable() && !gyroStabilizer.isSyntheticShakeDemo()) {
+                        gyroStabilizer.setSyntheticShakeDemo(true);
+                        if (btnGyroSimShake != null) {
+                            btnGyroSimShake.setBackgroundResource(R.drawable.bg_cinema_button_active);
+                            btnGyroSimShake.setTextColor(Color.parseColor("#0F172A"));
+                        }
+                    }
+                    gyroStabilizer.setEnabled(isChecked);
+                }
+            });
+        }
+        if (btnGyroSimShake != null) {
+            btnGyroSimShake.setOnClickListener(v -> {
+                if (gyroStabilizer == null) return;
+                boolean nextDemo = !gyroStabilizer.isSyntheticShakeDemo();
+                gyroStabilizer.setSyntheticShakeDemo(nextDemo);
+                if (nextDemo && !isGyroEisEnabled && switchGyroEis != null) {
+                    switchGyroEis.setChecked(true);
+                }
+                btnGyroSimShake.setBackgroundResource(nextDemo ? R.drawable.bg_cinema_button_active : R.drawable.bg_cinema_button_inactive);
+                btnGyroSimShake.setTextColor(Color.parseColor(nextDemo ? "#0F172A" : "#94A3B8"));
             });
         }
     }
@@ -976,5 +1054,6 @@ public class MainActivity extends AppCompatActivity {
         nightExposureStacker.reset();
         if (ecoPowerManager != null) ecoPowerManager.unregister();
         if (thermalGuardManager != null) thermalGuardManager.unregister();
+        if (gyroStabilizer != null) gyroStabilizer.unregister();
     }
 }
