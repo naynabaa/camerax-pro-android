@@ -293,6 +293,8 @@ class GlbArModelEngine(private val appContext: Context) {
         val w = surfaceW
         val h = surfaceH
         GLES20.glViewport(0, 0, w, h)
+        GLES20.glDepthMask(true)
+        GLES20.glDisable(GLES20.GL_CULL_FACE)
         GLES20.glClearColor(0f, 0f, 0f, 0f)
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT or GLES20.GL_DEPTH_BUFFER_BIT)
         GLES20.glEnable(GLES20.GL_DEPTH_TEST)
@@ -315,7 +317,7 @@ class GlbArModelEngine(private val appContext: Context) {
         val visW = visH * aspect
         val worldX = (pose.normAnchorX - 0.5f) * visW
         val worldY = (0.5f - pose.normAnchorY) * visH
-        val finalScale = (pose.normFaceWidth * visW * pose.modelScale).coerceAtLeast(0.10f)
+        val finalScale = (pose.normFaceWidth * visW * pose.modelScale).coerceAtLeast(0.04f)
 
         Matrix.setIdentityM(model, 0)
         Matrix.translateM(model, 0, worldX, worldY, 0f)

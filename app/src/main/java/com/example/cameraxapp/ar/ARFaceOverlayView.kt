@@ -585,11 +585,11 @@ class ARFaceOverlayView @JvmOverloads constructor(
         if (isRecent) {
             simpleFaceCenterX = (simpleFaceCenterX * 0.55f) + (normEyeBridgeX * 0.45f)
             simpleFaceCenterY = (simpleFaceCenterY * 0.55f) + (normEyeBridgeY * 0.45f)
-            simpleFaceEyeDist = (simpleFaceEyeDist * 0.60f) + (normEyeDist.coerceIn(0.06f, 0.55f) * 0.40f)
+            simpleFaceEyeDist = (simpleFaceEyeDist * 0.60f) + (normEyeDist.coerceIn(0.04f, 0.55f) * 0.40f)
         } else {
             simpleFaceCenterX = normEyeBridgeX
             simpleFaceCenterY = normEyeBridgeY
-            simpleFaceEyeDist = normEyeDist.coerceIn(0.06f, 0.55f)
+            simpleFaceEyeDist = normEyeDist.coerceIn(0.04f, 0.55f)
         }
         isFrontCamera = isFrontFacing
         hasSimpleFace = true
@@ -847,7 +847,9 @@ class ARFaceOverlayView @JvmOverloads constructor(
             else -> viewH * 0.44f + floatOffset
         }
         val trackedEyeDistPx = if (hasSimple) {
-            (simpleFaceEyeDist * viewW).coerceIn(viewW * 0.08f, viewW * 0.48f)
+            (simpleFaceEyeDist * viewW).coerceIn(viewW * 0.04f, viewW * 0.48f)
+        } else if (currentLens == ArLensMode.GLB_3D) {
+            viewW * 0.16f
         } else {
             viewW * 0.24f
         }
@@ -868,7 +870,7 @@ class ARFaceOverlayView @JvmOverloads constructor(
                 val spacing = if (isEye) eyeSpacingFactor else 1.0f
                 return cx + (dist * calibrationScale * spacing)
             } else {
-                val refScale = if (hasSimple) trackedEyeDistPx else viewW * 0.25f
+                val refScale = if (hasSimple) trackedEyeDistPx else if (currentLens == ArLensMode.GLB_3D) viewW * 0.16f else viewW * 0.25f
                 val baseDist = when (idx) {
                     33 -> -refScale * 0.62f * eyeSpacingFactor
                     133 -> -refScale * 0.28f * eyeSpacingFactor
@@ -902,7 +904,7 @@ class ARFaceOverlayView @JvmOverloads constructor(
                 if (idx == 152 || idx == 148 || idx == 176) extraY = chinOffset * viewH
                 return cy + (dist * calibrationScale) + extraY
             } else {
-                val refScale = if (hasSimple) trackedEyeDistPx else viewW * 0.25f
+                val refScale = if (hasSimple) trackedEyeDistPx else if (currentLens == ArLensMode.GLB_3D) viewW * 0.16f else viewW * 0.25f
                 val baseDist = when (idx) {
                     33, 263, 133, 362, 168 -> -refScale * 0.35f
                     6 -> -refScale * 0.15f
@@ -976,7 +978,7 @@ class ARFaceOverlayView @JvmOverloads constructor(
                 drawSciFiHud(canvas, ::getX, ::getY)
             }
             ArLensMode.GLB_3D -> {
-                drawGlb3dModel(canvas, viewW, viewH, cx, cy, ::getX, ::getY, now, syncGlb)
+                drawGlb3dModel(canvas, viewW, viewH, cx, cy, ::getX, ::getY, now, syncGlb, hasAnyTrackedFace)
             }
             ArLensMode.COMIC_FRAME, ArLensMode.NONE -> {}
         }
@@ -1553,22 +1555,29 @@ class ARFaceOverlayView @JvmOverloads constructor(
         getX: (Int) -> Float,
         getY: (Int) -> Float,
         nowMs: Long,
-        syncGlb: Boolean
+        syncGlb: Boolean,
+        hasTrackedFace: Boolean
     ) {
         val engine = glbEngine ?: return
         if (!engine.hasModelLoaded()) return
 
-        val faceW = Math.abs(getX(454) - getX(234)).coerceAtLeast(viewW * 0.24f)
-        val faceH = Math.abs(getY(152) - getY(10)).coerceAtLeast(viewH * 0.24f)
+        val faceW = Math.abs(getX(454) - getX(234)).coerceAtLeast(viewW * 0.06f)
+        val faceH = Math.abs(getY(152) - getY(10)).coerceAtLeast(viewH * 0.06f)
         val eyeLeftX = getX(33)
         val eyeLeftY = getY(33)
         val eyeRightX = getX(263)
         val eyeRightY = getY(263)
         val headRollDeg = Math.toDegrees(Math.atan2((eyeRightY - eyeLeftY).toDouble(), (eyeRightX - eyeLeftX).toDouble())).toFloat()
+        val eyeMidX = (eyeLeftX + eyeRightX) * 0.5f
+        val estYawDeg = if (hasTrackedFace) {
+            (((getX(1) - eyeMidX) / faceW.coerceAtLeast(1f)) * 55f).coerceIn(-35f, 35f)
+        } else {
+            0f
+        }
 
         val anchorX = cx
         val anchorYBase = when (activeGlbAnchor.lowercase()) {
-            "forehead" -> getY(10) - faceH * 0.12f
+            "forehead" -> getY(10) - faceH * 0.06f
             "eyes" -> (eyeLeftY + eyeRightY) * 0.5f
             "nose_cheeks" -> getY(1)
             "mouth" -> (getY(1) + getY(152)) * 0.52f
@@ -1576,22 +1585,29 @@ class ARFaceOverlayView @JvmOverloads constructor(
         }
         val anchorY = anchorYBase + activeGlbOffsetY * faceH * 0.55f
         val baseAnchorScale = when (activeGlbAnchor.lowercase()) {
-            "forehead" -> 1.05f
-            "eyes" -> 0.92f
-            "nose_cheeks" -> 0.74f
-            "mouth" -> 0.78f
-            else -> 1.30f
+            "forehead" -> 0.80f
+            "eyes" -> 0.76f
+            "nose_cheeks" -> 0.52f
+            "mouth" -> 0.54f
+            else -> 0.95f
         }
 
         val elapsedSec = ((nowMs - activeGlbStartMs).coerceAtLeast(0L)) / 1000f
-        val idleYaw = if (activeGlbAutoSpin) elapsedSec * 38f else (Math.sin(elapsedSec * 1.4).toFloat() * 10f)
+        val idleYaw = when {
+            activeGlbAutoSpin -> elapsedSec * 36f
+            hasTrackedFace -> estYawDeg
+            else -> (Math.sin(elapsedSec * 1.1).toFloat() * 4f)
+        }
 
-        val renderW = (viewW.toInt()).coerceIn(256, 720)
-        val renderH = (viewH.toInt()).coerceIn(256, 960)
+        // Preserve exact screen aspect ratio so tall displays (e.g. 20:9) never stretch the 3D model vertically
+        val maxEdge = 960f
+        val downScale = minOf(1f, maxEdge / maxOf(viewW, viewH).coerceAtLeast(1f))
+        val renderW = (viewW * downScale).toInt().coerceIn(128, 960)
+        val renderH = (viewH * downScale).toInt().coerceIn(128, 960)
         val pose = GlbArModelEngine.GlbPose(
             normAnchorX = (anchorX / viewW).coerceIn(0.05f, 0.95f),
             normAnchorY = (anchorY / viewH).coerceIn(0.05f, 0.95f),
-            normFaceWidth = (faceW / viewW).coerceIn(0.12f, 1.4f),
+            normFaceWidth = (faceW / viewW).coerceIn(0.06f, 1.35f),
             modelScale = baseAnchorScale * activeGlbModelScale,
             yawDeg = activeGlbRotY + idleYaw,
             pitchDeg = activeGlbRotX,

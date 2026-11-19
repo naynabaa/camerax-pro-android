@@ -565,15 +565,15 @@ class FilterManager(private val context: Context) {
                     vec3 comicRgb;
                     if (uStyleMode == 1) {
                         // GRAPHIC_NOVEL: Noir black shadow crush + Ben-Day midtone halftone + heavy Sobel ink
-                        float shadow = smoothstep(0.30, 0.21, lum);
-                        float mid = smoothstep(0.62, 0.46, lum);
+                        float shadow = 1.0 - smoothstep(0.21, 0.30, lum);
+                        float mid = 1.0 - smoothstep(0.46, 0.62, lum);
                         float dot = halftoneDot(px, mid * (0.40 + 0.16 * htDensity), max(2.1, max(4.0, uResolution.x / 88.0) / htDensity), htDotSize);
                         float g = mix(0.99, mix(0.72, 0.09, dot), mid);
                         g = mix(g, 0.03, shadow);
                         comicRgb = vec3(mix(g, 0.02, inkMask));
                     } else if (uStyleMode == 2) {
                         // MANGA_INK: Warm ivory paper + stepped Japanese screentone + G-pen Sobel contours
-                        float darkFill = smoothstep(0.22, 0.11, lum);
+                        float darkFill = 1.0 - smoothstep(0.11, 0.22, lum);
                         float tone = lum < 0.44 ? 0.54 : (lum < 0.68 ? 0.28 : 0.0);
                         float dot = halftoneDot(px, tone * (0.7 + 0.3 * htDensity), max(2.0, max(3.8, uResolution.x / 94.0) / htDensity), htDotSize) * 0.88;
                         float shade = max(inkMask, max(darkFill, dot));
@@ -612,13 +612,13 @@ class FilterManager(private val context: Context) {
                         vec3 banded = hsv2rgb(vec3(crispHue, qSat, qVal));
 
                         // Warm newsprint paper stock cast + cool comic shadow / cel-specular accents
-                        float shadowZone = smoothstep(0.42, 0.18, qVal);
+                        float shadowZone = 1.0 - smoothstep(0.18, 0.42, qVal);
                         float hiZone = smoothstep(0.80, 0.94, qVal);
                         banded *= mix(vec3(1.0), vec3(1.0, 0.972, 0.915), 0.65);
                         banded += vec3(-0.035 * shadowZone, -0.015 * shadowZone, 0.055 * shadowZone) + vec3(hiZone * 0.06);
 
                         // Luminance-channel newspaper halftone dot overlay (45-deg CMYK key screen across midtones & shadows, clean highlights)
-                        float lumDensity = smoothstep(0.90, 0.12, lum);
+                        float lumDensity = 1.0 - smoothstep(0.12, 0.90, lum);
                         float newsPitch = max(2.2, max(4.2, uResolution.x / 92.0) / htDensity);
                         float newsDot = halftoneDot(px, lumDensity * (0.50 + 0.18 * htDensity), newsPitch, htDotSize);
                         float dotLuminanceDrop = newsDot * (0.14 + 0.32 * lumDensity);

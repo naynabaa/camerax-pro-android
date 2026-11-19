@@ -111,10 +111,15 @@ class OpenGLSurfaceProcessor : SurfaceProcessor, SurfaceTexture.OnFrameAvailable
     private var locOvlAPos = -1
     private var locOvlATex = -1
     private var locOvlTex = -1
+    private var locOvlRot = -1
 
     private var oesTextureId = 0
     private var overlayTextureId = 0
     private var hasOverlayTexture = false
+    private var overlayBmpWidth = 0
+    private var overlayBmpHeight = 0
+    @Volatile
+    private var overlayIsFrontCamera = false
     private val overlayLock = Any()
     private var pendingOverlayBitmap: Bitmap? = null
     private var overlayBitmapDirty = false
@@ -347,13 +352,18 @@ class OpenGLSurfaceProcessor : SurfaceProcessor, SurfaceTexture.OnFrameAvailable
 
     /**
      * Uploads an RGBA overlay bitmap (containing custom dragged AR text & active AR lenses)
-     * so both Preview and VideoCapture MP4 frames composite it cleanly in OpenGL ES.
+     * so recorded VideoCapture MP4 frames composite it cleanly in OpenGL ES.
+     * Live Preview uses ARFaceOverlayView directly on screen so it is never double-drawn.
      */
     fun updateOverlayBitmap(bitmap: Bitmap?) {
         synchronized(overlayLock) {
             pendingOverlayBitmap = bitmap
             overlayBitmapDirty = true
         }
+    }
+
+    fun setOverlayCameraFacing(isFrontCamera: Boolean) {
+        overlayIsFrontCamera = isFrontCamera
     }
 
     private fun ensureGlInitialized() {
@@ -443,6 +453,7 @@ class OpenGLSurfaceProcessor : SurfaceProcessor, SurfaceTexture.OnFrameAvailable
         locOvlAPos = GLES20.glGetAttribLocation(progOverlay, "aPosition")
         locOvlATex = GLES20.glGetAttribLocation(progOverlay, "aTexCoord")
         locOvlTex = GLES20.glGetUniformLocation(progOverlay, "uOverlayTex")
+        locOvlRot = GLES20.glGetUniformLocation(progOverlay, "uOverlayRot")
 
         val textures = IntArray(2)
         GLES20.glGenTextures(2, textures, 0)
@@ -627,11 +638,15 @@ class OpenGLSurfaceProcessor : SurfaceProcessor, SurfaceTexture.OnFrameAvailable
                 if (overlayBitmapDirty) {
                     val bmp = pendingOverlayBitmap
                     if (bmp != null && !bmp.isRecycled && overlayTextureId != 0) {
+                        overlayBmpWidth = bmp.width
+                        overlayBmpHeight = bmp.height
                         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, overlayTextureId)
                         GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, bmp, 0)
                         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, 0)
                         hasOverlayTexture = true
                     } else {
+                        overlayBmpWidth = 0
+                        overlayBmpHeight = 0
                         hasOverlayTexture = false
                     }
                     overlayBitmapDirty = false
@@ -790,8 +805,15 @@ class OpenGLSurfaceProcessor : SurfaceProcessor, SurfaceTexture.OnFrameAvailable
                     GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
                 }
 
-                // Alpha-composite freehand AR Text & AR Lens overlay into recorded video & preview frames
-                if (hasOverlayTexture && progOverlay != 0 && overlayTextureId != 0) {
+                // Alpha-composite AR Text & AR Lens overlay ONLY onto VideoCapture surfaces
+                // (Preview already displays ARFaceOverlayView upright on screen, so drawing on PREVIEW causes a rotated duplicate!)
+                val isVideoCaptureTarget = (out.targets and CameraEffect.VIDEO_CAPTURE) != 0
+                if (isVideoCaptureTarget && hasOverlayTexture && progOverlay != 0 && overlayTextureId != 0) {
+                    val rotMode = if (out.size.width > out.size.height && overlayBmpWidth > 0 && overlayBmpWidth < overlayBmpHeight) {
+                        if (overlayIsFrontCamera) 3 else 1
+                    } else {
+                        0
+                    }
                     GLES20.glEnable(GLES20.GL_BLEND)
                     GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA)
                     GLES20.glUseProgram(progOverlay)
@@ -799,6 +821,7 @@ class OpenGLSurfaceProcessor : SurfaceProcessor, SurfaceTexture.OnFrameAvailable
                     GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
                     GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, overlayTextureId)
                     GLES20.glUniform1i(locOvlTex, 0)
+                    if (locOvlRot >= 0) GLES20.glUniform1i(locOvlRot, rotMode)
                     GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
                     GLES20.glDisable(GLES20.GL_BLEND)
                 }
@@ -1197,14 +1220,14 @@ class OpenGLSurfaceProcessor : SurfaceProcessor, SurfaceTexture.OnFrameAvailable
 
                 vec3 comicRgb;
                 if (uComicMode == 1) {
-                    float shadow = smoothstep(0.30, 0.21, lum);
-                    float mid = smoothstep(0.62, 0.46, lum);
+                    float shadow = 1.0 - smoothstep(0.21, 0.30, lum);
+                    float mid = 1.0 - smoothstep(0.46, 0.62, lum);
                     float dot = halftoneDot(px, mid * (0.40 + 0.16 * htDensity), max(2.1, max(4.0, uResolution.x / 88.0) / htDensity), htDotSize);
                     float g = mix(0.99, mix(0.72, 0.09, dot), mid);
                     g = mix(g, 0.03, shadow);
                     comicRgb = vec3(mix(g, 0.02, inkMask));
                 } else if (uComicMode == 2) {
-                    float darkFill = smoothstep(0.22, 0.11, lum);
+                    float darkFill = 1.0 - smoothstep(0.11, 0.22, lum);
                     float tone = lum < 0.44 ? 0.54 : (lum < 0.68 ? 0.28 : 0.0);
                     float dot = halftoneDot(px, tone * (0.7 + 0.3 * htDensity), max(2.0, max(3.8, uResolution.x / 94.0) / htDensity), htDotSize) * 0.88;
                     float shade = max(inkMask, max(darkFill, dot));
@@ -1237,13 +1260,13 @@ class OpenGLSurfaceProcessor : SurfaceProcessor, SurfaceTexture.OnFrameAvailable
                     float crispHue = mix(hsv.x, qHue, 0.42);
                     vec3 banded = hsv2rgb(vec3(crispHue, qSat, qVal));
 
-                    float shadowZone = smoothstep(0.42, 0.18, qVal);
+                    float shadowZone = 1.0 - smoothstep(0.18, 0.42, qVal);
                     float hiZone = smoothstep(0.80, 0.94, qVal);
                     banded *= mix(vec3(1.0), vec3(1.0, 0.972, 0.915), 0.65);
                     banded += vec3(-0.035 * shadowZone, -0.015 * shadowZone, 0.055 * shadowZone) + vec3(hiZone * 0.06);
 
                     // Luminance-channel newspaper comic-book halftone dot pattern overlay (clean bright highlights, crisp shadows)
-                    float lumDensity = smoothstep(0.82, 0.14, lum);
+                    float lumDensity = 1.0 - smoothstep(0.14, 0.82, lum);
                     float newsPitch = max(2.2, max(4.2, uResolution.x / 92.0) / htDensity);
                     float newsDot = halftoneDot(px, lumDensity * (0.46 + 0.16 * htDensity), newsPitch, htDotSize);
                     float dotLuminanceDrop = newsDot * (0.08 + 0.30 * lumDensity);
@@ -1472,15 +1495,15 @@ class OpenGLSurfaceProcessor : SurfaceProcessor, SurfaceTexture.OnFrameAvailable
                 if (uEffectMode == 1) {
                     float bandL = toonCelBand(lum, 4.0);
                     vec3 vib = mix(vec3(lum), smoothed, 1.52) * (bandL / max(lum, 0.02));
-                    float shadowT = smoothstep(0.42, 0.18, bandL);
+                    float shadowT = 1.0 - smoothstep(0.18, 0.42, bandL);
                     float spec = smoothstep(0.80, 0.92, bandL) * 0.07;
                     vib += vec3(-0.035 * shadowT, -0.012 * shadowT, 0.055 * shadowT) + vec3(spec);
                     float ink = smoothstep(0.16, 0.31, edge);
                     color = mix(clamp(vib, 0.0, 1.0), vec3(0.03, 0.035, 0.07), ink);
                 } else if (uEffectMode == 2) {
                     float ink = smoothstep(0.16, 0.31, edge);
-                    float shadow = smoothstep(0.32, 0.22, lum);
-                    float mid = smoothstep(0.62, 0.48, lum);
+                    float shadow = 1.0 - smoothstep(0.22, 0.32, lum);
+                    float mid = 1.0 - smoothstep(0.48, 0.62, lum);
                     float baseG = mix(0.99, 0.50, mid);
                     baseG = mix(baseG, 0.03, shadow);
                     color = vec3(mix(baseG, 0.02, ink));
@@ -1537,8 +1560,8 @@ class OpenGLSurfaceProcessor : SurfaceProcessor, SurfaceTexture.OnFrameAvailable
                 } else if (uEffectMode == 9) {
                     float h1 = 0.5 + 0.5 * sin((uv.x + uv.y) * 520.0);
                     float h2 = 0.5 + 0.5 * sin((uv.x - uv.y) * 520.0);
-                    float midShade = smoothstep(0.62, 0.28, lum) * (0.28 + 0.42 * h1);
-                    float deepShade = smoothstep(0.32, 0.09, lum) * (0.42 + 0.46 * h2);
+                    float midShade = (1.0 - smoothstep(0.28, 0.62, lum)) * (0.28 + 0.42 * h1);
+                    float deepShade = (1.0 - smoothstep(0.09, 0.32, lum)) * (0.42 + 0.46 * h2);
                     float inkEdge = smoothstep(0.16, 0.36, edge) * 0.94;
                     float shade = max(inkEdge, max(midShade, deepShade));
                     float paper = 0.96 - (1.0 - lum) * 0.07;
@@ -1554,9 +1577,9 @@ class OpenGLSurfaceProcessor : SurfaceProcessor, SurfaceTexture.OnFrameAvailable
                     color = clamp(vibrant * pool + vec3(tooth), 0.0, 1.0);
                 } else if (uEffectMode == 11) {
                     float nib = smoothstep(0.16, 0.33, edge);
-                    float solid = smoothstep(0.18, 0.08, lum);
+                    float solid = 1.0 - smoothstep(0.08, 0.18, lum);
                     float w1 = smoothstep(0.62, 0.92, 0.5 + 0.5 * sin((uv.x + uv.y) * 580.0));
-                    float h = max(smoothstep(0.42, 0.26, lum) * w1 * 0.78, solid);
+                    float h = max((1.0 - smoothstep(0.26, 0.42, lum)) * w1 * 0.78, solid);
                     float ink = max(nib, h);
                     color = mix(vec3(0.985, 0.975, 0.955), vec3(0.055, 0.06, 0.08), ink);
                 } else if (uEffectMode == 12) {
@@ -1724,10 +1747,17 @@ class OpenGLSurfaceProcessor : SurfaceProcessor, SurfaceTexture.OnFrameAvailable
         private const val OVERLAY_VERTEX_SHADER = """
             attribute vec2 aPosition;
             attribute vec2 aTexCoord;
+            uniform int uOverlayRot;
             varying vec2 vTexCoord;
             void main() {
                 gl_Position = vec4(aPosition, 0.0, 1.0);
-                vTexCoord = vec2(aTexCoord.x, 1.0 - aTexCoord.y);
+                if (uOverlayRot == 1) {
+                    vTexCoord = vec2(aTexCoord.y, aTexCoord.x);
+                } else if (uOverlayRot == 3) {
+                    vTexCoord = vec2(1.0 - aTexCoord.y, 1.0 - aTexCoord.x);
+                } else {
+                    vTexCoord = vec2(aTexCoord.x, 1.0 - aTexCoord.y);
+                }
             }
         """
 

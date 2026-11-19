@@ -814,20 +814,6 @@
                     android:background="@drawable/bg_cinema_button_inactive" />
 
                 <TextView
-                    android:id="@+id/btnEffectTiltShift"
-                    android:layout_width="wrap_content"
-                    android:minWidth="80dp"
-                    android:layout_height="36dp"
-                    android:layout_marginStart="6dp"
-                    android:paddingHorizontal="12dp"
-                    android:gravity="center"
-                    android:text="TILT-SHIFT"
-                    android:textColor="#94A3B8"
-                    android:textSize="10sp"
-                    android:fontFamily="monospace"
-                    android:background="@drawable/bg_cinema_button_inactive" />
-
-                <TextView
                     android:id="@+id/btnEffectDoubleExp"
                     android:layout_width="wrap_content"
                     android:minWidth="88dp"
@@ -850,48 +836,6 @@
                     android:paddingHorizontal="12dp"
                     android:gravity="center"
                     android:text="PANORAMA"
-                    android:textColor="#94A3B8"
-                    android:textSize="10sp"
-                    android:fontFamily="monospace"
-                    android:background="@drawable/bg_cinema_button_inactive" />
-
-                <TextView
-                    android:id="@+id/btnEffectFilmGrain"
-                    android:layout_width="wrap_content"
-                    android:minWidth="88dp"
-                    android:layout_height="36dp"
-                    android:layout_marginStart="6dp"
-                    android:paddingHorizontal="12dp"
-                    android:gravity="center"
-                    android:text="35MM FILM GRAIN"
-                    android:textColor="#94A3B8"
-                    android:textSize="10sp"
-                    android:fontFamily="monospace"
-                    android:background="@drawable/bg_cinema_button_inactive" />
-
-                <TextView
-                    android:id="@+id/btnEffectHalation"
-                    android:layout_width="wrap_content"
-                    android:minWidth="88dp"
-                    android:layout_height="36dp"
-                    android:layout_marginStart="6dp"
-                    android:paddingHorizontal="12dp"
-                    android:gravity="center"
-                    android:text="SOFT HALATION"
-                    android:textColor="#94A3B8"
-                    android:textSize="10sp"
-                    android:fontFamily="monospace"
-                    android:background="@drawable/bg_cinema_button_inactive" />
-
-                <TextView
-                    android:id="@+id/btnEffectVignette"
-                    android:layout_width="wrap_content"
-                    android:minWidth="76dp"
-                    android:layout_height="36dp"
-                    android:layout_marginStart="6dp"
-                    android:paddingHorizontal="12dp"
-                    android:gravity="center"
-                    android:text="VIGNETTE"
                     android:textColor="#94A3B8"
                     android:textSize="10sp"
                     android:fontFamily="monospace"
@@ -982,20 +926,6 @@
                     android:background="@drawable/bg_cinema_button_inactive" />
 
                 <TextView
-                    android:id="@+id/btnEffectMotionBlur"
-                    android:layout_width="wrap_content"
-                    android:minWidth="84dp"
-                    android:layout_height="36dp"
-                    android:layout_marginStart="6dp"
-                    android:paddingHorizontal="12dp"
-                    android:gravity="center"
-                    android:text="MOTION BLUR"
-                    android:textColor="#94A3B8"
-                    android:textSize="10sp"
-                    android:fontFamily="monospace"
-                    android:background="@drawable/bg_cinema_button_inactive" />
-
-                <TextView
                     android:id="@+id/btnEffectHorizonLock"
                     android:layout_width="wrap_content"
                     android:minWidth="88dp"
@@ -1079,6 +1009,76 @@
                     android:fontFamily="monospace"
                     android:background="@drawable/bg_cinema_button_inactive" />
 
+                <TextView
+                    android:id="@+id/btnEffectMotionBlur"
+                    android:layout_width="wrap_content"
+                    android:minWidth="84dp"
+                    android:layout_height="36dp"
+                    android:layout_marginStart="6dp"
+                    android:paddingHorizontal="12dp"
+                    android:gravity="center"
+                    android:text="MOTION BLUR"
+                    android:textColor="#94A3B8"
+                    android:textSize="10sp"
+                    android:fontFamily="monospace"
+                    android:background="@drawable/bg_cinema_button_inactive" />
+
+                <TextView
+                    android:id="@+id/btnEffectTiltShift"
+                    android:layout_width="wrap_content"
+                    android:minWidth="80dp"
+                    android:layout_height="36dp"
+                    android:layout_marginStart="6dp"
+                    android:paddingHorizontal="12dp"
+                    android:gravity="center"
+                    android:text="TILT-SHIFT"
+                    android:textColor="#94A3B8"
+                    android:textSize="10sp"
+                    android:fontFamily="monospace"
+                    android:background="@drawable/bg_cinema_button_inactive" />
+
+                <TextView
+                    android:id="@+id/btnEffectFilmGrain"
+                    android:layout_width="wrap_content"
+                    android:minWidth="88dp"
+                    android:layout_height="36dp"
+                    android:layout_marginStart="6dp"
+                    android:paddingHorizontal="12dp"
+                    android:gravity="center"
+                    android:text="35MM FILM GRAIN"
+                    android:textColor="#94A3B8"
+                    android:textSize="10sp"
+                    android:fontFamily="monospace"
+                    android:background="@drawable/bg_cinema_button_inactive" />
+
+                <TextView
+                    android:id="@+id/btnEffectHalation"
+                    android:layout_width="wrap_content"
+                    android:minWidth="88dp"
+                    android:layout_height="36dp"
+                    android:layout_marginStart="6dp"
+                    android:paddingHorizontal="12dp"
+                    android:gravity="center"
+                    android:text="SOFT HALATION"
+                    android:textColor="#94A3B8"
+                    android:textSize="10sp"
+                    android:fontFamily="monospace"
+                    android:background="@drawable/bg_cinema_button_inactive" />
+
+                <TextView
+                    android:id="@+id/btnEffectVignette"
+                    android:layout_width="wrap_content"
+                    android:minWidth="76dp"
+                    android:layout_height="36dp"
+                    android:layout_marginStart="6dp"
+                    android:paddingHorizontal="12dp"
+                    android:gravity="center"
+                    android:text="VIGNETTE"
+                    android:textColor="#94A3B8"
+                    android:textSize="10sp"
+                    android:fontFamily="monospace"
+                    android:background="@drawable/bg_cinema_button_inactive" />
+
                 <LinearLayout
                     android:layout_width="wrap_content"
                     android:layout_height="36dp"
@@ -1091,7 +1091,7 @@
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="35mm Film Grain"
+                        android:text="Grain Overlay"
                         android:textColor="#F1F5F9"
                         android:textSize="10.5sp"
                         android:fontFamily="monospace"
@@ -1118,7 +1118,7 @@
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="Retro 90s Stamp"
+                        android:text="Date Stamp"
                         android:textColor="#F1F5F9"
                         android:textSize="10.5sp"
                         android:fontFamily="monospace"
@@ -1145,7 +1145,7 @@
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="Blue Flare"
+                        android:text="Flare Overlay"
                         android:textColor="#F1F5F9"
                         android:textSize="10.5sp"
                         android:fontFamily="monospace"

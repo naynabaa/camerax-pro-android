@@ -255,33 +255,7 @@ class MainActivity : AppCompatActivity() {
         val saturation: Int, val sepia: Int, val grayscale: Int, val tintColor: String
     )
     private val injectedCustomFilters = listOf<CustomFilterDef>(
-        CustomFilterDef("filter_lut_rec709", "Standard Rec.709", 2, 12, 8, 0, 0, "#38bdf8"),
-        CustomFilterDef("filter_lut_flat_log", "Flat Log Profile", 10, -32, -38, 6, 0, "#94a3b8"),
-        CustomFilterDef("filter_lut_blockbuster_teal_orange", "Blockbuster Teal & Orange", 2, 30, 36, 16, 0, "#0d9488"),
-        CustomFilterDef("filter_lut_bleach_bypass", "Bleach Bypass", -4, 52, -48, 8, 30, "#64748b"),
-        CustomFilterDef("filter_lut_anamorphic_cyan", "Anamorphic Cyan", -2, 34, 18, 0, 0, "#06b6d4"),
-        CustomFilterDef("filter_lut_matte_cinema", "Matte Cinema", 12, -16, -14, 20, 0, "#78716c"),
-        CustomFilterDef("filter_lut_midnight_neon", "Midnight Neon", 2, 36, 56, 0, 0, "#8b5cf6"),
-        CustomFilterDef("filter_lut_warm_documentary", "Warm Documentary", 4, 10, 14, 22, 0, "#f59e0b"),
-        CustomFilterDef("filter_lut_noir_cinema", "Noir Cinema (B&W)", -6, 72, -100, 0, 100, "#09090b"),
-        CustomFilterDef("filter_golden_nostalgia", "Golden Nostalgia", 6, -6, 18, 46, 0, "#eab308"),
-        CustomFilterDef("filter_velvia_landscape", "Velvia Landscape", 2, 28, 55, 0, 0, "#059669"),
-        CustomFilterDef("filter_nordic_slate", "Nordic Slate", -3, 26, -34, 0, 18, "#475569"),
-        CustomFilterDef("filter_arctic_mist", "Arctic Mist", 10, -10, -38, 0, 22, "#94a3b8"),
-        CustomFilterDef("filter_classic_mono", "Classic Mono (B&W)", 2, 18, -100, 0, 100, "#64748b"),
-        CustomFilterDef("filter_high_contrast_noir", "High-Contrast Noir", -4, 68, -100, 0, 100, "#18181b"),
-        CustomFilterDef("filter_ilford_grain", "Ilford Grain (B&W)", 2, 32, -100, 0, 100, "#52525b"),
-        CustomFilterDef("filter_silver_gelatin", "Silver Gelatin", 4, 24, -100, 18, 92, "#78716c"),
-        CustomFilterDef("filter_antique_sepia", "Antique Sepia", 2, 22, -25, 88, 0, "#92400e"),
-        CustomFilterDef("filter_portra_400", "Portra 400", 6, 15, 22, 24, 0, "#fde68a"),
-        CustomFilterDef("filter_fuji_400h", "Fuji Pro 400H", 8, 16, 26, 8, 0, "#a7f3d0"),
-        CustomFilterDef("filter_teal_orange", "Teal & Orange", 4, 32, 46, 12, 0, "#38bdf8"),
-        CustomFilterDef("filter_noir_contrast", "Silver Noir", 2, 56, -100, 0, 100, "#ffffff"),
-        CustomFilterDef("filter_nordic_mood", "Nordic Blue", -2, 24, -30, 6, 0, "#93c5fd"),
-        CustomFilterDef("filter_super8_retro", "Super 8 Vintage", 10, -6, 20, 52, 0, "#fef08a"),
-        CustomFilterDef("filter_sunset_warmth", "Sunset Glow", 5, 18, 38, 40, 0, "#f59e0b"),
-        CustomFilterDef("filter_matrix_code", "Matrix Cyber", 8, 42, 65, 0, 0, "#10b981"),
-        CustomFilterDef("filter_pastel_dream", "Pastel Dream", 12, -8, -15, 15, 0, "#ec4899")
+        
     )
     private data class CustomLensDef(
         val id: String,
@@ -455,9 +429,9 @@ class MainActivity : AppCompatActivity() {
                 if (tv != null && tv.isAvailable) {
                     val vw = tv.width.coerceAtLeast(1)
                     val vh = tv.height.coerceAtLeast(1)
-                    val maxEdge = 360
-                    val sampleW = if (vw >= vh) maxEdge else Math.max(120, (maxEdge * vw / vh.toFloat()).toInt())
-                    val sampleH = if (vh >= vw) maxEdge else Math.max(120, (maxEdge * vh / vw.toFloat()).toInt())
+                    val maxEdge = 480
+                    val sampleW = if (vw >= vh) maxEdge else Math.max(160, (maxEdge * vw / vh.toFloat()).toInt())
+                    val sampleH = if (vh >= vw) maxEdge else Math.max(160, (maxEdge * vh / vw.toFloat()).toInt())
                     val frame = tv.getBitmap(sampleW, sampleH)
                     if (frame != null) {
                         val activeEffect = currentShootingEffect
@@ -912,9 +886,9 @@ class MainActivity : AppCompatActivity() {
         "lut_anamorphic_cyan", "lut_matte_cinema", "lut_midnight_neon", "lut_warm_documentary", "lut_noir_cinema",
         "golden_nostalgia", "velvia_landscape", "nordic_slate", "arctic_mist",
         "classic_mono", "high_contrast_noir", "ilford_grain", "silver_gelatin", "antique_sepia",
+        "cinematic", "vintage", "bw", "cyberpunk", "hdr", "comic_book",
         "portra_400", "fuji_400h", "teal_orange", "noir_contrast", "sunset_warmth",
-        "matrix_code", "pastel_dream", "nordic_blue", "super8_vintage",
-        "cinematic", "vintage", "bw", "cyberpunk", "hdr", "comic_book"
+        "matrix_code", "pastel_dream", "nordic_blue", "super8_vintage"
     )
     private val arLensOrder = mutableListOf(
         "none", "mesh_contour", "cyberpunk_visor", "golden_crown", "scifi_hud", "comic_frame"
@@ -2015,7 +1989,7 @@ class MainActivity : AppCompatActivity() {
                                 val rawMpBmp = imageProxy.toBitmap()
                                 val rot = imageProxy.imageInfo.rotationDegrees
                                 val maxDim = Math.max(rawMpBmp.width, rawMpBmp.height).coerceAtLeast(1)
-                                val downScale = if (maxDim > 320) (320f / maxDim.toFloat()) else 1f
+                                val downScale = if (maxDim > 480) (480f / maxDim.toFloat()) else 1f
                                 val m = Matrix().apply {
                                     if (downScale < 1f) postScale(downScale, downScale)
                                     if (rot != 0) postRotate(rot.toFloat())
@@ -2041,7 +2015,7 @@ class MainActivity : AppCompatActivity() {
                                 val pixelStride = plane.pixelStride
                                 val rot = imageProxy.imageInfo.rotationDegrees
 
-                                val step = Math.max(2, Math.min(srcW, srcH) / 140)
+                                val step = Math.max(2, Math.min(srcW, srcH) / 240)
                                 val rotSideways = rot == 90 || rot == 270
                                 val rawOutW = if (rotSideways) (srcH / step) else (srcW / step)
                                 val outW = (rawOutW and 1.inv()).coerceAtLeast(16)
@@ -2087,7 +2061,7 @@ class MainActivity : AppCompatActivity() {
                                     viewBinding.arFaceOverlayView.updateSimpleFace(
                                         normEyeBridgeX = (mid.x / outW.toFloat()).coerceIn(0.05f, 0.95f),
                                         normEyeBridgeY = (mid.y / outH.toFloat()).coerceIn(0.05f, 0.95f),
-                                        normEyeDist = (eyeDist / outW.toFloat()).coerceIn(0.06f, 0.55f),
+                                        normEyeDist = (eyeDist / outW.toFloat()).coerceIn(0.04f, 0.55f),
                                         isFrontFacing = lensFacing == CameraSelector.DEFAULT_FRONT_CAMERA
                                     )
                                 }
@@ -2096,9 +2070,9 @@ class MainActivity : AppCompatActivity() {
                                 Log.e(TAG, "Face tracking fallback error", e)
                             }
                         }
-                        if (cameraEffect != null && analysisFrameCounter % 3 == 0 && viewBinding.arFaceOverlayView.hasAnyVisibleOverlay()) {
+                        if (recording != null && cameraEffect != null && analysisFrameCounter % 3 == 0 && viewBinding.arFaceOverlayView.hasAnyVisibleOverlay()) {
                             runOnUiThread {
-                                if (!isFinishing && !isDestroyed) {
+                                if (!isFinishing && !isDestroyed && recording != null) {
                                     syncOverlayToVideoProcessor()
                                 }
                             }
@@ -3013,12 +2987,34 @@ class MainActivity : AppCompatActivity() {
         else -> "OFF"
     }
 
+    private fun getFilterDisplayLabel(presetId: String): String {
+        val custom = injectedCustomFilters.find { it.id == presetId }
+        if (custom != null && custom.name.isNotBlank()) return custom.name.uppercase(Locale.ROOT)
+        return when (presetId.lowercase(Locale.ROOT)) {
+            "normal" -> "NORMAL"
+            "lut_rec709", "filter_lut_rec709" -> "REC.709"
+            "lut_flat_log", "filter_lut_flat_log" -> "FLAT LOG"
+            "lut_teal_orange", "filter_lut_blockbuster_teal_orange" -> "LUT TEAL & ORANGE"
+            "lut_bleach_bypass", "filter_lut_bleach_bypass" -> "BLEACH BYPASS"
+            "lut_anamorphic_cyan", "filter_lut_anamorphic_cyan" -> "ANAMORPHIC CYAN"
+            "lut_matte_cinema", "filter_lut_matte_cinema" -> "MATTE CINEMA"
+            "lut_midnight_neon", "filter_lut_midnight_neon" -> "MIDNIGHT NEON"
+            "lut_warm_documentary", "filter_lut_warm_documentary" -> "WARM DOCU"
+            "lut_noir_cinema", "filter_lut_noir_cinema" -> "NOIR CINEMA"
+            "cinematic" -> "CINEMA"
+            "bw", "black_and_white", "mono" -> "MONO B&W"
+            "hdr" -> "VIVID HDR"
+            "super8_vintage", "filter_super8_retro" -> "SUPER 8 RETRO"
+            else -> presetId.removePrefix("filter_").replace("_", " ").uppercase(Locale.ROOT)
+        }
+    }
+
     private fun updateCreativeStatusUI() {
         val statusText = when (currentCreativeTarget) {
             CreativeTarget.FILTERS -> {
                 val total = (filterPresetOrder.size - 1).coerceAtLeast(1)
                 val idx = filterPresetOrder.indexOf(currentFilterName)
-                val label = currentFilterName.replace("_", " ").uppercase(Locale.ROOT)
+                val label = getFilterDisplayLabel(currentFilterName)
                 if (idx > 0) "FILTER: $label ($idx/$total)" else "FILTER: NORMAL (0/$total)"
             }
             CreativeTarget.ART -> {
@@ -3027,6 +3023,8 @@ class MainActivity : AppCompatActivity() {
                 val idx = artList.indexOf(currentShootingEffect)
                 if (idx > 0) {
                     "ART: ${getShootingEffectLabel(currentShootingEffect)} ($idx/$total)"
+                } else if (currentShootingEffect != "none") {
+                    "ART: OFF · ACTIVE: ${getShootingEffectLabel(currentShootingEffect)}"
                 } else {
                     "ART: OFF (0/$total)"
                 }
@@ -3036,6 +3034,8 @@ class MainActivity : AppCompatActivity() {
                 val idx = toonStyleOrder.indexOf(currentShootingEffect)
                 if (idx > 0) {
                     "TOON: ${getShootingEffectLabel(currentShootingEffect)} ($idx/$total)"
+                } else if (currentShootingEffect != "none") {
+                    "TOON: OFF · ACTIVE: ${getShootingEffectLabel(currentShootingEffect)}"
                 } else {
                     "TOON: OFF (0/$total)"
                 }
@@ -3046,6 +3046,8 @@ class MainActivity : AppCompatActivity() {
                 val idx = modeList.indexOf(currentShootingEffect)
                 if (idx > 0 && !artEffectIds.contains(currentShootingEffect) && !toonEffectIds.contains(currentShootingEffect)) {
                     "EFFECT: ${getShootingEffectLabel(currentShootingEffect)} ($idx/$total)"
+                } else if (artEffectIds.contains(currentShootingEffect) || toonEffectIds.contains(currentShootingEffect)) {
+                    "EFFECT: OFF · ACTIVE: ${getShootingEffectLabel(currentShootingEffect)}"
                 } else {
                     val g = viewBinding.proOverlayView.enableFilmGrain
                     val d = viewBinding.proOverlayView.enableDateStamp
@@ -3981,7 +3983,7 @@ class MainActivity : AppCompatActivity() {
         updateCreativeStatusUI()
         syncStylizeLoopState()
         if (showNotice) {
-            showHudNotice("Filter: ${preset.replace('_', ' ').uppercase(Locale.ROOT)}")
+            showHudNotice("Filter: ${getFilterDisplayLabel(preset)}")
         }
     }
 
@@ -4136,7 +4138,8 @@ class MainActivity : AppCompatActivity() {
     private fun updateArDockStatusLabel() {
         val total = (arLensOrder.size - 1).coerceAtLeast(1)
         val idx = arLensOrder.indexOf(currentArLensName)
-        val label = currentArLensName.replace("_", " ").uppercase(Locale.ROOT)
+        val rawDisplay = injectedCustomLenses.find { it.id == currentArLensName }?.name ?: currentArLensName
+        val label = rawDisplay.replace("_", " ").replace(Regex("\\s+"), " ").trim().uppercase(Locale.ROOT)
         viewBinding.arLensModeDock.tvArDockStatus.text = when {
             currentArLensName == "comic_frame" && isCartoonShaderActive() -> "AR LENS: $label · PANEL ON ($idx/$total)"
             currentArLensName == "comic_frame" -> "AR LENS: $label · NEED TOON/COMIC"
@@ -4195,16 +4198,16 @@ class MainActivity : AppCompatActivity() {
             listOf(
                 "none",
                 "video_bokeh", "slow_motion_120_240", "time_lapse", "hyperlapse",
-                "anamorphic_flare", "dolly_zoom", "motion_blur", "action_stabilization",
+                "anamorphic_flare", "dolly_zoom", "action_stabilization",
                 "vintage_super8", "film_16mm", "vhs_tape", "crt_monitor", "stop_motion",
-                "tilt_shift", "film_grain", "soft_halation", "vignette"
+                "motion_blur", "tilt_shift", "film_grain", "soft_halation", "vignette"
             )
         } else {
             listOf(
                 "none",
                 "portrait_bokeh", "long_exposure", "light_painting", "star_trails",
-                "night_sight", "macro_focus", "motion_blur", "tilt_shift", "double_exposure", "panorama",
-                "film_grain", "soft_halation", "vignette"
+                "night_sight", "macro_focus", "double_exposure", "panorama",
+                "motion_blur", "tilt_shift", "film_grain", "soft_halation", "vignette"
             )
         }
     }
@@ -4219,27 +4222,33 @@ class MainActivity : AppCompatActivity() {
             viewBinding.effectsStudioDrawer.btnEffectStarTrails to "star_trails",
             viewBinding.effectsStudioDrawer.btnEffectNightSight to "night_sight",
             viewBinding.effectsStudioDrawer.btnEffectMacro to "macro_focus",
-            viewBinding.effectsStudioDrawer.btnEffectTiltShift to "tilt_shift",
             viewBinding.effectsStudioDrawer.btnEffectDoubleExp to "double_exposure",
             viewBinding.effectsStudioDrawer.btnEffectPanorama to "panorama",
-            viewBinding.effectsStudioDrawer.btnEffectFilmGrain to "film_grain",
-            viewBinding.effectsStudioDrawer.btnEffectHalation to "soft_halation",
-            viewBinding.effectsStudioDrawer.btnEffectVignette to "vignette",
             viewBinding.effectsStudioDrawer.btnEffectVideoBokeh to "video_bokeh",
             viewBinding.effectsStudioDrawer.btnEffectSlowMotion to "slow_motion_120_240",
             viewBinding.effectsStudioDrawer.btnEffectTimeLapse to "time_lapse",
             viewBinding.effectsStudioDrawer.btnEffectHyperlapse to "hyperlapse",
             viewBinding.effectsStudioDrawer.btnEffectAnamorphicFlare to "anamorphic_flare",
             viewBinding.effectsStudioDrawer.btnEffectDollyZoom to "dolly_zoom",
-            viewBinding.effectsStudioDrawer.btnEffectMotionBlur to "motion_blur",
             viewBinding.effectsStudioDrawer.btnEffectHorizonLock to "action_stabilization",
             viewBinding.effectsStudioDrawer.btnEffectSuper8 to "vintage_super8",
             viewBinding.effectsStudioDrawer.btnEffectFilm16mm to "film_16mm",
             viewBinding.effectsStudioDrawer.btnEffectVhsTape to "vhs_tape",
             viewBinding.effectsStudioDrawer.btnEffectCrtMonitor to "crt_monitor",
-            viewBinding.effectsStudioDrawer.btnEffectStopMotion to "stop_motion"
+            viewBinding.effectsStudioDrawer.btnEffectStopMotion to "stop_motion",
+            viewBinding.effectsStudioDrawer.btnEffectMotionBlur to "motion_blur",
+            viewBinding.effectsStudioDrawer.btnEffectTiltShift to "tilt_shift",
+            viewBinding.effectsStudioDrawer.btnEffectFilmGrain to "film_grain",
+            viewBinding.effectsStudioDrawer.btnEffectHalation to "soft_halation",
+            viewBinding.effectsStudioDrawer.btnEffectVignette to "vignette"
         )
-        val activeShootingId = if (artEffectIds.contains(currentShootingEffect) || toonEffectIds.contains(currentShootingEffect)) "none" else currentShootingEffect
+        val activeShootingId = if (currentShootingEffect == "none") {
+            "none"
+        } else if (artEffectIds.contains(currentShootingEffect) || toonEffectIds.contains(currentShootingEffect)) {
+            ""
+        } else {
+            currentShootingEffect
+        }
         for ((btn, id) in effectButtons) {
             val isVisibleForMode = when {
                 id == "none" -> true
@@ -4280,7 +4289,11 @@ class MainActivity : AppCompatActivity() {
             viewBinding.effectsStudioDrawer.btnEffectNoirNovel to "noir_graphic_novel",
             viewBinding.effectsStudioDrawer.btnEffectThermalVision to "thermal_vision"
         )
-        val activeArtId = if (artEffectIds.contains(currentShootingEffect)) currentShootingEffect else "none"
+        val activeArtId = when {
+            currentShootingEffect == "none" -> "none"
+            artEffectIds.contains(currentShootingEffect) -> currentShootingEffect
+            else -> ""
+        }
         for ((btn, id) in artButtons) {
             val isActive = id == activeArtId
             if (isActive) {
@@ -4305,7 +4318,11 @@ class MainActivity : AppCompatActivity() {
             viewBinding.effectsStudioDrawer.btnEffectLigneClaire to "ligne_claire",
             viewBinding.effectsStudioDrawer.btnEffectClayVinyl to "clay_vinyl_3d"
         )
-        val activeToonId = if (toonEffectIds.contains(currentShootingEffect)) currentShootingEffect else "none"
+        val activeToonId = when {
+            currentShootingEffect == "none" -> "none"
+            toonEffectIds.contains(currentShootingEffect) -> currentShootingEffect
+            else -> ""
+        }
         for ((btn, id) in toonButtons) {
             val isActive = id == activeToonId
             if (isActive) {
@@ -4493,6 +4510,68 @@ class MainActivity : AppCompatActivity() {
                     val outG = (sumG * invW + 0.5f).toInt().coerceIn(0, 255)
                     val outB = (sumB * invW + 0.5f).toInt().coerceIn(0, 255)
                     dst[idx] = (0xFF shl 24) or (outR shl 16) or (outG shl 8) or outB
+                }
+            }
+            val swap = cur
+            cur = dst
+            dst = swap
+        }
+        return cur
+    }
+
+    /**
+     * Fast O(w*h) 3-pass separable box blur approximating a creamy optical Gaussian bokeh defocus.
+     */
+    private fun boxBlurIntArray(src: IntArray, w: Int, h: Int, radius: Int, passes: Int = 2): IntArray {
+        val r = radius.coerceIn(1, 24)
+        val n = w * h
+        var cur = src.copyOf()
+        val tmp = IntArray(n)
+        var dst = IntArray(n)
+        val div = (r * 2 + 1).toFloat()
+
+        for (pass in 0 until passes) {
+            // Horizontal sliding window
+            for (y in 0 until h) {
+                val row = y * w
+                var sumR = 0; var sumG = 0; var sumB = 0
+                for (k in -r..r) {
+                    val c = cur[row + k.coerceIn(0, w - 1)]
+                    sumR += (c shr 16) and 0xFF
+                    sumG += (c shr 8) and 0xFF
+                    sumB += c and 0xFF
+                }
+                for (x in 0 until w) {
+                    tmp[row + x] = (0xFF shl 24) or
+                        ((sumR / div).toInt().coerceIn(0, 255) shl 16) or
+                        ((sumG / div).toInt().coerceIn(0, 255) shl 8) or
+                        (sumB / div).toInt().coerceIn(0, 255)
+                    val outPx = cur[row + (x - r).coerceIn(0, w - 1)]
+                    val inPx = cur[row + (x + r + 1).coerceIn(0, w - 1)]
+                    sumR += ((inPx shr 16) and 0xFF) - ((outPx shr 16) and 0xFF)
+                    sumG += ((inPx shr 8) and 0xFF) - ((outPx shr 8) and 0xFF)
+                    sumB += (inPx and 0xFF) - (outPx and 0xFF)
+                }
+            }
+            // Vertical sliding window
+            for (x in 0 until w) {
+                var sumR = 0; var sumG = 0; var sumB = 0
+                for (k in -r..r) {
+                    val c = tmp[k.coerceIn(0, h - 1) * w + x]
+                    sumR += (c shr 16) and 0xFF
+                    sumG += (c shr 8) and 0xFF
+                    sumB += c and 0xFF
+                }
+                for (y in 0 until h) {
+                    dst[y * w + x] = (0xFF shl 24) or
+                        ((sumR / div).toInt().coerceIn(0, 255) shl 16) or
+                        ((sumG / div).toInt().coerceIn(0, 255) shl 8) or
+                        (sumB / div).toInt().coerceIn(0, 255)
+                    val outPx = tmp[(y - r).coerceIn(0, h - 1) * w + x]
+                    val inPx = tmp[(y + r + 1).coerceIn(0, h - 1) * w + x]
+                    sumR += ((inPx shr 16) and 0xFF) - ((outPx shr 16) and 0xFF)
+                    sumG += ((inPx shr 8) and 0xFF) - ((outPx shr 8) and 0xFF)
+                    sumB += (inPx and 0xFF) - (outPx and 0xFF)
                 }
             }
             val swap = cur
@@ -4720,7 +4799,7 @@ class MainActivity : AppCompatActivity() {
         }
         val w = srcBmp.width.coerceAtLeast(1)
         val h = srcBmp.height.coerceAtLeast(1)
-        val maxSample = if (forLivePreview) 360 else 1440
+        val maxSample = if (forLivePreview) 480 else 1440
         val sw: Int
         val sh: Int
         if (w >= h) {
@@ -4766,25 +4845,27 @@ class MainActivity : AppCompatActivity() {
 
         // IMPORTANT: Painterly Kuwahara is ONLY for Art painting effects — NEVER for Toon/Cartoon shaders!
         val kuwaharaRadius = when (effectId) {
-            "oil_canvas", "watercolor_wash" -> if (forLivePreview) 3 else 6
-            "pastel_chalk", "lithograph" -> if (forLivePreview) 2 else 5
+            "oil_canvas", "watercolor_wash" -> if (forLivePreview) 2 else 5
+            "pastel_chalk", "lithograph" -> if (forLivePreview) 2 else 4
             else -> 0
         }
         val baseArr = if (kuwaharaRadius > 0) applyKuwaharaIntArray(rawArr, sw, sh, kuwaharaRadius) else rawArr
 
         val smoothPasses = when (effectId) {
-            // Toon & Comic-Book styles get heavy edge-preserving bilateral flattening for clean cartoon/anime/comic regions
-            "comic_book", "comic", "cartoon", "cel_shaded_studio", "ligne_claire", "pop_art_print", "clay_vinyl_3d" -> if (forLivePreview) 3 else 4
-            "graphic_novel_noir", "noir_graphic_novel", "manga_ink", "line_art_minimalist" -> if (forLivePreview) 3 else 4
+            // Toon & Comic-Book styles get clean edge-preserving bilateral flattening without mushing small details
+            "comic_book", "comic", "cartoon", "cel_shaded_studio", "ligne_claire", "pop_art_print" -> if (forLivePreview) 2 else 4
+            "clay_vinyl_3d" -> if (forLivePreview) 2 else 3
+            "graphic_novel_noir", "noir_graphic_novel", "manga_ink", "line_art_minimalist" -> if (forLivePreview) 2 else 3
             // Art styles get smooth bilateral blending after Kuwahara to erase box corners cleanly
-            "oil_canvas", "watercolor_wash", "pastel_chalk", "lithograph" -> if (forLivePreview) 2 else 3
-            "charcoal_sketch", "ink_and_line", "woodcut_engraving", "halftone_print" -> if (forLivePreview) 2 else 3
+            "oil_canvas", "watercolor_wash", "pastel_chalk", "lithograph" -> if (forLivePreview) 1 else 2
+            "charcoal_sketch", "ink_and_line", "woodcut_engraving", "halftone_print" -> if (forLivePreview) 1 else 2
             else -> 0
         }
         val smoothThresh = when (effectId) {
-            "comic_book", "comic", "cartoon", "cel_shaded_studio", "ligne_claire", "pop_art_print", "clay_vinyl_3d" -> 44f
-            "oil_canvas", "watercolor_wash", "pastel_chalk" -> 34f
-            else -> 30f
+            "comic_book", "comic", "cartoon", "cel_shaded_studio", "ligne_claire", "pop_art_print" -> 40f
+            "clay_vinyl_3d" -> 34f
+            "oil_canvas", "watercolor_wash", "pastel_chalk" -> 32f
+            else -> 28f
         }
         val pxArr = if (smoothPasses > 0) smoothIntArray(baseArr, sw, sh, smoothPasses, smoothThresh) else baseArr
         val n = sw * sh
@@ -4806,7 +4887,9 @@ class MainActivity : AppCompatActivity() {
         val edges = if (needsEdges) computeXdogEdges(pxArr, lum, sw, sh) else FloatArray(0)
 
         fun smoothstep(e0: Float, e1: Float, v: Float): Float {
-            val t = ((v - e0) / Math.max(0.001f, e1 - e0)).coerceIn(0f, 1f)
+            val d = e1 - e0
+            if (Math.abs(d) < 0.0001f) return if (v >= e1) 1f else 0f
+            val t = ((v - e0) / d).coerceIn(0f, 1f)
             return t * t * (3f - 2f * t)
         }
 
@@ -4844,29 +4927,39 @@ class MainActivity : AppCompatActivity() {
             return (0xFF shl 24) or (r.coerceIn(0, 255) shl 16) or (g.coerceIn(0, 255) shl 8) or b.coerceIn(0, 255)
         }
 
+        val isAlphaMaskedOpticalBlur = forLivePreview && effectId in setOf("portrait_bokeh", "video_bokeh", "tilt_shift")
         when (effectId) {
             "portrait_bokeh", "video_bokeh", "tilt_shift" -> {
-                val blurred = smoothIntArray(rawArr, sw, sh, if (forLivePreview) 4 else 6, 60f)
+                val blurRadius = if (forLivePreview) Math.max(5, Math.min(sw, sh) / 30) else Math.max(10, Math.min(sw, sh) / 48)
+                val blurred = boxBlurIntArray(rawArr, sw, sh, blurRadius, passes = 2)
                 val isTilt = effectId == "tilt_shift"
+                val effBlendLocal = activeEffectIntensity.coerceIn(0f, 1f)
                 for (y in 0 until sh) {
                     val ny = y / sh.toFloat()
                     val row = y * sw
                     for (x in 0 until sw) {
                         val idx = row + x
                         val nx = x / sw.toFloat()
-                        val mask = if (isTilt) {
+                        val rawMask = if (isTilt) {
                             (Math.abs(ny - 0.5f) - 0.14f) / 0.24f
                         } else {
-                            val d = Math.hypot((nx - 0.5).toDouble(), ((ny - 0.45) * 1.15).toDouble()).toFloat()
+                            val d = Math.hypot((nx - 0.5).toDouble(), ((ny - 0.45) * 1.12).toDouble()).toFloat()
                             (d - 0.22f) / 0.28f
                         }.coerceIn(0f, 1f)
-                        val o = rawArr[idx]
+                        val mask = rawMask * rawMask * (3f - 2f * rawMask)
                         val b = blurred[idx]
-                        outArr[idx] = packRgb(
-                            (((o shr 16) and 0xFF) * (1f - mask) + ((b shr 16) and 0xFF) * mask).toInt(),
-                            (((o shr 8) and 0xFF) * (1f - mask) + ((b shr 8) and 0xFF) * mask).toInt(),
-                            ((o and 0xFF) * (1f - mask) + (b and 0xFF) * mask).toInt()
-                        )
+                        if (isAlphaMaskedOpticalBlur) {
+                            // Keep sharp focal region 100% transparent so full-resolution native PreviewView shines through!
+                            val a = (mask * effBlendLocal * 255f).toInt().coerceIn(0, 255)
+                            outArr[idx] = (a shl 24) or (b and 0x00FFFFFF)
+                        } else {
+                            val o = rawArr[idx]
+                            outArr[idx] = packRgb(
+                                (((o shr 16) and 0xFF) * (1f - mask) + ((b shr 16) and 0xFF) * mask).toInt(),
+                                (((o shr 8) and 0xFF) * (1f - mask) + ((b shr 8) and 0xFF) * mask).toInt(),
+                                ((o and 0xFF) * (1f - mask) + (b and 0xFF) * mask).toInt()
+                            )
+                        }
                     }
                 }
             }
@@ -5218,15 +5311,15 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             "halftone_print" -> {
-                val pitch = Math.max(2.4f, (sw / 82f) / comicHalftoneDensity.coerceIn(0.4f, 2.2f))
+                val pitch = Math.max(3.0f, (sw / 74f) / comicHalftoneDensity.coerceIn(0.4f, 2.2f))
                 for (y in 0 until sh) {
                     val row = y * sw
                     for (x in 0 until sw) {
                         val idx = row + x
                         val l = (lum[idx] / 255f).coerceIn(0f, 1f)
                         val darkness = (1f - Math.pow(l.toDouble(), 0.92).toFloat()).coerceIn(0f, 1f)
-                        val dotInk = rotatedHalftoneDot(x, y, darkness, pitch)
-                        val crispEdge = smoothstep(28f, 60f, edges[idx]) * 0.65f
+                        val dotInk = rotatedHalftoneDot(x, y, darkness * 0.92f, pitch)
+                        val crispEdge = smoothstep(26f, 56f, edges[idx]) * 0.72f
                         val ink = Math.max(dotInk, crispEdge)
                         outArr[idx] = packRgb(
                             (248f * (1f - ink) + 18f * ink).toInt(),
@@ -5252,9 +5345,9 @@ class MainActivity : AppCompatActivity() {
                         val idx = row + x
                         val fx = x / refScale
                         val l = (lum[idx] / 255f).coerceIn(0f, 1f)
-                        val wave = 0.5f + 0.5f * Math.sin(fy * 1.35 + Math.sin(fx * 0.05) * 2.2).toFloat()
-                        val burin = smoothstep(l - 0.14f, l + 0.14f, wave)
-                        val borderInk = smoothstep(24f, 54f, edges[idx])
+                        val wave = 0.5f + 0.5f * Math.sin(fy * 2.15 + Math.sin(fx * 0.06) * 2.0).toFloat()
+                        val burin = smoothstep(l - 0.16f, l + 0.16f, wave) * (1f - smoothstep(0.62f, 0.88f, l))
+                        val borderInk = smoothstep(22f, 48f, edges[idx])
                         val ink = if (l < 0.14f) 1f else if (l > 0.88f) borderInk else Math.max(borderInk, burin)
                         outArr[idx] = packRgb(
                             (246f * (1f - ink) + 16f * ink).toInt(),
@@ -5338,7 +5431,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         val effBlend = activeEffectIntensity.coerceIn(0f, 1f)
-        if (effBlend < 0.99f) {
+        if (!isAlphaMaskedOpticalBlur && effBlend < 0.99f) {
             val inv = 1f - effBlend
             for (i in 0 until n) {
                 val o = rawArr[i]
@@ -5638,6 +5731,7 @@ class MainActivity : AppCompatActivity() {
 
         // Ensure OpenGL SurfaceProcessor has the latest active filter, effect, intensity, adjustments & AR overlay before recording starts
         syncAllStateToOpenGLProcessor()
+        syncOverlayToVideoProcessor(forceUpload = true)
 
         // Start a new recording session
         val name = SimpleDateFormat(FILENAME_FORMAT, Locale.US).format(System.currentTimeMillis())
@@ -5727,6 +5821,7 @@ class MainActivity : AppCompatActivity() {
                         playCameraCue(ToneGenerator.TONE_PROP_BEEP, 110)
                         stopAutoLoopTicker()
                         isArHoldRecording = false
+                        openGLProcessor?.updateOverlayBitmap(null)
                         viewBinding.chronometer.stop()
                         timeWhenStopped = 0L
                         viewBinding.btnPauseResume.visibility = View.GONE
@@ -7602,8 +7697,20 @@ class MainActivity : AppCompatActivity() {
 
     private fun setupDynamicConfigChips() {
         loadPersistedDeviceGlbLenses()
+        val builtInFilterAliases = setOf(
+            "filter_lut_rec709", "filter_lut_flat_log", "filter_lut_blockbuster_teal_orange",
+            "filter_lut_bleach_bypass", "filter_lut_anamorphic_cyan", "filter_lut_matte_cinema",
+            "filter_lut_midnight_neon", "filter_lut_warm_documentary", "filter_lut_noir_cinema",
+            "filter_golden_nostalgia", "filter_velvia_landscape", "filter_nordic_slate",
+            "filter_arctic_mist", "filter_classic_mono", "filter_high_contrast_noir",
+            "filter_ilford_grain", "filter_silver_gelatin", "filter_antique_sepia",
+            "filter_portra_400", "filter_fuji_400h", "filter_teal_orange", "filter_noir_contrast",
+            "filter_sunset_warmth", "filter_matrix_code", "filter_pastel_dream",
+            "filter_nordic_mood", "filter_super8_retro"
+        )
         for (cf in injectedCustomFilters) {
-            if (!filterPresetOrder.contains(cf.id)) {
+            val idLower = cf.id.lowercase(Locale.ROOT)
+            if (!filterPresetOrder.contains(cf.id) && !builtInFilterAliases.contains(idLower)) {
                 filterPresetOrder.add(cf.id)
                 val chip = createStudioChipView(cf.name)
                 chip.setOnClickListener { setFilterPreset(cf.id) }
@@ -7645,10 +7752,12 @@ class MainActivity : AppCompatActivity() {
         try {
             val rawName = resolveDisplayName(uri)
             val cleanBase = rawName.replace(Regex("\\.glb$", RegexOption.IGNORE_CASE), "")
-                .replace(Regex("[^a-zA-Z0-9 _-]"), " ")
+                .replace('_', ' ')
+                .replace(Regex("[^a-zA-Z0-9 -]"), " ")
+                .replace(Regex("\\s+"), " ")
                 .trim()
                 .ifEmpty { "3D Model" }
-                .take(22)
+                .take(24)
 
             val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
                 ?: throw IllegalStateException("Unable to read selected file")
@@ -7681,11 +7790,11 @@ class MainActivity : AppCompatActivity() {
                         accentColor = "#F59E0B",
                         glbAssetPath = "",
                         glbFilePath = outFile.absolutePath,
-                        modelScale = 1.0f,
+                        modelScale = 0.85f,
                         modelOffsetY = 0f,
                         modelRotationY = 0f,
                         modelRotationX = 0f,
-                        autoSpin = true
+                        autoSpin = false
                     )
                     injectedCustomLenses.add(newDef)
                     savePersistedDeviceGlbLenses()
@@ -7749,11 +7858,11 @@ class MainActivity : AppCompatActivity() {
                         accentColor = "#F59E0B",
                         glbAssetPath = "",
                         glbFilePath = filePath,
-                        modelScale = obj.optDouble("modelScale", 1.0).toFloat(),
+                        modelScale = obj.optDouble("modelScale", 0.85).toFloat(),
                         modelOffsetY = obj.optDouble("modelOffsetY", 0.0).toFloat(),
                         modelRotationY = obj.optDouble("modelRotationY", 0.0).toFloat(),
                         modelRotationX = obj.optDouble("modelRotationX", 0.0).toFloat(),
-                        autoSpin = obj.optBoolean("autoSpin", true)
+                        autoSpin = obj.optBoolean("autoSpin", false)
                     )
                 )
             }
@@ -8589,10 +8698,11 @@ class MainActivity : AppCompatActivity() {
         viewBinding.btnBatchPlayPause.text = if (isBatchPlaying) "PAUSE" else "PLAY"
     }
 
-    private fun syncOverlayToVideoProcessor() {
+    private fun syncOverlayToVideoProcessor(forceUpload: Boolean = false) {
         val proc = openGLProcessor ?: return
+        proc.setOverlayCameraFacing(lensFacing == CameraSelector.DEFAULT_FRONT_CAMERA)
         val overlayView = viewBinding.arFaceOverlayView
-        if (!overlayView.hasAnyVisibleOverlay()) {
+        if ((recording == null && !forceUpload) || !overlayView.hasAnyVisibleOverlay()) {
             proc.updateOverlayBitmap(null)
             return
         }

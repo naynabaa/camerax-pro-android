@@ -2256,7 +2256,7 @@ class ProOverlayView @JvmOverloads constructor(
                     typeface = Typeface.MONOSPACE
                     isFakeBoldText = true
                 }
-                canvas.drawText("240 FPS · 0.25x SLOW MOTION", dpToPx(20f), h - dpToPx(125f), badgePaint)
+                canvas.drawText("240 FPS · 0.25x SLOW MOTION", dpToPx(18f), dpToPx(118f), badgePaint)
                 needsAnim = true
             }
             "time_lapse" -> {
@@ -2281,7 +2281,7 @@ class ProOverlayView @JvmOverloads constructor(
                     typeface = Typeface.MONOSPACE
                     isFakeBoldText = true
                 }
-                canvas.drawText("TIME-LAPSE · 8x INTERVAL", dpToPx(20f), h - dpToPx(125f), badgePaint)
+                canvas.drawText("TIME-LAPSE · 8x INTERVAL", dpToPx(18f), dpToPx(118f), badgePaint)
                 needsAnim = true
             }
             "hyperlapse" -> {
@@ -2307,7 +2307,7 @@ class ProOverlayView @JvmOverloads constructor(
                     typeface = Typeface.MONOSPACE
                     isFakeBoldText = true
                 }
-                canvas.drawText("HYPERLAPSE · 4x STABILIZED", dpToPx(20f), h - dpToPx(125f), badgePaint)
+                canvas.drawText("HYPERLAPSE · 4x STABILIZED", dpToPx(18f), dpToPx(118f), badgePaint)
                 needsAnim = true
             }
             "dolly_zoom" -> {
@@ -2331,7 +2331,7 @@ class ProOverlayView @JvmOverloads constructor(
                     isFakeBoldText = true
                 }
                 val factor = String.format(java.util.Locale.US, "%.2fx", 1.0f + pulse * 0.36f)
-                canvas.drawText("DOLLY ZOOM · " + factor, dpToPx(20f), h - dpToPx(125f), badgePaint)
+                canvas.drawText("DOLLY ZOOM · " + factor, dpToPx(18f), dpToPx(118f), badgePaint)
                 needsAnim = true
             }
             "motion_blur" -> {
@@ -2374,8 +2374,8 @@ class ProOverlayView @JvmOverloads constructor(
                 }
                 canvas.drawText(
                     "MOTION BLUR · VEL ${velPct}% · ${motionBlurShutterLabel}",
-                    dpToPx(20f),
-                    h - dpToPx(125f),
+                    dpToPx(18f),
+                    dpToPx(118f),
                     badgePaint
                 )
                 needsAnim = true
@@ -2405,7 +2405,7 @@ class ProOverlayView @JvmOverloads constructor(
                     typeface = Typeface.MONOSPACE
                     isFakeBoldText = true
                 }
-                canvas.drawText("HORIZON LOCK · 0.0° STABILIZED", dpToPx(20f), h - dpToPx(125f), badgePaint)
+                canvas.drawText("HORIZON LOCK · 0.0° STABILIZED", dpToPx(18f), dpToPx(118f), badgePaint)
                 needsAnim = true
             }
             "vintage_super8" -> {
@@ -2464,7 +2464,7 @@ class ProOverlayView @JvmOverloads constructor(
                     typeface = Typeface.MONOSPACE
                     isFakeBoldText = true
                 }
-                canvas.drawText("CYANOTYPE · PRUSSIAN BLUEPRINT", pad + dpToPx(8f), h - dpToPx(125f), badgePaint)
+                canvas.drawText("CYANOTYPE · PRUSSIAN BLUEPRINT", pad + dpToPx(8f), dpToPx(118f), badgePaint)
             }
             "prism_refraction" -> {
                 // Rainbow glass dispersion caustics along frame corners
@@ -2543,7 +2543,7 @@ class ProOverlayView @JvmOverloads constructor(
                     typeface = Typeface.MONOSPACE
                     isFakeBoldText = true
                 }
-                canvas.drawText("16MM DOCU · 24FPS", dpToPx(16f) + weaveX, h - dpToPx(125f) + weaveY, badgePaint)
+                canvas.drawText("16MM DOCU · 24FPS", dpToPx(18f) + weaveX, dpToPx(118f) + weaveY, badgePaint)
                 needsAnim = true
             }
             "vhs_tape" -> {
@@ -2629,7 +2629,7 @@ class ProOverlayView @JvmOverloads constructor(
                     typeface = Typeface.MONOSPACE
                     isFakeBoldText = true
                 }
-                canvas.drawText(String.format(java.util.Locale.US, "STOP-MOTION · 8FPS · FR#%02d", stepIdx), dpToPx(20f), h - dpToPx(125f), labelPaint)
+                canvas.drawText(String.format(java.util.Locale.US, "STOP-MOTION · 8FPS · FR#%02d", stepIdx), dpToPx(18f), dpToPx(118f), labelPaint)
                 needsAnim = true
             }
             "neon_edge" -> {
@@ -2688,7 +2688,7 @@ class ProOverlayView @JvmOverloads constructor(
                     typeface = Typeface.MONOSPACE
                     isFakeBoldText = true
                 }
-                canvas.drawText("FLIR IR · 36.8°C", dpToPx(18f), h - dpToPx(125f), badgePaint)
+                canvas.drawText("FLIR IR · 36.8°C", dpToPx(18f), dpToPx(118f), badgePaint)
             }
         }
 

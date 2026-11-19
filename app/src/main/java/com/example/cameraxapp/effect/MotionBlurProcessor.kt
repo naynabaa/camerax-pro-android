@@ -248,7 +248,7 @@ class MotionBlurProcessor {
 
         val w = src.width.coerceAtLeast(1)
         val h = src.height.coerceAtLeast(1)
-        val maxWorkEdge = if (forLivePreview) 360 else 1080
+        val maxWorkEdge = if (forLivePreview) 540 else 1080
         val scale = if (maxOf(w, h) > maxWorkEdge) maxWorkEdge / maxOf(w, h).toFloat() else 1f
         val workW = (w * scale).roundToInt().coerceAtLeast(64)
         val workH = (h * scale).roundToInt().coerceAtLeast(64)
@@ -273,10 +273,10 @@ class MotionBlurProcessor {
         val uy = if (dirLen > 0.001f) metrics.dirY / dirLen else 0.0f
 
         // Compute directional shutter-drag streak radius scaled by detected velocity + effect intensity
-        val effectiveVelocity = (0.28f + 0.72f * metrics.magnitude.coerceIn(0f, 1f))
-        val baseRadiusPx = workW * 0.036f * safeIntensity * effectiveVelocity
+        val effectiveVelocity = (0.12f + 0.88f * metrics.magnitude.coerceIn(0f, 1f))
+        val baseRadiusPx = workW * 0.032f * safeIntensity * effectiveVelocity
         val halfTaps = if (forLivePreview) 4 else 7
-        val tapStepPx = (baseRadiusPx / halfTaps.toFloat()).coerceAtLeast(0.85f)
+        val tapStepPx = (baseRadiusPx / halfTaps.toFloat()).coerceAtLeast(0.45f)
 
         // Precompute symmetric tent/Gaussian shutter-open weights + floating sample offsets
         val tapCount = halfTaps * 2 + 1
@@ -289,8 +289,8 @@ class MotionBlurProcessor {
             val k = i - halfTaps
             offX[i] = (ux * tapStepPx * k).roundToInt()
             offY[i] = (uy * tapStepPx * k).roundToInt()
-            // Triangular shutter envelope biased slightly around center for crisp focal anchor
-            val weight = 1.0f - (abs(k).toFloat() / (halfTaps + 1.35f))
+            // Center-anchored shutter envelope keeps stationary scenes sharp while trailing moving edges
+            val weight = if (k == 0) 1.65f else 1.0f - (abs(k).toFloat() / (halfTaps + 1.15f))
             weights[i] = weight
             weightSum += weight
         }

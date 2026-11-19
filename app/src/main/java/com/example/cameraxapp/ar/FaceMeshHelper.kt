@@ -80,9 +80,9 @@ class FaceMeshHelper(
                     .setBaseOptions(baseOptions)
                     .setRunningMode(RunningMode.LIVE_STREAM)
                     .setNumFaces(1)
-                    .setMinFaceDetectionConfidence(0.45f)
-                    .setMinTrackingConfidence(0.45f)
-                    .setMinFacePresenceConfidence(0.45f)
+                    .setMinFaceDetectionConfidence(0.30f)
+                    .setMinTrackingConfidence(0.30f)
+                    .setMinFacePresenceConfidence(0.30f)
                     .setOutputFaceBlendshapes(true)
                     .setOutputFacialTransformationMatrixes(true)
                     .setResultListener { result: FaceLandmarkerResult, input: MPImage ->
