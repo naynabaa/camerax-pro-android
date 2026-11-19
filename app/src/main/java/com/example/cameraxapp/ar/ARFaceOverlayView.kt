@@ -2028,7 +2028,22 @@ class ARFaceOverlayView @JvmOverloads constructor(
         val eyeLeftY = getY(33)
         val eyeRightX = getX(263)
         val eyeRightY = getY(263)
-        val headRollDeg = Math.toDegrees(Math.atan2((eyeRightY - eyeLeftY).toDouble(), (eyeRightX - eyeLeftX).toDouble())).toFloat()
+        // Always order eyes left-to-right in screen space so front-camera horizontal mirroring
+        // never makes dx negative (which caused atan2 to return ±180° and flip the GLB upside down).
+        val screenLeftEyeX: Float
+        val screenLeftEyeY: Float
+        val screenRightEyeX: Float
+        val screenRightEyeY: Float
+        if (eyeLeftX <= eyeRightX) {
+            screenLeftEyeX = eyeLeftX; screenLeftEyeY = eyeLeftY
+            screenRightEyeX = eyeRightX; screenRightEyeY = eyeRightY
+        } else {
+            screenLeftEyeX = eyeRightX; screenLeftEyeY = eyeRightY
+            screenRightEyeX = eyeLeftX; screenRightEyeY = eyeLeftY
+        }
+        val eyeDx = (screenRightEyeX - screenLeftEyeX).coerceAtLeast(1f)
+        val eyeDy = screenRightEyeY - screenLeftEyeY
+        val headRollDeg = Math.toDegrees(Math.atan2(eyeDy.toDouble(), eyeDx.toDouble())).toFloat().coerceIn(-55f, 55f)
         val eyeMidX = (eyeLeftX + eyeRightX) * 0.5f
         val estYawDeg = if (hasTrackedFace) {
             (((getX(1) - eyeMidX) / faceW.coerceAtLeast(1f)) * 55f).coerceIn(-35f, 35f)
@@ -2036,16 +2051,22 @@ class ARFaceOverlayView @JvmOverloads constructor(
             0f
         }
 
-        val anchorX = cx
-        val anchorYBase = when (activeGlbAnchor.lowercase()) {
-            "forehead" -> getY(10) - faceH * 0.06f
+        val anchorKey = activeGlbAnchor.lowercase()
+        val anchorX = when (anchorKey) {
+            "forehead" -> getX(10)
+            "eyes" -> eyeMidX
+            "nose_cheeks" -> getX(1)
+            else -> cx
+        }
+        val anchorYBase = when (anchorKey) {
+            "forehead" -> getY(10) - faceH * 0.14f
             "eyes" -> (eyeLeftY + eyeRightY) * 0.5f
             "nose_cheeks" -> getY(1)
             "mouth" -> (getY(1) + getY(152)) * 0.52f
             else -> cy
         }
         val anchorY = anchorYBase + activeGlbOffsetY * faceH * 0.55f
-        val baseAnchorScale = when (activeGlbAnchor.lowercase()) {
+        val baseAnchorScale = when (anchorKey) {
             "forehead" -> 0.80f
             "eyes" -> 0.76f
             "nose_cheeks" -> 0.52f
@@ -2072,7 +2093,7 @@ class ARFaceOverlayView @JvmOverloads constructor(
             modelScale = baseAnchorScale * activeGlbModelScale,
             yawDeg = activeGlbRotY + idleYaw,
             pitchDeg = activeGlbRotX,
-            rollDeg = -(headRollDeg + calibrationRotationDeg)
+            rollDeg = -headRollDeg
         )
 
         val bmp: Bitmap? = if (syncGlb) {
