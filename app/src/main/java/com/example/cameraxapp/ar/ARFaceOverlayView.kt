@@ -1194,7 +1194,7 @@ class ARFaceOverlayView @JvmOverloads constructor(
         nowMs: Long
     ) {
         val cfg = activeCustomLensStyle ?: return
-        val style = cfg.style.lowercase()
+        val lensStyle = cfg.style.lowercase()
         val anchor = cfg.anchor.lowercase()
         val primaryColor = try { Color.parseColor(cfg.primaryColorHex) } catch (_: Exception) { Color.parseColor("#EC4899") }
         val accentColor = try { Color.parseColor(cfg.accentColorHex) } catch (_: Exception) { Color.parseColor("#38BDF8") }
@@ -1219,7 +1219,7 @@ class ARFaceOverlayView @JvmOverloads constructor(
             setShadowLayer(8f, 0f, 0f, primaryColor)
         }
 
-        when (style) {
+        when (lensStyle) {
             "cat_ears", "animal_ears" -> {
                 val earSpan = faceW * 0.44f
                 val earW = faceW * 0.34f
