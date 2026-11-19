@@ -12,13 +12,18 @@ import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.Preview
+import androidx.camera.core.resolutionselector.ResolutionSelector
+import androidx.camera.core.resolutionselector.ResolutionStrategy
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.video.*
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -45,6 +50,8 @@ import androidx.core.content.PermissionChecker
 import com.example.cameraxapp.panorama.PanoramaStitcher
 import com.example.cameraxapp.power.ThermalGuardManager
 import com.example.cameraxapp.stabilization.GyroStabilizer
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Locale
 import java.util.concurrent.Executors
@@ -66,19 +73,22 @@ enum class CameraMode(val label: String) {
     PHOTO("PHOTO"),
     PORTRAIT("PORTRAIT"),
     NIGHT("NIGHT"),
-    PANORAMA("PANORAMA")
+    PANORAMA("PANORAMA"),
+    AR_LENS("AR LENS")
 }
 
 /**
- * Jetpack Compose Camera Screen with Multi-Mode Carousel (SLOW-MO, VIDEO, PHOTO, PORTRAIT, NIGHT, PANORAMA),
- * Automated CameraX ImageAnalysis Panorama Guidance & Stitching, and Video Pause/Resume.
+ * Jetpack Compose Camera Screen with Multi-Mode Carousel (SLOW-MO, VIDEO, PHOTO, PORTRAIT, NIGHT, PANORAMA, AR LENS),
+ * Automated CameraX ImageAnalysis Panorama Guidance & Stitching, AR Lens Mode (Tap Photo / Hold >=1s Video), and Video Pause/Resume.
  */
 @Composable
 fun CameraXScreen(modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
+    val coroutineScope = rememberCoroutineScope()
 
     var cameraMode by remember { mutableStateOf(CameraMode.PHOTO) }
+    var activeArLens by remember { mutableStateOf("CYBER VISOR") }
     var lensFacing by remember { mutableStateOf(CameraSelector.DEFAULT_BACK_CAMERA) }
 
     // Video Recording States
@@ -162,7 +172,13 @@ fun CameraXScreen(modifier: Modifier = Modifier) {
         val nextCaptureBuilder = ImageCapture.Builder()
             .setCaptureMode(thermalGuard.effectiveCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY))
         policy.maxImageCaptureResolution?.let { capRes ->
-            nextCaptureBuilder.setTargetResolution(capRes)
+            nextCaptureBuilder.setResolutionSelector(
+                ResolutionSelector.Builder()
+                    .setResolutionStrategy(
+                        ResolutionStrategy(capRes, ResolutionStrategy.FALLBACK_RULE_CLOSEST_LOWER_THEN_HIGHER)
+                    )
+                    .build()
+            )
         }
         val nextImageCapture = nextCaptureBuilder.build()
         val nextVideoQuality = thermalGuard.constrainVideoQuality(Quality.HD)
@@ -172,8 +188,19 @@ fun CameraXScreen(modifier: Modifier = Modifier) {
         imageCapture = nextImageCapture
         videoCapture = nextVideoCapture
 
+        val composeAnalysisSize = if (cameraMode == CameraMode.PANORAMA && policy.targetAnalysisResolution.width >= 640) {
+            android.util.Size(1280, 960)
+        } else {
+            policy.targetAnalysisResolution
+        }
         val imageAnalysis = ImageAnalysis.Builder()
-            .setTargetResolution(policy.targetAnalysisResolution)
+            .setResolutionSelector(
+                ResolutionSelector.Builder()
+                    .setResolutionStrategy(
+                        ResolutionStrategy(composeAnalysisSize, ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER)
+                    )
+                    .build()
+            )
             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
             .build()
         val isFront = (lensFacing == CameraSelector.DEFAULT_FRONT_CAMERA)
@@ -184,19 +211,21 @@ fun CameraXScreen(modifier: Modifier = Modifier) {
                 return@setAnalyzer
             }
             if (cameraMode == CameraMode.PANORAMA && isPanoramaCapturing) {
-                val align = panoramaStitcher.analyzeFrame(imageProxy, isFront, 0f)
-                if (align.shouldAutoCapture && panoramaSlices.size < 14) {
-                    val sliceBmp = panoramaStitcher.imageProxyToBitmap(imageProxy, isFront, 960)
+                val align = panoramaStitcher.analyzeFrame(imageProxy, isFront, 0f, 0f)
+                if (align.shouldTriggerAutoCapture && panoramaSlices.size < 14) {
+                    val sliceBmp = panoramaStitcher.imageProxyToBitmap(imageProxy, isFront, 1080)
                     if (sliceBmp != null) {
                         panoramaSlices.add(
                             PanoramaStitcher.PanoramaSlice(
                                 bitmap = sliceBmp,
-                                yawOffsetDeg = align.dxNorm * 110f,
-                                pitchDriftDeg = align.dyNorm * 18f,
-                                stepDxNorm = align.dxNorm
+                                stepDxNorm = align.dxNorm,
+                                stepDyNorm = align.dyNorm,
+                                overlapRatio = align.overlapRatio,
+                                deltaYawDeg = align.deltaYawDeg,
+                                pitchDriftDeg = align.pitchDriftDeg
                             )
                         )
-                        panoramaStitcher.lockCurrentFrameAsAnchor(align.dxNorm * 110f, kotlin.math.abs(align.dxNorm))
+                        panoramaStitcher.lockCurrentFrameAsAnchor(align.deltaYawDeg, kotlin.math.abs(align.dxNorm))
                     }
                 }
                 val count = panoramaSlices.size
@@ -221,11 +250,19 @@ fun CameraXScreen(modifier: Modifier = Modifier) {
         }
 
         provider.unbindAll()
-        val isPhotoStyle = cameraMode != CameraMode.VIDEO && cameraMode != CameraMode.SLOW_MO
-        if (isPhotoStyle) {
-            provider.bindToLifecycle(lifecycleOwner, lensFacing, preview, nextImageCapture, imageAnalysis)
+        if (cameraMode == CameraMode.AR_LENS) {
+            try {
+                provider.bindToLifecycle(lifecycleOwner, lensFacing, preview, nextImageCapture, nextVideoCapture, imageAnalysis)
+            } catch (_: Exception) {
+                provider.bindToLifecycle(lifecycleOwner, lensFacing, preview, nextImageCapture, nextVideoCapture)
+            }
         } else {
-            provider.bindToLifecycle(lifecycleOwner, lensFacing, preview, nextVideoCapture)
+            val isPhotoStyle = cameraMode != CameraMode.VIDEO && cameraMode != CameraMode.SLOW_MO
+            if (isPhotoStyle) {
+                provider.bindToLifecycle(lifecycleOwner, lensFacing, preview, nextImageCapture, imageAnalysis)
+            } else {
+                provider.bindToLifecycle(lifecycleOwner, lensFacing, preview, nextVideoCapture)
+            }
         }
     }
 
@@ -418,7 +455,60 @@ fun CameraXScreen(modifier: Modifier = Modifier) {
             }
         }
 
-        // Mode Switcher Bar (SLOW-MO | VIDEO | PHOTO | PORTRAIT | NIGHT | PANORAMA)
+        // AR Lens Mode Dedicated Dock (Visible when cameraMode == AR_LENS and not actively recording)
+        if (cameraMode == CameraMode.AR_LENS && !isRecording) {
+            Column(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .padding(bottom = 160.dp, start = 16.dp, end = 16.dp)
+                    .background(Color(0xCC0F172A), RoundedCornerShape(14.dp))
+                    .border(1.dp, Color(0x88E879F9), RoundedCornerShape(14.dp))
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "AR LENS: ${activeArLens}",
+                        color = Color(0xFFF0ABFC),
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "TAP PHOTO · HOLD 1S VID",
+                        color = Color(0xFF94A3B8),
+                        fontSize = 9.sp
+                    )
+                }
+                Row(
+                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    listOf("OFF", "3D MESH", "CYBER VISOR", "GOLDEN TIARA", "SCI-FI HUD", "COMIC FRAME").forEach { lensLabel ->
+                        val active = activeArLens == lensLabel
+                        Text(
+                            text = lensLabel,
+                            color = if (active) Color(0xFF0F172A) else Color(0xFFCBD5E1),
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier
+                                .background(
+                                    if (active) Color(0xFFE879F9) else Color(0xFF1E293B),
+                                    RoundedCornerShape(8.dp)
+                                )
+                                .clickable { activeArLens = lensLabel }
+                                .padding(horizontal = 10.dp, vertical = 6.dp)
+                        )
+                    }
+                }
+            }
+        }
+
+        // Mode Switcher Bar (SLOW-MO | VIDEO | PHOTO | PORTRAIT | NIGHT | PANORAMA | AR LENS)
         Row(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
@@ -432,6 +522,7 @@ fun CameraXScreen(modifier: Modifier = Modifier) {
                 Text(
                     text = mode.label,
                     color = when {
+                        isSelected && mode == CameraMode.AR_LENS -> Color(0xFFE879F9)
                         isSelected && mode == CameraMode.PANORAMA -> Color(0xFF38BDF8)
                         isSelected -> Color.White
                         else -> Color.Gray
@@ -480,66 +571,104 @@ fun CameraXScreen(modifier: Modifier = Modifier) {
                 Spacer(modifier = Modifier.size(54.dp))
             }
 
-            // Capture / Record / Panorama Sweep Button
+            // Capture / Record / Panorama Sweep / AR Lens (Tap Photo, Hold >=1s Video) Button
             val isVideoType = (cameraMode == CameraMode.VIDEO || cameraMode == CameraMode.SLOW_MO)
-            IconButton(
-                onClick = {
-                    when (cameraMode) {
-                        CameraMode.PANORAMA -> {
-                            if (!isPanoramaCapturing) {
-                                panoramaStitcher.reset()
-                                panoramaSlices.clear()
-                                panoramaProgress = 0f
-                                panoramaSliceCount = 0
-                                isPanoramaCapturing = true
-                            } else {
-                                isPanoramaCapturing = false
-                                saveStitchedPanoramaCompose(context, panoramaStitcher, panoramaSlices) {
-                                    panoramaProgress = 0f
-                                    panoramaSliceCount = 0
-                                    panoramaGuidance = "READY · TAP TO SWEEP"
+            if (cameraMode == CameraMode.AR_LENS) {
+                Box(
+                    modifier = Modifier
+                        .size(80.dp)
+                        .pointerInput(cameraMode, imageCapture, videoCapture) {
+                            awaitEachGesture {
+                                awaitFirstDown(requireUnconsumed = false)
+                                var startedHoldVideo = false
+                                val holdJob = coroutineScope.launch {
+                                    delay(1000L)
+                                    startedHoldVideo = true
+                                    recordingSession = startVideoRecording(context, videoCapture) {
+                                        isRecording = false
+                                        isPaused = false
+                                    }
+                                    isRecording = true
                                 }
-                            }
-                        }
-                        CameraMode.VIDEO, CameraMode.SLOW_MO -> {
-                            if (isRecording) {
-                                recordingSession?.stop()
-                                recordingSession = null
-                                isRecording = false
-                                isPaused = false
-                            } else {
-                                recordingSession = startVideoRecording(context, videoCapture) {
+                                waitForUpOrCancellation()
+                                holdJob.cancel()
+                                if (startedHoldVideo) {
+                                    recordingSession?.stop()
+                                    recordingSession = null
                                     isRecording = false
                                     isPaused = false
+                                } else {
+                                    capturePhotoToGallery(context, imageCapture)
                                 }
-                                isRecording = true
                             }
                         }
-                        else -> capturePhotoToGallery(context, imageCapture)
-                    }
-                },
-                modifier = Modifier
-                    .size(80.dp)
-                    .border(
-                        4.dp,
-                        when {
-                            cameraMode == CameraMode.PANORAMA -> Color(0xFF38BDF8)
-                            isVideoType -> Color.Red
-                            else -> Color.White
-                        },
-                        CircleShape
-                    )
-                    .padding(6.dp)
-                    .background(
-                        when {
-                            cameraMode == CameraMode.PANORAMA && isPanoramaCapturing -> Color(0xFF38BDF8)
-                            isVideoType -> Color.Red
-                            else -> Color.White
-                        },
-                        if ((isVideoType && isRecording) || (cameraMode == CameraMode.PANORAMA && isPanoramaCapturing))
-                            RoundedCornerShape(8.dp) else CircleShape
-                    )
-            ) {}
+                        .border(4.dp, if (isRecording) Color.Red else Color(0xFFE879F9), CircleShape)
+                        .padding(6.dp)
+                        .background(
+                            if (isRecording) Color.Red else Color.White,
+                            if (isRecording) RoundedCornerShape(8.dp) else CircleShape
+                        )
+                )
+            } else {
+                IconButton(
+                    onClick = {
+                        when (cameraMode) {
+                            CameraMode.PANORAMA -> {
+                                if (!isPanoramaCapturing) {
+                                    panoramaStitcher.reset()
+                                    panoramaSlices.clear()
+                                    panoramaProgress = 0f
+                                    panoramaSliceCount = 0
+                                    isPanoramaCapturing = true
+                                } else {
+                                    isPanoramaCapturing = false
+                                    saveStitchedPanoramaCompose(context, panoramaStitcher, panoramaSlices) {
+                                        panoramaProgress = 0f
+                                        panoramaSliceCount = 0
+                                        panoramaGuidance = "READY · TAP TO SWEEP"
+                                    }
+                                }
+                            }
+                            CameraMode.VIDEO, CameraMode.SLOW_MO -> {
+                                if (isRecording) {
+                                    recordingSession?.stop()
+                                    recordingSession = null
+                                    isRecording = false
+                                    isPaused = false
+                                } else {
+                                    recordingSession = startVideoRecording(context, videoCapture) {
+                                        isRecording = false
+                                        isPaused = false
+                                    }
+                                    isRecording = true
+                                }
+                            }
+                            else -> capturePhotoToGallery(context, imageCapture)
+                        }
+                    },
+                    modifier = Modifier
+                        .size(80.dp)
+                        .border(
+                            4.dp,
+                            when {
+                                cameraMode == CameraMode.PANORAMA -> Color(0xFF38BDF8)
+                                isVideoType -> Color.Red
+                                else -> Color.White
+                            },
+                            CircleShape
+                        )
+                        .padding(6.dp)
+                        .background(
+                            when {
+                                cameraMode == CameraMode.PANORAMA && isPanoramaCapturing -> Color(0xFF38BDF8)
+                                isVideoType -> Color.Red
+                                else -> Color.White
+                            },
+                            if ((isVideoType && isRecording) || (cameraMode == CameraMode.PANORAMA && isPanoramaCapturing))
+                                RoundedCornerShape(8.dp) else CircleShape
+                        )
+                ) {}
+            }
 
             // Lens Switch
             IconButton(

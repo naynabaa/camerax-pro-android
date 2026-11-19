@@ -1108,7 +1108,7 @@ class ProOverlayView @JvmOverloads constructor(
 
         // 4. Draw Real-Time Live Histogram Overlay
         if (showHistogram) {
-            drawHistogram(canvas, widthF, heightF)
+            drawHistogram(canvas, widthF)
         }
 
         // 5. Draw Aspect Ratio Matte Overlays (Cinematic Crop)
@@ -1123,12 +1123,12 @@ class ProOverlayView @JvmOverloads constructor(
 
         // 7. Draw Waveform Monitor (Exposure tracking across vertical screen columns)
         if (showWaveform) {
-            drawWaveformMonitor(canvas, widthF, heightF)
+            drawWaveformMonitor(canvas, heightF)
         }
 
         // 8. Draw Vector Scope (Hue & Saturation with Skin Tone I-Line at 57°)
         if (showVectorScope) {
-            drawVectorScope(canvas, widthF, heightF)
+            drawVectorScope(canvas, widthF)
         }
 
         // 9. Draw Audio Peak VU Meter (Stereo Decibel Bars)
@@ -1143,7 +1143,7 @@ class ProOverlayView @JvmOverloads constructor(
 
         // 11. Draw Live Telemetry Watermark HUD Banner
         if (showWatermark) {
-            drawWatermarkBanner(canvas, widthF, heightF)
+            drawWatermarkBanner(canvas, heightF)
         }
     }
 
@@ -1158,7 +1158,7 @@ class ProOverlayView @JvmOverloads constructor(
         }
     }
 
-    private fun drawWatermarkBanner(canvas: Canvas, w: Float, h: Float) {
+    private fun drawWatermarkBanner(canvas: Canvas, h: Float) {
         val label = watermarkText.ifBlank { "CAMERAX PRO · 4K 60FPS" }
         val textW = watermarkTextPaint.measureText(label)
         val padH = dpToPx(10f)
@@ -1213,7 +1213,7 @@ class ProOverlayView @JvmOverloads constructor(
     /**
      * Real-Time Live Histogram: 256 structural luminance bins plotted with smooth curve
      */
-    private fun drawHistogram(canvas: Canvas, w: Float, h: Float) {
+    private fun drawHistogram(canvas: Canvas, w: Float) {
         val boxWidth = dpToPx(130f)
         val boxHeight = dpToPx(62f)
         val margin = dpToPx(12f)
@@ -1473,7 +1473,7 @@ class ProOverlayView @JvmOverloads constructor(
     /**
      * 7. Waveform Monitor (Real-time brightness graph across vertical screen columns)
      */
-    private fun drawWaveformMonitor(canvas: Canvas, w: Float, h: Float) {
+    private fun drawWaveformMonitor(canvas: Canvas, h: Float) {
         val panelW = dpToPx(180f)
         val panelH = dpToPx(85f)
         val left = dpToPx(12f)
@@ -1543,7 +1543,7 @@ class ProOverlayView @JvmOverloads constructor(
     /**
      * 8. Vector Scope (Circular color graph mapping hue and saturation with Skin Tone I-Line at 57°)
      */
-    private fun drawVectorScope(canvas: Canvas, w: Float, h: Float) {
+    private fun drawVectorScope(canvas: Canvas, w: Float) {
         val size = dpToPx(130f)
         val right = w - dpToPx(12f)
         val top = dpToPx(65f)

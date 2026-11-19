@@ -42,7 +42,8 @@ class ARFaceOverlayView @JvmOverloads constructor(
         CYBERPUNK_VISOR,
         GOLDEN_CROWN,
         SCIFI_HUD,
-        COMIC_FRAME
+        COMIC_FRAME,
+        GLB_3D
     }
 
     var currentLens: ArLensMode = ArLensMode.NONE
@@ -50,6 +51,77 @@ class ARFaceOverlayView @JvmOverloads constructor(
             field = value
             invalidate()
         }
+
+    // Native 3D .glb AR Lens Engine (hardware OpenGL ES 2.0 offscreen renderer)
+    private var glbEngine: GlbArModelEngine? = null
+    private var activeGlbAnchor: String = "forehead"
+    private var activeGlbModelScale: Float = 1.0f
+    private var activeGlbOffsetY: Float = 0f
+    private var activeGlbRotY: Float = 0f
+    private var activeGlbRotX: Float = 0f
+    private var activeGlbAutoSpin: Boolean = true
+    private var activeGlbStartMs: Long = System.currentTimeMillis()
+    @Volatile
+    private var latestGlbBitmap: Bitmap? = null
+    private var lastGlbRenderRequestMs: Long = 0L
+
+    fun loadGlbModelFromAsset(
+        assetPath: String,
+        anchor: String = "forehead",
+        modelScale: Float = 1.0f,
+        offsetY: Float = 0f,
+        rotYDeg: Float = 0f,
+        rotXDeg: Float = 0f,
+        autoSpin: Boolean = true
+    ): Boolean {
+        val engine = glbEngine ?: GlbArModelEngine(context.applicationContext).also { glbEngine = it }
+        activeGlbAnchor = anchor
+        activeGlbModelScale = modelScale.coerceIn(0.25f, 3.0f)
+        activeGlbOffsetY = offsetY.coerceIn(-1.0f, 1.0f)
+        activeGlbRotY = rotYDeg
+        activeGlbRotX = rotXDeg
+        activeGlbAutoSpin = autoSpin
+        activeGlbStartMs = System.currentTimeMillis()
+        latestGlbBitmap = null
+        val ok = engine.loadFromAsset(assetPath)
+        if (ok) {
+            currentLens = ArLensMode.GLB_3D
+            postInvalidateOnAnimation()
+        }
+        return ok
+    }
+
+    fun loadGlbModelFromFile(
+        filePath: String,
+        anchor: String = "forehead",
+        modelScale: Float = 1.0f,
+        offsetY: Float = 0f,
+        rotYDeg: Float = 0f,
+        rotXDeg: Float = 0f,
+        autoSpin: Boolean = true
+    ): Boolean {
+        val engine = glbEngine ?: GlbArModelEngine(context.applicationContext).also { glbEngine = it }
+        activeGlbAnchor = anchor
+        activeGlbModelScale = modelScale.coerceIn(0.25f, 3.0f)
+        activeGlbOffsetY = offsetY.coerceIn(-1.0f, 1.0f)
+        activeGlbRotY = rotYDeg
+        activeGlbRotX = rotXDeg
+        activeGlbAutoSpin = autoSpin
+        activeGlbStartMs = System.currentTimeMillis()
+        latestGlbBitmap = null
+        val ok = engine.loadFromFile(filePath)
+        if (ok) {
+            currentLens = ArLensMode.GLB_3D
+            postInvalidateOnAnimation()
+        }
+        return ok
+    }
+
+    fun releaseGlbEngine() {
+        glbEngine?.release()
+        glbEngine = null
+        latestGlbBitmap = null
+    }
 
     var isCartoonShaderActive: Boolean = false
         set(value) {
@@ -596,7 +668,7 @@ class ARFaceOverlayView @JvmOverloads constructor(
         }
 
         if (!skipFaceLayer && (currentLens != ArLensMode.NONE || showDebugReticle || enableComicOnomatopoeia || enableComicSpeechBubble)) {
-            drawFaceTrackedOverlays(canvas, viewW, viewH)
+            drawFaceTrackedOverlays(canvas, viewW, viewH, syncGlb = !includeSelectionOutline)
         }
 
         if (hasText) {
@@ -735,7 +807,7 @@ class ARFaceOverlayView @JvmOverloads constructor(
         }
     }
 
-    fun drawFaceTrackedOverlays(canvas: Canvas, viewW: Float, viewH: Float) {
+    fun drawFaceTrackedOverlays(canvas: Canvas, viewW: Float, viewH: Float, syncGlb: Boolean = false) {
         if (viewW <= 0f || viewH <= 0f) return
 
         val now = System.currentTimeMillis()
@@ -902,6 +974,9 @@ class ARFaceOverlayView @JvmOverloads constructor(
             }
             ArLensMode.SCIFI_HUD -> {
                 drawSciFiHud(canvas, ::getX, ::getY)
+            }
+            ArLensMode.GLB_3D -> {
+                drawGlb3dModel(canvas, viewW, viewH, cx, cy, ::getX, ::getY, now, syncGlb)
             }
             ArLensMode.COMIC_FRAME, ArLensMode.NONE -> {}
         }
@@ -1467,5 +1542,80 @@ class ARFaceOverlayView @JvmOverloads constructor(
 
         canvas.drawText(label, 0f, fontSize * 0.34f, textPaint)
         canvas.restore()
+    }
+
+    private fun drawGlb3dModel(
+        canvas: Canvas,
+        viewW: Float,
+        viewH: Float,
+        cx: Float,
+        cy: Float,
+        getX: (Int) -> Float,
+        getY: (Int) -> Float,
+        nowMs: Long,
+        syncGlb: Boolean
+    ) {
+        val engine = glbEngine ?: return
+        if (!engine.hasModelLoaded()) return
+
+        val faceW = Math.abs(getX(454) - getX(234)).coerceAtLeast(viewW * 0.24f)
+        val faceH = Math.abs(getY(152) - getY(10)).coerceAtLeast(viewH * 0.24f)
+        val eyeLeftX = getX(33)
+        val eyeLeftY = getY(33)
+        val eyeRightX = getX(263)
+        val eyeRightY = getY(263)
+        val headRollDeg = Math.toDegrees(Math.atan2((eyeRightY - eyeLeftY).toDouble(), (eyeRightX - eyeLeftX).toDouble())).toFloat()
+
+        val anchorX = cx
+        val anchorYBase = when (activeGlbAnchor.lowercase()) {
+            "forehead" -> getY(10) - faceH * 0.12f
+            "eyes" -> (eyeLeftY + eyeRightY) * 0.5f
+            "nose_cheeks" -> getY(1)
+            "mouth" -> (getY(1) + getY(152)) * 0.52f
+            else -> cy
+        }
+        val anchorY = anchorYBase + activeGlbOffsetY * faceH * 0.55f
+        val baseAnchorScale = when (activeGlbAnchor.lowercase()) {
+            "forehead" -> 1.05f
+            "eyes" -> 0.92f
+            "nose_cheeks" -> 0.74f
+            "mouth" -> 0.78f
+            else -> 1.30f
+        }
+
+        val elapsedSec = ((nowMs - activeGlbStartMs).coerceAtLeast(0L)) / 1000f
+        val idleYaw = if (activeGlbAutoSpin) elapsedSec * 38f else (Math.sin(elapsedSec * 1.4).toFloat() * 10f)
+
+        val renderW = (viewW.toInt()).coerceIn(256, 720)
+        val renderH = (viewH.toInt()).coerceIn(256, 960)
+        val pose = GlbArModelEngine.GlbPose(
+            normAnchorX = (anchorX / viewW).coerceIn(0.05f, 0.95f),
+            normAnchorY = (anchorY / viewH).coerceIn(0.05f, 0.95f),
+            normFaceWidth = (faceW / viewW).coerceIn(0.12f, 1.4f),
+            modelScale = baseAnchorScale * activeGlbModelScale,
+            yawDeg = activeGlbRotY + idleYaw,
+            pitchDeg = activeGlbRotX,
+            rollDeg = -(headRollDeg + calibrationRotationDeg)
+        )
+
+        val bmp: Bitmap? = if (syncGlb) {
+            engine.renderSync(renderW, renderH, pose)
+        } else {
+            if (nowMs - lastGlbRenderRequestMs >= 30L) {
+                lastGlbRenderRequestMs = nowMs
+                engine.renderAsync(renderW, renderH, pose) { rendered ->
+                    latestGlbBitmap = rendered
+                    postInvalidateOnAnimation()
+                }
+            }
+            latestGlbBitmap ?: engine.renderSync(renderW, renderH, pose)?.also { latestGlbBitmap = it }
+        }
+
+        if (bmp != null && !bmp.isRecycled) {
+            canvas.drawBitmap(bmp, null, RectF(0f, 0f, viewW, viewH), null)
+        }
+        if (!syncGlb) {
+            postInvalidateOnAnimation()
+        }
     }
 }

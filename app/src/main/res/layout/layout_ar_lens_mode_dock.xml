@@ -1,0 +1,565 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/layoutArLensModeDockRoot"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginHorizontal="12dp"
+    android:layout_marginBottom="146dp"
+    android:background="@drawable/bg_pro_drawer"
+    android:orientation="vertical"
+    android:paddingHorizontal="10dp"
+    android:paddingVertical="8dp"
+    android:elevation="24dp"
+    android:visibility="gone">
+
+    <!-- AR Lens Mode Dock Sub-Tab Bar + Calibrate & Status -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:layout_marginBottom="6dp">
+
+        <HorizontalScrollView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:scrollbars="none">
+
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_tabs_bar"
+                android:orientation="horizontal"
+                android:padding="2dp">
+
+                <TextView
+                    android:id="@+id/tabArDockLenses"
+                    android:layout_width="wrap_content"
+                    android:layout_height="26dp"
+                    android:paddingHorizontal="8dp"
+                    android:gravity="center"
+                    android:text="LENSES"
+                    android:textColor="#0F172A"
+                    android:textSize="9sp"
+                    android:textStyle="bold"
+                    android:fontFamily="monospace"
+                    android:background="@drawable/bg_cinema_button_active" />
+
+                <TextView
+                    android:id="@+id/tabArDockAdjust"
+                    android:layout_width="wrap_content"
+                    android:layout_height="26dp"
+                    android:layout_marginStart="2dp"
+                    android:paddingHorizontal="8dp"
+                    android:gravity="center"
+                    android:text="ADJUST"
+                    android:textColor="#94A3B8"
+                    android:textSize="9sp"
+                    android:fontFamily="monospace"
+                    android:background="@drawable/bg_cinema_button_inactive" />
+
+                <TextView
+                    android:id="@+id/tabArDockComicText"
+                    android:layout_width="wrap_content"
+                    android:layout_height="26dp"
+                    android:layout_marginStart="2dp"
+                    android:paddingHorizontal="8dp"
+                    android:gravity="center"
+                    android:text="TEXT &amp; SFX"
+                    android:textColor="#94A3B8"
+                    android:textSize="9sp"
+                    android:fontFamily="monospace"
+                    android:background="@drawable/bg_cinema_button_inactive" />
+            </LinearLayout>
+        </HorizontalScrollView>
+
+        <TextView
+            android:id="@+id/btnArCalibrate"
+            android:layout_width="wrap_content"
+            android:layout_height="26dp"
+            android:layout_marginStart="6dp"
+            android:paddingHorizontal="8dp"
+            android:gravity="center"
+            android:text="CALIB"
+            android:textColor="#38BDF8"
+            android:textSize="9sp"
+            android:textStyle="bold"
+            android:fontFamily="monospace"
+            android:background="@drawable/bg_cinema_button_inactive" />
+
+        <TextView
+            android:id="@+id/btnArDockToggle"
+            android:layout_width="28dp"
+            android:layout_height="26dp"
+            android:layout_marginStart="4dp"
+            android:gravity="center"
+            android:text="v"
+            android:textColor="#94A3B8"
+            android:textSize="10sp"
+            android:textStyle="bold"
+            android:fontFamily="monospace"
+            android:background="@drawable/bg_cinema_button_inactive" />
+    </LinearLayout>
+
+    <!-- Active Lens Readout + Shutter Hint -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:layout_marginBottom="6dp">
+
+        <TextView
+            android:id="@+id/tvArDockStatus"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="AR LENS: CYBERPUNK VISOR"
+            android:textColor="#E879F9"
+            android:textSize="9.5sp"
+            android:textStyle="bold"
+            android:fontFamily="monospace"
+            android:singleLine="true"
+            android:ellipsize="end" />
+
+        <TextView
+            android:id="@+id/tvArShutterHint"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:text="TAP PHOTO · HOLD 1S VID"
+            android:textColor="#94A3B8"
+            android:textSize="8.5sp"
+            android:fontFamily="monospace" />
+    </LinearLayout>
+
+    <!-- Collapsible Content Body -->
+    <FrameLayout
+        android:id="@+id/layoutArDockBody"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content">
+
+        <!-- Panel 1: AR Lenses Horizontal Scroll Strip -->
+        <HorizontalScrollView
+            android:id="@+id/scrollArModeLensesStrip"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:scrollbars="none"
+            android:visibility="visible">
+
+            <LinearLayout
+                android:id="@+id/layoutArModeLensesContainer"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <TextView
+                    android:id="@+id/btnArNone"
+                    android:layout_width="wrap_content"
+                    android:minWidth="64dp"
+                    android:layout_height="36dp"
+                    android:paddingHorizontal="12dp"
+                    android:gravity="center"
+                    android:text="OFF"
+                    android:textColor="#94A3B8"
+                    android:textSize="10sp"
+                    android:fontFamily="monospace"
+                    android:background="@drawable/bg_cinema_button_inactive" />
+
+                <TextView
+                    android:id="@+id/btnArMesh"
+                    android:layout_width="wrap_content"
+                    android:minWidth="76dp"
+                    android:layout_height="36dp"
+                    android:layout_marginStart="6dp"
+                    android:paddingHorizontal="12dp"
+                    android:gravity="center"
+                    android:text="3D MESH"
+                    android:textColor="#94A3B8"
+                    android:textSize="10sp"
+                    android:fontFamily="monospace"
+                    android:background="@drawable/bg_cinema_button_inactive" />
+
+                <TextView
+                    android:id="@+id/btnArVisor"
+                    android:layout_width="wrap_content"
+                    android:minWidth="76dp"
+                    android:layout_height="36dp"
+                    android:layout_marginStart="6dp"
+                    android:paddingHorizontal="12dp"
+                    android:gravity="center"
+                    android:text="CYBER"
+                    android:textColor="#0F172A"
+                    android:textStyle="bold"
+                    android:textSize="10sp"
+                    android:fontFamily="monospace"
+                    android:background="@drawable/bg_cinema_button_active" />
+
+                <TextView
+                    android:id="@+id/btnArCrown"
+                    android:layout_width="wrap_content"
+                    android:minWidth="76dp"
+                    android:layout_height="36dp"
+                    android:layout_marginStart="6dp"
+                    android:paddingHorizontal="12dp"
+                    android:gravity="center"
+                    android:text="TIARA"
+                    android:textColor="#94A3B8"
+                    android:textSize="10sp"
+                    android:fontFamily="monospace"
+                    android:background="@drawable/bg_cinema_button_inactive" />
+
+                <TextView
+                    android:id="@+id/btnArHud"
+                    android:layout_width="wrap_content"
+                    android:minWidth="72dp"
+                    android:layout_height="36dp"
+                    android:layout_marginStart="6dp"
+                    android:paddingHorizontal="12dp"
+                    android:gravity="center"
+                    android:text="HUD"
+                    android:textColor="#94A3B8"
+                    android:textSize="10sp"
+                    android:fontFamily="monospace"
+                    android:background="@drawable/bg_cinema_button_inactive" />
+
+                <TextView
+                    android:id="@+id/btnArComicFrame"
+                    android:layout_width="wrap_content"
+                    android:minWidth="92dp"
+                    android:layout_height="36dp"
+                    android:layout_marginStart="6dp"
+                    android:paddingHorizontal="12dp"
+                    android:gravity="center"
+                    android:text="COMIC FRAME"
+                    android:textColor="#94A3B8"
+                    android:textSize="10sp"
+                    android:fontFamily="monospace"
+                    android:background="@drawable/bg_cinema_button_inactive" />
+
+                <TextView
+                    android:id="@+id/btnArImportGlb"
+                    android:layout_width="wrap_content"
+                    android:minWidth="84dp"
+                    android:layout_height="36dp"
+                    android:layout_marginStart="6dp"
+                    android:paddingHorizontal="12dp"
+                    android:gravity="center"
+                    android:text="+ .GLB"
+                    android:textColor="#34D399"
+                    android:textStyle="bold"
+                    android:textSize="10sp"
+                    android:fontFamily="monospace"
+                    android:background="@drawable/bg_cinema_button_inactive" />
+
+                <TextView
+                    android:id="@+id/btnArBatch"
+                    android:layout_width="wrap_content"
+                    android:minWidth="88dp"
+                    android:layout_height="36dp"
+                    android:layout_marginStart="6dp"
+                    android:paddingHorizontal="12dp"
+                    android:gravity="center"
+                    android:text="BATCH: OFF"
+                    android:textColor="#94A3B8"
+                    android:textSize="10sp"
+                    android:fontFamily="monospace"
+                    android:background="@drawable/bg_cinema_button_inactive" />
+            </LinearLayout>
+        </HorizontalScrollView>
+
+        <!-- Panel 2: Live AR Parameter Adjustment Sliders -->
+        <LinearLayout
+            android:id="@+id/layoutArModeAdjustPanel"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <!-- Scale -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <TextView
+                    android:layout_width="54dp"
+                    android:layout_height="wrap_content"
+                    android:text="SCALE"
+                    android:textColor="#CBD5E1"
+                    android:textSize="9sp"
+                    android:fontFamily="monospace"
+                    android:textStyle="bold" />
+
+                <SeekBar
+                    android:id="@+id/sbArDockScale"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:max="100"
+                    android:progress="50"
+                    android:progressTint="#E879F9"
+                    android:thumbTint="#E879F9" />
+
+                <TextView
+                    android:id="@+id/tvArDockScaleVal"
+                    android:layout_width="42dp"
+                    android:layout_height="wrap_content"
+                    android:gravity="end"
+                    android:text="1.00x"
+                    android:textColor="#F0ABFC"
+                    android:textSize="9sp"
+                    android:fontFamily="monospace" />
+            </LinearLayout>
+
+            <!-- Offset X -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <TextView
+                    android:layout_width="54dp"
+                    android:layout_height="wrap_content"
+                    android:text="OFFSET X"
+                    android:textColor="#CBD5E1"
+                    android:textSize="9sp"
+                    android:fontFamily="monospace"
+                    android:textStyle="bold" />
+
+                <SeekBar
+                    android:id="@+id/sbArDockOffsetX"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:max="100"
+                    android:progress="50"
+                    android:progressTint="#38BDF8"
+                    android:thumbTint="#38BDF8" />
+
+                <TextView
+                    android:id="@+id/tvArDockOffsetXVal"
+                    android:layout_width="42dp"
+                    android:layout_height="wrap_content"
+                    android:gravity="end"
+                    android:text="0"
+                    android:textColor="#7DD3FC"
+                    android:textSize="9sp"
+                    android:fontFamily="monospace" />
+            </LinearLayout>
+
+            <!-- Offset Y -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <TextView
+                    android:layout_width="54dp"
+                    android:layout_height="wrap_content"
+                    android:text="OFFSET Y"
+                    android:textColor="#CBD5E1"
+                    android:textSize="9sp"
+                    android:fontFamily="monospace"
+                    android:textStyle="bold" />
+
+                <SeekBar
+                    android:id="@+id/sbArDockOffsetY"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:max="100"
+                    android:progress="50"
+                    android:progressTint="#38BDF8"
+                    android:thumbTint="#38BDF8" />
+
+                <TextView
+                    android:id="@+id/tvArDockOffsetYVal"
+                    android:layout_width="42dp"
+                    android:layout_height="wrap_content"
+                    android:gravity="end"
+                    android:text="0"
+                    android:textColor="#7DD3FC"
+                    android:textSize="9sp"
+                    android:fontFamily="monospace" />
+            </LinearLayout>
+
+            <!-- Tilt / Rotation -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <TextView
+                    android:layout_width="54dp"
+                    android:layout_height="wrap_content"
+                    android:text="TILT"
+                    android:textColor="#CBD5E1"
+                    android:textSize="9sp"
+                    android:fontFamily="monospace"
+                    android:textStyle="bold" />
+
+                <SeekBar
+                    android:id="@+id/sbArDockRotation"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:max="90"
+                    android:progress="45"
+                    android:progressTint="#34D399"
+                    android:thumbTint="#34D399" />
+
+                <TextView
+                    android:id="@+id/tvArDockRotationVal"
+                    android:layout_width="42dp"
+                    android:layout_height="wrap_content"
+                    android:gravity="end"
+                    android:text="0°"
+                    android:textColor="#6EE7B7"
+                    android:textSize="9sp"
+                    android:fontFamily="monospace" />
+            </LinearLayout>
+
+            <!-- Mesh Debug + Reset Row -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="468 MESH"
+                    android:textColor="#94A3B8"
+                    android:textSize="9sp"
+                    android:fontFamily="monospace"
+                    android:textStyle="bold" />
+
+                <androidx.appcompat.widget.SwitchCompat
+                    android:id="@+id/switchArDockMeshDebug"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="6dp"
+                    app:thumbTint="#E879F9"
+                    app:trackTint="#475569" />
+
+                <View
+                    android:layout_width="0dp"
+                    android:layout_height="1dp"
+                    android:layout_weight="1" />
+
+                <TextView
+                    android:id="@+id/btnArDockReset"
+                    android:layout_width="wrap_content"
+                    android:layout_height="26dp"
+                    android:paddingHorizontal="10dp"
+                    android:gravity="center"
+                    android:text="RESET AR"
+                    android:textColor="#FDA4AF"
+                    android:textSize="9sp"
+                    android:textStyle="bold"
+                    android:fontFamily="monospace"
+                    android:background="@drawable/bg_cinema_button_inactive" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- Panel 3: AR Text Studio & Comic SFX Controls -->
+        <LinearLayout
+            android:id="@+id/layoutArModeComicTextPanel"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <TextView
+                    android:id="@+id/btnArTextStudio"
+                    android:layout_width="0dp"
+                    android:layout_height="34dp"
+                    android:layout_weight="1"
+                    android:gravity="center"
+                    android:text="Aa AR TEXT STUDIO"
+                    android:textColor="#34D399"
+                    android:textSize="10sp"
+                    android:textStyle="bold"
+                    android:fontFamily="monospace"
+                    android:background="@drawable/bg_cinema_button_inactive" />
+
+                <TextView
+                    android:id="@+id/btnArComicOnomatopoeia"
+                    android:layout_width="0dp"
+                    android:layout_height="34dp"
+                    android:layout_weight="1"
+                    android:layout_marginStart="6dp"
+                    android:gravity="center"
+                    android:text="POW! COMIC SFX"
+                    android:textColor="#FACC15"
+                    android:textSize="10sp"
+                    android:textStyle="bold"
+                    android:fontFamily="monospace"
+                    android:background="@drawable/bg_cinema_button_inactive" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="SPEECH BUBBLE"
+                    android:textColor="#CBD5E1"
+                    android:textSize="9sp"
+                    android:fontFamily="monospace" />
+
+                <androidx.appcompat.widget.SwitchCompat
+                    android:id="@+id/switchArDockBubble"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="4dp"
+                    app:thumbTint="#FACC15"
+                    app:trackTint="#475569" />
+
+                <View
+                    android:layout_width="0dp"
+                    android:layout_height="1dp"
+                    android:layout_weight="1" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="AUTO-ADAPT"
+                    android:textColor="#CBD5E1"
+                    android:textSize="9sp"
+                    android:fontFamily="monospace" />
+
+                <androidx.appcompat.widget.SwitchCompat
+                    android:id="@+id/switchArDockAutoAdapt"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="4dp"
+                    android:checked="true"
+                    app:thumbTint="#38BDF8"
+                    app:trackTint="#475569" />
+            </LinearLayout>
+        </LinearLayout>
+    </FrameLayout>
+</LinearLayout>

@@ -82,6 +82,7 @@ class FilterManager(private val context: Context) {
 
     private val gpuImage = GPUImage(context)
     private val toonGpuImage = GPUImage(context)
+    private var cachedComicFilter: GPUImageComicBookFilter? = null
     private var currentPreset = FilterPreset.NORMAL
     var halftoneDensity: Float = 1.0f
     var halftoneDotSize: Float = 1.0f
@@ -90,6 +91,10 @@ class FilterManager(private val context: Context) {
     fun setComicHalftoneParams(density: Float, dotSize: Float) {
         halftoneDensity = density.coerceIn(0.4f, 2.2f)
         halftoneDotSize = dotSize.coerceIn(0.3f, 1.8f)
+        cachedComicFilter?.let {
+            it.halftoneDensity = halftoneDensity
+            it.halftoneDotSize = halftoneDotSize
+        }
         if (currentPreset == FilterPreset.COMIC_BOOK) {
             gpuImage.setFilter(buildActiveFilterGroup())
         }
@@ -133,6 +138,36 @@ class FilterManager(private val context: Context) {
         private var progSobel = 0
         private var progComposite = 0
 
+        // Cached attribute & uniform locations (avoid per-frame JNI lookups)
+        private var locBilatHPos = -1
+        private var locBilatHTex = -1
+        private var locBilatHInputTex = -1
+        private var locBilatHStep = -1
+
+        private var locBilatVPos = -1
+        private var locBilatVTex = -1
+        private var locBilatVInputTex = -1
+        private var locBilatVStep = -1
+
+        private var locSobelPos = -1
+        private var locSobelTex = -1
+        private var locSobelInputTex = -1
+        private var locSobelTexelSize = -1
+
+        private var locCompPos = -1
+        private var locCompTex = -1
+        private var locCompOrigTexCoord = -1
+        private var locCompSmoothedTex = -1
+        private var locCompEdgeTex = -1
+        private var locCompOrigTex = -1
+        private var locCompStyleMode = -1
+        private var locCompQuantizeLevels = -1
+        private var locCompEdgeThreshold = -1
+        private var locCompIntensity = -1
+        private var locCompHalftoneDensity = -1
+        private var locCompHalftoneDotSize = -1
+        private var locCompResolution = -1
+
         private val identityCubeCoords = floatArrayOf(
             -1f, -1f,
              1f, -1f,
@@ -153,9 +188,37 @@ class FilterManager(private val context: Context) {
         override fun onInit() {
             super.onInit()
             progBilatH = buildProgram(PASS_VS, BILATERAL_SHADER)
+            locBilatHPos = GLES20.glGetAttribLocation(progBilatH, "position")
+            locBilatHTex = GLES20.glGetAttribLocation(progBilatH, "inputTextureCoordinate")
+            locBilatHInputTex = GLES20.glGetUniformLocation(progBilatH, "inputImageTexture")
+            locBilatHStep = GLES20.glGetUniformLocation(progBilatH, "uTexelStep")
+
             progBilatV = buildProgram(PASS_VS, BILATERAL_SHADER)
+            locBilatVPos = GLES20.glGetAttribLocation(progBilatV, "position")
+            locBilatVTex = GLES20.glGetAttribLocation(progBilatV, "inputTextureCoordinate")
+            locBilatVInputTex = GLES20.glGetUniformLocation(progBilatV, "inputImageTexture")
+            locBilatVStep = GLES20.glGetUniformLocation(progBilatV, "uTexelStep")
+
             progSobel = buildProgram(PASS_VS, SOBEL_MULTIPASS_SHADER)
+            locSobelPos = GLES20.glGetAttribLocation(progSobel, "position")
+            locSobelTex = GLES20.glGetAttribLocation(progSobel, "inputTextureCoordinate")
+            locSobelInputTex = GLES20.glGetUniformLocation(progSobel, "inputImageTexture")
+            locSobelTexelSize = GLES20.glGetUniformLocation(progSobel, "uTexelSize")
+
             progComposite = buildProgram(COMPOSITE_VS, COMIC_COMPOSITE_SHADER)
+            locCompPos = GLES20.glGetAttribLocation(progComposite, "position")
+            locCompTex = GLES20.glGetAttribLocation(progComposite, "inputTextureCoordinate")
+            locCompOrigTexCoord = GLES20.glGetAttribLocation(progComposite, "origTextureCoordinate")
+            locCompSmoothedTex = GLES20.glGetUniformLocation(progComposite, "smoothedTexture")
+            locCompEdgeTex = GLES20.glGetUniformLocation(progComposite, "edgeTexture")
+            locCompOrigTex = GLES20.glGetUniformLocation(progComposite, "origTexture")
+            locCompStyleMode = GLES20.glGetUniformLocation(progComposite, "uStyleMode")
+            locCompQuantizeLevels = GLES20.glGetUniformLocation(progComposite, "uQuantizeLevels")
+            locCompEdgeThreshold = GLES20.glGetUniformLocation(progComposite, "uEdgeThreshold")
+            locCompIntensity = GLES20.glGetUniformLocation(progComposite, "uIntensity")
+            locCompHalftoneDensity = GLES20.glGetUniformLocation(progComposite, "uHalftoneDensity")
+            locCompHalftoneDotSize = GLES20.glGetUniformLocation(progComposite, "uHalftoneDotSize")
+            locCompResolution = GLES20.glGetUniformLocation(progComposite, "uResolution")
         }
 
         override fun onOutputSizeChanged(width: Int, height: Int) {
@@ -202,28 +265,30 @@ class FilterManager(private val context: Context) {
 
             val texelX = 1.0f / fboWidth.toFloat()
             val texelY = 1.0f / fboHeight.toFloat()
+            // Normalize filter kernel radius relative to 720p so high-res photo saves & live previews stay crisp
+            val scaleStep = (Math.min(fboWidth, fboHeight).toFloat() / 720f).coerceIn(0.85f, 3.6f)
 
             GLES20.glViewport(0, 0, fboWidth, fboHeight)
 
             // PASS 1: Horizontal 9-tap Bilateral Color Flattening (input -> FBO 0)
             GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, fboIds[0])
             GLES20.glUseProgram(progBilatH)
-            drawTexturedQuad(progBilatH, textureId, identityCubeBuffer, textureBuffer)
-            GLES20.glUniform2f(GLES20.glGetUniformLocation(progBilatH, "uTexelStep"), texelX * 1.45f, 0.0f)
+            drawTexturedQuad(locBilatHPos, locBilatHTex, locBilatHInputTex, textureId, identityCubeBuffer, textureBuffer)
+            GLES20.glUniform2f(locBilatHStep, texelX * 1.45f * scaleStep, 0.0f)
             GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
 
             // PASS 2: Vertical 9-tap Bilateral Color Flattening (FBO 0 -> FBO 1)
             GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, fboIds[1])
             GLES20.glUseProgram(progBilatV)
-            drawTexturedQuad(progBilatV, fboTextures[0], identityCubeBuffer, identityTexBuffer)
-            GLES20.glUniform2f(GLES20.glGetUniformLocation(progBilatV, "uTexelStep"), 0.0f, texelY * 1.45f)
+            drawTexturedQuad(locBilatVPos, locBilatVTex, locBilatVInputTex, fboTextures[0], identityCubeBuffer, identityTexBuffer)
+            GLES20.glUniform2f(locBilatVStep, 0.0f, texelY * 1.45f * scaleStep)
             GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
 
             // PASS 3: Dual-Scale 3x3 Sobel Edge Detection on Flattened Image (FBO 1 -> FBO 2)
             GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, fboIds[2])
             GLES20.glUseProgram(progSobel)
-            drawTexturedQuad(progSobel, fboTextures[1], identityCubeBuffer, identityTexBuffer)
-            GLES20.glUniform2f(GLES20.glGetUniformLocation(progSobel, "uTexelSize"), texelX, texelY)
+            drawTexturedQuad(locSobelPos, locSobelTex, locSobelInputTex, fboTextures[1], identityCubeBuffer, identityTexBuffer)
+            GLES20.glUniform2f(locSobelTexelSize, texelX * scaleStep, texelY * scaleStep)
             GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
 
             // PASS 4: Quantized Color Banding + Comic Ink Composite (FBO 1 + FBO 2 + Orig -> prevFbo)
@@ -231,63 +296,59 @@ class FilterManager(private val context: Context) {
             GLES20.glViewport(prevViewport[0], prevViewport[1], prevViewport[2], prevViewport[3])
             GLES20.glUseProgram(progComposite)
 
-            val posLoc = GLES20.glGetAttribLocation(progComposite, "position")
-            val texLoc = GLES20.glGetAttribLocation(progComposite, "inputTextureCoordinate")
-            val origTexLoc = GLES20.glGetAttribLocation(progComposite, "origTextureCoordinate")
-
             cubeBuffer.position(0)
-            GLES20.glVertexAttribPointer(posLoc, 2, GLES20.GL_FLOAT, false, 0, cubeBuffer)
-            GLES20.glEnableVertexAttribArray(posLoc)
+            GLES20.glVertexAttribPointer(locCompPos, 2, GLES20.GL_FLOAT, false, 0, cubeBuffer)
+            GLES20.glEnableVertexAttribArray(locCompPos)
 
             identityTexBuffer.position(0)
-            GLES20.glVertexAttribPointer(texLoc, 2, GLES20.GL_FLOAT, false, 0, identityTexBuffer)
-            GLES20.glEnableVertexAttribArray(texLoc)
+            GLES20.glVertexAttribPointer(locCompTex, 2, GLES20.GL_FLOAT, false, 0, identityTexBuffer)
+            GLES20.glEnableVertexAttribArray(locCompTex)
 
             textureBuffer.position(0)
-            GLES20.glVertexAttribPointer(origTexLoc, 2, GLES20.GL_FLOAT, false, 0, textureBuffer)
-            GLES20.glEnableVertexAttribArray(origTexLoc)
+            GLES20.glVertexAttribPointer(locCompOrigTexCoord, 2, GLES20.GL_FLOAT, false, 0, textureBuffer)
+            GLES20.glEnableVertexAttribArray(locCompOrigTexCoord)
 
             GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
             GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, fboTextures[1])
-            GLES20.glUniform1i(GLES20.glGetUniformLocation(progComposite, "smoothedTexture"), 0)
+            GLES20.glUniform1i(locCompSmoothedTex, 0)
 
             GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
             GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, fboTextures[2])
-            GLES20.glUniform1i(GLES20.glGetUniformLocation(progComposite, "edgeTexture"), 1)
+            GLES20.glUniform1i(locCompEdgeTex, 1)
 
             GLES20.glActiveTexture(GLES20.GL_TEXTURE2)
             GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, textureId)
-            GLES20.glUniform1i(GLES20.glGetUniformLocation(progComposite, "origTexture"), 2)
+            GLES20.glUniform1i(locCompOrigTex, 2)
 
-            GLES20.glUniform1i(GLES20.glGetUniformLocation(progComposite, "uStyleMode"), style.modeId)
-            GLES20.glUniform1f(GLES20.glGetUniformLocation(progComposite, "uQuantizeLevels"), quantizeLevels)
-            GLES20.glUniform1f(GLES20.glGetUniformLocation(progComposite, "uEdgeThreshold"), edgeThreshold)
-            GLES20.glUniform1f(GLES20.glGetUniformLocation(progComposite, "uIntensity"), intensity)
-            GLES20.glUniform1f(GLES20.glGetUniformLocation(progComposite, "uHalftoneDensity"), halftoneDensity)
-            GLES20.glUniform1f(GLES20.glGetUniformLocation(progComposite, "uHalftoneDotSize"), halftoneDotSize)
+            GLES20.glUniform1i(locCompStyleMode, style.modeId)
+            GLES20.glUniform1f(locCompQuantizeLevels, quantizeLevels)
+            GLES20.glUniform1f(locCompEdgeThreshold, edgeThreshold)
+            GLES20.glUniform1f(locCompIntensity, intensity)
+            GLES20.glUniform1f(locCompHalftoneDensity, halftoneDensity)
+            GLES20.glUniform1f(locCompHalftoneDotSize, halftoneDotSize)
             GLES20.glUniform2f(
-                GLES20.glGetUniformLocation(progComposite, "uResolution"),
+                locCompResolution,
                 fboWidth.toFloat(),
                 fboHeight.toFloat()
             )
 
             GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
 
-            GLES20.glDisableVertexAttribArray(posLoc)
-            GLES20.glDisableVertexAttribArray(texLoc)
-            GLES20.glDisableVertexAttribArray(origTexLoc)
+            GLES20.glDisableVertexAttribArray(locCompPos)
+            GLES20.glDisableVertexAttribArray(locCompTex)
+            GLES20.glDisableVertexAttribArray(locCompOrigTexCoord)
             GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
             GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, 0)
         }
 
         private fun drawTexturedQuad(
-            prog: Int,
+            posLoc: Int,
+            texLoc: Int,
+            samplerLoc: Int,
             texId: Int,
             cubeBuf: FloatBuffer,
             texBuf: FloatBuffer
         ) {
-            val posLoc = GLES20.glGetAttribLocation(prog, "position")
-            val texLoc = GLES20.glGetAttribLocation(prog, "inputTextureCoordinate")
             cubeBuf.position(0)
             GLES20.glVertexAttribPointer(posLoc, 2, GLES20.GL_FLOAT, false, 0, cubeBuf)
             GLES20.glEnableVertexAttribArray(posLoc)
@@ -296,7 +357,7 @@ class FilterManager(private val context: Context) {
             GLES20.glEnableVertexAttribArray(texLoc)
             GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
             GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, texId)
-            GLES20.glUniform1i(GLES20.glGetUniformLocation(prog, "inputImageTexture"), 0)
+            GLES20.glUniform1i(samplerLoc, 0)
         }
 
         override fun onDestroy() {
@@ -916,10 +977,14 @@ class FilterManager(private val context: Context) {
             return sourceBitmap
         }
 
-        val filterGroup = buildActiveFilterGroup()
-        gpuImage.setImage(sourceBitmap)
-        gpuImage.setFilter(filterGroup)
-        return gpuImage.bitmapWithFilterApplied
+        return try {
+            val filterGroup = buildActiveFilterGroup()
+            gpuImage.setImage(sourceBitmap)
+            gpuImage.setFilter(filterGroup)
+            gpuImage.bitmapWithFilterApplied ?: sourceBitmap
+        } catch (_: Throwable) {
+            sourceBitmap
+        }
     }
 
     /**
@@ -951,16 +1016,20 @@ class FilterManager(private val context: Context) {
             else -> 0.17f
         }
         return try {
-            val comicFilter = GPUImageComicBookFilter(
-                style = style,
-                quantizeLevels = levels,
-                edgeThreshold = threshold,
-                intensity = intensity.coerceIn(0f, 1f),
-                halftoneDensity = halftoneDensity,
-                halftoneDotSize = halftoneDotSize
-            )
+            val needSetFilter = (cachedComicFilter == null)
+            val comicFilter = cachedComicFilter ?: GPUImageComicBookFilter().also {
+                cachedComicFilter = it
+            }
+            comicFilter.style = style
+            comicFilter.quantizeLevels = levels
+            comicFilter.edgeThreshold = threshold
+            comicFilter.intensity = intensity.coerceIn(0f, 1f)
+            comicFilter.halftoneDensity = halftoneDensity
+            comicFilter.halftoneDotSize = halftoneDotSize
+            if (needSetFilter) {
+                toonGpuImage.setFilter(comicFilter)
+            }
             toonGpuImage.setImage(sourceBitmap)
-            toonGpuImage.setFilter(comicFilter)
             toonGpuImage.bitmapWithFilterApplied
         } catch (_: Throwable) {
             null

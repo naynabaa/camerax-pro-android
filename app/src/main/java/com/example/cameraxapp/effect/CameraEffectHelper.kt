@@ -37,10 +37,10 @@ class CameraEffectHelper(private val context: Context) {
     ): CameraEffect {
         val processor = object : androidx.camera.core.SurfaceProcessor {
             override fun onInputSurface(surfaceRequest: androidx.camera.core.SurfaceRequest) {
-                Log.d("CameraEffectHelper", "Custom effect input surface attached")
+                Log.d("CameraEffectHelper", "Custom effect input surface attached (${config.text})")
             }
             override fun onOutputSurface(surfaceOutput: androidx.camera.core.SurfaceOutput) {
-                Log.d("CameraEffectHelper", "Custom effect output surface attached")
+                Log.d("CameraEffectHelper", "Custom effect output surface attached (letterbox=${config.isLetterboxEnabled}, color=${config.primaryColor})")
             }
         }
         return object : CameraEffect(

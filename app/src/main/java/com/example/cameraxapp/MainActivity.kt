@@ -73,6 +73,8 @@ import androidx.camera.core.CameraEffect
 import androidx.camera.core.ConcurrentCamera
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.UseCaseGroup
+import androidx.camera.core.resolutionselector.ResolutionSelector
+import androidx.camera.core.resolutionselector.ResolutionStrategy
 import androidx.camera.extensions.ExtensionMode
 import androidx.camera.extensions.ExtensionsManager
 import androidx.camera.video.Recorder
@@ -101,10 +103,16 @@ import com.example.cameraxapp.ar.ARFaceOverlayView
 import com.example.cameraxapp.audio.ComicSoundEffectsHelper
 import com.example.cameraxapp.font.CameraFontHelper
 import com.google.mediapipe.tasks.vision.facelandmarker.FaceLandmarkerResult
+import android.provider.OpenableColumns
+import java.io.File
+import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.util.Locale
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import org.json.JSONArray
+import org.json.JSONObject
+import kotlin.math.roundToInt
 
 /**
  * CameraX Production Camera Activity with Pro Mode & Video Recording
@@ -125,7 +133,7 @@ import java.util.concurrent.Executors
  */
 class MainActivity : AppCompatActivity() {
 
-    enum class CameraMode { SLOW_MO, VIDEO, PHOTO, PORTRAIT, NIGHT, PANORAMA }
+    enum class CameraMode { SLOW_MO, VIDEO, PHOTO, PORTRAIT, NIGHT, PANORAMA, AR_LENS }
 
     private lateinit var viewBinding: ActivityMainBinding
 
@@ -155,6 +163,8 @@ class MainActivity : AppCompatActivity() {
     private var lastMediaPipeLandmarkTime: Long = 0L
     private var openGLProcessor: OpenGLSurfaceProcessor? = null
     private var cameraEffect: CameraEffect? = null
+    @Volatile
+    private var isPreviewCameraEffectActive: Boolean = false
     private val motionBlurProcessor = MotionBlurProcessor()
     @Volatile
     private var latestMotionMetrics = MotionBlurProcessor.MotionMetrics.IDLE
@@ -178,6 +188,16 @@ class MainActivity : AppCompatActivity() {
     private val burstHandler = Handler(Looper.getMainLooper())
     private var burstRunnable: Runnable? = null
     private var isGridVisible = true
+
+    // AR Lens Mode Dedicated Dock & Tap-Photo / Hold (>=1s) Video Recording State
+    private enum class ArDockTab { LENSES, ADJUST, COMIC_TEXT }
+    private var currentArDockTab = ArDockTab.LENSES
+    private var isArDockCollapsed: Boolean = false
+    private var isSyncingArDockSliders: Boolean = false
+    private var lastActiveArLensName: String = "cyberpunk_visor"
+    private var isArHoldRecording: Boolean = false
+    private val arHoldHandler = Handler(Looper.getMainLooper())
+    private var arHoldRunnable: Runnable? = null
 
     // Audio Cue, Comic SFX & Typography Engines
     private var toneGenerator: ToneGenerator? = null
@@ -264,13 +284,24 @@ class MainActivity : AppCompatActivity() {
         CustomFilterDef("filter_pastel_dream", "Pastel Dream", 12, -8, -15, 15, 0, "#ec4899")
     )
     private data class CustomLensDef(
-        val id: String, val name: String, val anchor: String, val style: String,
-        val primaryColor: String, val accentColor: String
+        val id: String,
+        val name: String,
+        val anchor: String,
+        val style: String,
+        val primaryColor: String,
+        val accentColor: String,
+        val glbAssetPath: String = "",
+        val glbFilePath: String = "",
+        val modelScale: Float = 1.0f,
+        val modelOffsetY: Float = 0f,
+        val modelRotationY: Float = 0f,
+        val modelRotationX: Float = 0f,
+        val autoSpin: Boolean = true
     )
-    private val injectedCustomLenses = listOf<CustomLensDef>(
-        CustomLensDef("lens_neon_cat_ears", "Neon Feline Ears", "forehead", "cat_ears", "#ec4899", "#38bdf8"),
-        CustomLensDef("lens_celestial_halo", "Celestial Halo", "forehead", "halo_tiara", "#fbbf24", "#ffffff"),
-        CustomLensDef("lens_cyber_respirator", "Cyber Mask 2077", "mouth", "cyber_mask", "#06b6d4", "#f43f5e")
+    private val injectedCustomLenses = mutableListOf<CustomLensDef>(
+        CustomLensDef("lens_neon_cat_ears", "Neon Feline Ears", "forehead", "cat_ears", "#ec4899", "#38bdf8", "", "", 1f, 0f, 0f, 0f, true),
+        CustomLensDef("lens_celestial_halo", "Celestial Halo", "forehead", "halo_tiara", "#fbbf24", "#ffffff", "", "", 1f, 0f, 0f, 0f, true),
+        CustomLensDef("lens_cyber_respirator", "Cyber Mask 2077", "mouth", "cyber_mask", "#06b6d4", "#f43f5e", "", "", 1f, 0f, 0f, 0f, true)
     )
     private data class CustomFontDef(
         val id: String, val name: String, val family: String, val category: String,
@@ -391,23 +422,42 @@ class MainActivity : AppCompatActivity() {
     private val stylizeHandler = Handler(Looper.getMainLooper())
     @Volatile
     private var isStylizingFrame = false
+    private var isStylizeLoopScheduled = false
+    private fun shouldRunCpuStylizeLoop(): Boolean {
+        val disableHeavyStylize = (::ecoPowerManager.isInitialized && ecoPowerManager.isHeavyMetersDisabled) ||
+            (::thermalGuardManager.isInitialized && thermalGuardManager.shouldReduceComplexity)
+        return !isFinishing &&
+            !isDestroyed &&
+            !disableHeavyStylize &&
+            !isPreviewCameraEffectActive &&
+            (isStylizedLiveEffect(currentShootingEffect) || isComicFilterPreset(currentFilterName))
+    }
+    private fun syncStylizeLoopState() {
+        val needed = shouldRunCpuStylizeLoop()
+        if (needed && !isStylizeLoopScheduled) {
+            isStylizeLoopScheduled = true
+            stylizeHandler.postDelayed(stylizeRunnable, 80L)
+        } else if (!needed && isStylizeLoopScheduled) {
+            stylizeHandler.removeCallbacks(stylizeRunnable)
+            isStylizeLoopScheduled = false
+        }
+    }
     private val stylizeRunnable = object : Runnable {
         override fun run() {
             val isEcoThrottled = ::ecoPowerManager.isInitialized && ecoPowerManager.isEcoActive
             val isThermalThrottled = ::thermalGuardManager.isInitialized && thermalGuardManager.isThrottled
-            val disableHeavyStylize = (::ecoPowerManager.isInitialized && ecoPowerManager.isHeavyMetersDisabled) ||
-                (::thermalGuardManager.isInitialized && thermalGuardManager.shouldReduceComplexity)
-            val hasComicPreset = isComicFilterPreset(currentFilterName)
-            val useCpuLive = !disableHeavyStylize && (isStylizedLiveEffect(currentShootingEffect) || hasComicPreset) &&
-                ((cameraMode != CameraMode.VIDEO && cameraMode != CameraMode.SLOW_MO) || cameraEffect == null)
-            if (useCpuLive && !isStylizingFrame && !isFinishing && !isDestroyed) {
+            if (!shouldRunCpuStylizeLoop()) {
+                isStylizeLoopScheduled = false
+                return
+            }
+            if (!isStylizingFrame) {
                 val tv = findTextureView(viewBinding.viewFinder)
                 if (tv != null && tv.isAvailable) {
                     val vw = tv.width.coerceAtLeast(1)
                     val vh = tv.height.coerceAtLeast(1)
-                    val maxEdge = 440
-                    val sampleW = if (vw >= vh) maxEdge else Math.max(140, (maxEdge * vw / vh.toFloat()).toInt())
-                    val sampleH = if (vh >= vw) maxEdge else Math.max(140, (maxEdge * vh / vw.toFloat()).toInt())
+                    val maxEdge = 360
+                    val sampleW = if (vw >= vh) maxEdge else Math.max(120, (maxEdge * vw / vh.toFloat()).toInt())
+                    val sampleH = if (vh >= vw) maxEdge else Math.max(120, (maxEdge * vh / vw.toFloat()).toInt())
                     val frame = tv.getBitmap(sampleW, sampleH)
                     if (frame != null) {
                         val activeEffect = currentShootingEffect
@@ -428,7 +478,7 @@ class MainActivity : AppCompatActivity() {
                                 }
                                 val styled = gpuStyled ?: renderStylizedEffectBitmap(frame, targetStyleId, forLivePreview = true)
                                 runOnUiThread {
-                                    val stillValid = !isFinishing && !isDestroyed && (
+                                    val stillValid = !isFinishing && !isDestroyed && !isPreviewCameraEffectActive && (
                                         (isStylizedLiveEffect(currentShootingEffect) && currentShootingEffect == activeEffect) ||
                                         (!isStylizedLiveEffect(currentShootingEffect) && isComicFilterPreset(currentFilterName) && currentFilterName == activeFilter)
                                     )
@@ -448,13 +498,14 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
             }
-            val baseDelay = if (currentShootingEffect == "stop_motion") 145L else 58L
-            val nextDelay = when {
-                disableHeavyStylize -> 420L
-                isEcoThrottled || isThermalThrottled -> Math.max(baseDelay, 200L)
-                else -> baseDelay
+            val baseDelay = if (currentShootingEffect == "stop_motion") 155L else 80L
+            val nextDelay = if (isEcoThrottled || isThermalThrottled) Math.max(baseDelay, 200L) else baseDelay
+            if (shouldRunCpuStylizeLoop()) {
+                isStylizeLoopScheduled = true
+                stylizeHandler.postDelayed(this, nextDelay)
+            } else {
+                isStylizeLoopScheduled = false
             }
-            stylizeHandler.postDelayed(this, nextDelay)
         }
     }
 
@@ -468,6 +519,49 @@ class MainActivity : AppCompatActivity() {
                 Toast.makeText(this, "Camera permission is required.", Toast.LENGTH_SHORT).show()
                 finish()
             }
+        }
+
+    // AR Calibration JSON Export / Import Storage Access Framework Launchers
+    private val exportArCalibrationJsonLauncher =
+        registerForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri: Uri? ->
+            if (uri == null) return@registerForActivityResult
+            try {
+                val jsonPayload = buildArCalibrationJsonString()
+                contentResolver.openOutputStream(uri)?.use { out ->
+                    out.write(jsonPayload.toByteArray(Charsets.UTF_8))
+                    out.flush()
+                } ?: throw IllegalStateException("Unable to open output stream")
+                showHudNotice("Exported AR Calibration JSON")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to export AR calibration JSON", e)
+                showHudNotice("Export failed: ${e.localizedMessage ?: "I/O error"}", isWarning = true)
+            }
+        }
+
+    private val importArCalibrationJsonLauncher =
+        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+            if (uri == null) return@registerForActivityResult
+            try {
+                val rawJson = contentResolver.openInputStream(uri)?.bufferedReader(Charsets.UTF_8)?.use {
+                    it.readText()
+                } ?: throw IllegalStateException("Unable to read JSON file")
+                val applied = applyArCalibrationJsonString(rawJson)
+                if (applied) {
+                    showHudNotice("Imported Custom AR Calibration JSON")
+                } else {
+                    showHudNotice("Invalid AR Calibration JSON format", isWarning = true)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to import AR calibration JSON", e)
+                showHudNotice("Import failed: ${e.localizedMessage ?: "Invalid JSON"}", isWarning = true)
+            }
+        }
+
+    // On-device 3D .GLB AR Lens File Picker (Storage Access Framework)
+    private val importGlbLensLauncher =
+        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+            if (uri == null) return@registerForActivityResult
+            importGlbLensFromUri(uri)
         }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -564,12 +658,13 @@ class MainActivity : AppCompatActivity() {
         setupFilterAndArControls()
         setupProEnhancementControls()
         setupArCalibrationControls()
+        setupArLensModeDock()
         selectCreativeCategory(CreativeTarget.FILTERS, fromUser = false)
         updateShootingEffectButtons()
         updateActiveInstrumentsCount()
         isLastActionCreative = false
         viewBinding.modeScrollView.post { centerModeTab(cameraMode, smooth = false) }
-        stylizeHandler.postDelayed(stylizeRunnable, 120L)
+        syncStylizeLoopState()
 
         if (allPermissionsGranted()) {
             startCamera()
@@ -592,10 +687,13 @@ class MainActivity : AppCompatActivity() {
         rotationSensor?.let {
             sensorManager.registerListener(sensorEventListener, it, SensorManager.SENSOR_DELAY_UI)
         }
+        syncStylizeLoopState()
     }
 
     override fun onPause() {
         super.onPause()
+        stylizeHandler.removeCallbacks(stylizeRunnable)
+        isStylizeLoopScheduled = false
         if (::ecoPowerManager.isInitialized) {
             ecoPowerManager.unregister()
         }
@@ -667,6 +765,7 @@ class MainActivity : AppCompatActivity() {
             }
             showHudNotice("POWER RESTORED (${policy.batteryPercent}%): Full ImageAnalysis & AR Active")
         }
+        syncStylizeLoopState()
     }
 
     private fun applyThermalPolicy(policy: ThermalGuardManager.ThermalPolicy) {
@@ -730,6 +829,7 @@ class MainActivity : AppCompatActivity() {
             }
             showHudNotice("THERMAL NOMINAL: Full CameraX Analysis & Capture Resolution Restored")
         }
+        syncStylizeLoopState()
     }
 
     private fun applyGyroEisTelemetry(telemetry: GyroStabilizer.StabilizationTelemetry) {
@@ -794,7 +894,7 @@ class MainActivity : AppCompatActivity() {
     private var dollyZoomAnimator: android.animation.ValueAnimator? = null
     private var smoothRollDeg: Float = 0f
 
-    enum class CreativeTarget { FILTERS, LENSES, EFFECTS, ART, TOON }
+    enum class CreativeTarget { FILTERS, EFFECTS, ART, TOON }
     private var currentCreativeTarget = CreativeTarget.FILTERS
     private val artEffectIds = setOf(
         "oil_canvas", "charcoal_sketch", "watercolor_wash", "ink_and_line",
@@ -889,6 +989,7 @@ class MainActivity : AppCompatActivity() {
         viewBinding.tabPortrait.setOnClickListener { setMode(CameraMode.PORTRAIT) }
         viewBinding.tabNight.setOnClickListener { setMode(CameraMode.NIGHT) }
         viewBinding.tabPanorama.setOnClickListener { setMode(CameraMode.PANORAMA) }
+        viewBinding.tabArLens.setOnClickListener { setMode(CameraMode.AR_LENS) }
 
         // Video Pause/Resume Button
         viewBinding.btnPauseResume.setOnClickListener { toggleVideoPauseResume() }
@@ -945,9 +1046,8 @@ class MainActivity : AppCompatActivity() {
         viewBinding.btnQuickGridDiagonal.setOnClickListener { setGridMode(ProOverlayView.GridType.DIAGONAL_SYMMETRY) }
         viewBinding.btnQuickGridCinematic.setOnClickListener { setGridMode(ProOverlayView.GridType.CINEMATIC_239) }
 
-        // Creative Drawer Category Switcher Buttons (FILTERS, LENSES, EFFECTS, ART, TOON)
+        // Creative Drawer Category Switcher Buttons (FILTERS, EFFECTS, ART, TOON — AR Lenses moved to AR LENS Camera Mode)
         viewBinding.effectsStudioDrawer.btnCategoryFilters.setOnClickListener { selectCreativeCategory(CreativeTarget.FILTERS, fromUser = true) }
-        viewBinding.effectsStudioDrawer.btnCategoryLenses.setOnClickListener { selectCreativeCategory(CreativeTarget.LENSES, fromUser = true) }
         viewBinding.effectsStudioDrawer.btnCategoryEffects.setOnClickListener { selectCreativeCategory(CreativeTarget.EFFECTS, fromUser = true) }
         viewBinding.effectsStudioDrawer.btnCategoryArt.setOnClickListener { selectCreativeCategory(CreativeTarget.ART, fromUser = true) }
         viewBinding.effectsStudioDrawer.btnCategoryToon.setOnClickListener { selectCreativeCategory(CreativeTarget.TOON, fromUser = true) }
@@ -1024,16 +1124,17 @@ class MainActivity : AppCompatActivity() {
         viewBinding.effectsStudioDrawer.btnFilterNordicBlue.setOnClickListener { setFilterPreset("nordic_blue") }
         viewBinding.effectsStudioDrawer.btnFilterSuper8Vintage.setOnClickListener { setFilterPreset("super8_vintage") }
 
-        viewBinding.effectsStudioDrawer.btnArNone.setOnClickListener { setArLens("none") }
-        viewBinding.effectsStudioDrawer.btnArMesh.setOnClickListener { setArLens("mesh_contour") }
-        viewBinding.effectsStudioDrawer.btnArVisor.setOnClickListener { setArLens("cyberpunk_visor") }
-        viewBinding.effectsStudioDrawer.btnArCrown.setOnClickListener { setArLens("golden_crown") }
-        viewBinding.effectsStudioDrawer.btnArHud.setOnClickListener { setArLens("scifi_hud") }
-        viewBinding.effectsStudioDrawer.btnArComicFrame.setOnClickListener { setArLens("comic_frame") }
-        viewBinding.effectsStudioDrawer.btnArComicOnomatopoeia.setOnClickListener { toggleComicOnomatopoeia() }
-        viewBinding.effectsStudioDrawer.btnArTextStudio.setOnClickListener { showArTextStudioDialog() }
-        viewBinding.effectsStudioDrawer.btnArCalibrate.setOnClickListener { toggleArCalibrationDrawer() }
-        viewBinding.effectsStudioDrawer.btnArBatch.setOnClickListener { toggleArBatchMode() }
+        viewBinding.arLensModeDock.btnArNone.setOnClickListener { setArLens("none") }
+        viewBinding.arLensModeDock.btnArMesh.setOnClickListener { setArLens("mesh_contour") }
+        viewBinding.arLensModeDock.btnArVisor.setOnClickListener { setArLens("cyberpunk_visor") }
+        viewBinding.arLensModeDock.btnArCrown.setOnClickListener { setArLens("golden_crown") }
+        viewBinding.arLensModeDock.btnArHud.setOnClickListener { setArLens("scifi_hud") }
+        viewBinding.arLensModeDock.btnArComicFrame.setOnClickListener { setArLens("comic_frame") }
+        viewBinding.arLensModeDock.btnArImportGlb.setOnClickListener { launchGlbLensPicker() }
+        viewBinding.arLensModeDock.btnArComicOnomatopoeia.setOnClickListener { toggleComicOnomatopoeia() }
+        viewBinding.arLensModeDock.btnArTextStudio.setOnClickListener { showArTextStudioDialog() }
+        viewBinding.arLensModeDock.btnArCalibrate.setOnClickListener { toggleArCalibrationDrawer() }
+        viewBinding.arLensModeDock.btnArBatch.setOnClickListener { toggleArBatchMode() }
 
         viewBinding.effectsStudioDrawer.btnEffectOff.setOnClickListener { setShootingEffect("none") }
         viewBinding.effectsStudioDrawer.btnArtOff.setOnClickListener { setShootingEffect("none") }
@@ -1094,12 +1195,22 @@ class MainActivity : AppCompatActivity() {
                 if (isChecked) {
                     currentShootingEffect = "film_grain"
                     viewBinding.proOverlayView.activeShootingEffect = "film_grain"
+                    isUpdatingEffectSwitches = true
+                    viewBinding.effectsStudioDrawer.switchCineFlare.isChecked = false
+                    viewBinding.proOverlayView.enableCineFlare = false
+                    isUpdatingEffectSwitches = false
                 } else if (currentShootingEffect == "film_grain") {
                     currentShootingEffect = "none"
                     viewBinding.proOverlayView.activeShootingEffect = "none"
                 }
+                syncAllStateToOpenGLProcessor()
+                if (!isStylizedLiveEffect(currentShootingEffect) && !isComicFilterPreset(currentFilterName)) {
+                    viewBinding.proOverlayView.updateProcessedEffectBitmap(null)
+                }
                 updateShootingEffectButtons()
+                updateEffectIntensityVisibility()
                 updateCreativeStatusUI()
+                syncStylizeLoopState()
                 showHudNotice("35mm Film Grain ${if (isChecked) "ON" else "OFF"}")
             }
         }
@@ -1120,12 +1231,22 @@ class MainActivity : AppCompatActivity() {
                 if (isChecked) {
                     currentShootingEffect = "anamorphic_flare"
                     viewBinding.proOverlayView.activeShootingEffect = "anamorphic_flare"
+                    isUpdatingEffectSwitches = true
+                    viewBinding.effectsStudioDrawer.switchFilmGrain.isChecked = false
+                    viewBinding.proOverlayView.enableFilmGrain = false
+                    isUpdatingEffectSwitches = false
                 } else if (currentShootingEffect == "anamorphic_flare") {
                     currentShootingEffect = "none"
                     viewBinding.proOverlayView.activeShootingEffect = "none"
                 }
+                syncAllStateToOpenGLProcessor()
+                if (!isStylizedLiveEffect(currentShootingEffect) && !isComicFilterPreset(currentFilterName)) {
+                    viewBinding.proOverlayView.updateProcessedEffectBitmap(null)
+                }
                 updateShootingEffectButtons()
+                updateEffectIntensityVisibility()
                 updateCreativeStatusUI()
+                syncStylizeLoopState()
                 showHudNotice("Anamorphic Flare ${if (isChecked) "ON" else "OFF"}")
             }
         }
@@ -1428,7 +1549,12 @@ class MainActivity : AppCompatActivity() {
             .setFlashMode(flashMode)
         if (::thermalGuardManager.isInitialized) {
             thermalGuardManager.currentPolicy.maxImageCaptureResolution?.let { capRes ->
-                imageCaptureBuilder.setTargetResolution(capRes)
+                val capSelector = ResolutionSelector.Builder()
+                    .setResolutionStrategy(
+                        ResolutionStrategy(capRes, ResolutionStrategy.FALLBACK_RULE_CLOSEST_LOWER_THEN_HIGHER)
+                    )
+                    .build()
+                imageCaptureBuilder.setResolutionSelector(capSelector)
             }
         }
         imageCapture = imageCaptureBuilder.build()
@@ -1451,15 +1577,19 @@ class MainActivity : AppCompatActivity() {
         videoCapture = VideoCapture.withOutput(recorder)
 
         // Real-Time Frame Analysis Engine: Live Histogram (Luma & RGB), Zebra Overexposure, Focus Peaking, Waveform & Vector Scope
-        // Golden Rule: All pixel math is executed asynchronously on background cameraExecutor thread.
+        // Golden Rule: All pixel math is executed asynchronously on background cameraExecutor thread with pre-allocated buffers.
         val histoBins = IntArray(256)
         val histoBinsR = IntArray(256)
         val histoBinsG = IntArray(256)
         val histoBinsB = IntArray(256)
-        val overexposedList = ArrayList<Float>()
+        val overexposedBuf = FloatArray(48 * 4)
+        val emptyFloatArray = FloatArray(0)
         val wfColsArray = FloatArray(36 * 2) // Pre-allocated [minIre, maxIre] pairs
         val vsPointsArray = FloatArray(48 * 2) // Pre-allocated [normCb, normCr] pairs
         val fpPointsArray = FloatArray(180 * 2) // Pre-allocated focus peaking edge [normX, normY] pairs
+        var lastLumaAnalysisMs = 0L
+        var lastMotionUiMs = 0L
+        var lastNightCheckMs = 0L
 
         val ecoTargetRes = if (::ecoPowerManager.isInitialized) {
             ecoPowerManager.currentPolicy.targetAnalysisResolution
@@ -1471,12 +1601,22 @@ class MainActivity : AppCompatActivity() {
         } else {
             android.util.Size(640, 480)
         }
-        val effectiveAnalysisRes = android.util.Size(
+        val baseAnalysisRes = android.util.Size(
             Math.min(ecoTargetRes.width, thermalTargetRes.width),
             Math.min(ecoTargetRes.height, thermalTargetRes.height)
         )
+        val effectiveAnalysisRes = if (cameraMode == CameraMode.PANORAMA && baseAnalysisRes.width >= 640) {
+            android.util.Size(1280, 960)
+        } else {
+            baseAnalysisRes
+        }
+        val analysisResSelector = ResolutionSelector.Builder()
+            .setResolutionStrategy(
+                ResolutionStrategy(effectiveAnalysisRes, ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER)
+            )
+            .build()
         imageAnalysis = ImageAnalysis.Builder()
-            .setTargetResolution(effectiveAnalysisRes)
+            .setResolutionSelector(analysisResSelector)
             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
             .build()
             .also {
@@ -1489,6 +1629,7 @@ class MainActivity : AppCompatActivity() {
                         imageProxy.close()
                         return@setAnalyzer
                     }
+                    val nowMs = SystemClock.uptimeMillis()
                     val ecoMetersDisabled = ::ecoPowerManager.isInitialized && ecoPowerManager.isHeavyMetersDisabled
                     val thermalComplexityReduced = ::thermalGuardManager.isInitialized && thermalGuardManager.shouldReduceComplexity
                     val needsLumaMeters = !ecoMetersDisabled && !thermalComplexityReduced && !viewBinding.proOverlayView.isCleanScreen && (
@@ -1501,7 +1642,8 @@ class MainActivity : AppCompatActivity() {
                     )
                     val needsMotionBlurAnalysis = !thermalComplexityReduced && (currentShootingEffect == "motion_blur")
 
-                    if (needsLumaMeters) {
+                    if (needsLumaMeters && (nowMs - lastLumaAnalysisMs) >= 68L) {
+                        lastLumaAnalysisMs = nowMs
                         try {
                             val plane = imageProxy.planes[0]
                             val buffer = plane.buffer
@@ -1511,7 +1653,7 @@ class MainActivity : AppCompatActivity() {
                             val pixelStride = plane.pixelStride
                             
                             histoBins.fill(0)
-                            overexposedList.clear()
+                            var overexposedCount = 0
                             
                             val step = 8
                             var clipCount = 0
@@ -1604,13 +1746,15 @@ class MainActivity : AppCompatActivity() {
 
                                         if (luma >= 240) {
                                             clipCount++
-                                            if (clipCount % 12 == 0) {
+                                            if (clipCount % 12 == 0 && overexposedCount < 48) {
                                                 val nX = x.toFloat() / width.toFloat()
                                                 val nY = y.toFloat() / height.toFloat()
-                                                overexposedList.add(nX - 0.04f)
-                                                overexposedList.add(nY - 0.04f)
-                                                overexposedList.add(nX + 0.04f)
-                                                overexposedList.add(nY + 0.04f)
+                                                val base = overexposedCount * 4
+                                                overexposedBuf[base] = nX - 0.04f
+                                                overexposedBuf[base + 1] = nY - 0.04f
+                                                overexposedBuf[base + 2] = nX + 0.04f
+                                                overexposedBuf[base + 3] = nY + 0.04f
+                                                overexposedCount++
                                             }
                                         }
                                     }
@@ -1680,9 +1824,9 @@ class MainActivity : AppCompatActivity() {
 
                             val balanceX = if (totalWeight > 0f) (sumWeightX / totalWeight) / width.toFloat() else 0.5f
                             val balanceY = if (totalWeight > 0f) (sumWeightY / totalWeight) / height.toFloat() else 0.5f
-                            val overexposedArray = overexposedList.toFloatArray()
+                            val overexposedArray = if (overexposedCount > 0) overexposedBuf.copyOf(overexposedCount * 4) else emptyFloatArray
 
-                            // Pass ONLY finalized arrays back to UI thread for instant 60fps rendering without pixel loops
+                            // Pass ONLY finalized arrays back to UI thread at ~15fps max to prevent View invalidate churn
                             runOnUiThread {
                                 viewBinding.proOverlayView.updateLuminanceAnalysis(histoBins, overexposedArray, balanceX, balanceY)
                                 if (viewBinding.proOverlayView.showHistogram && viewBinding.proOverlayView.histogramRgbMode) {
@@ -1716,13 +1860,16 @@ class MainActivity : AppCompatActivity() {
                                 motionMetrics.dirY,
                                 motionMetrics.magnitude
                             )
-                            runOnUiThread {
-                                viewBinding.proOverlayView.updateMotionBlurTelemetry(
-                                    magnitude = motionMetrics.magnitude,
-                                    dirX = motionMetrics.dirX,
-                                    dirY = motionMetrics.dirY,
-                                    shutterLabel = motionMetrics.simulatedShutterLabel
-                                )
+                            if ((nowMs - lastMotionUiMs) >= 60L) {
+                                lastMotionUiMs = nowMs
+                                runOnUiThread {
+                                    viewBinding.proOverlayView.updateMotionBlurTelemetry(
+                                        magnitude = motionMetrics.magnitude,
+                                        dirX = motionMetrics.dirX,
+                                        dirY = motionMetrics.dirY,
+                                        shutterLabel = motionMetrics.simulatedShutterLabel
+                                    )
+                                }
                             }
                         } catch (e: Exception) {
                             Log.e(TAG, "Motion blur frame analysis error", e)
@@ -1746,7 +1893,7 @@ class MainActivity : AppCompatActivity() {
                             var newCount = align.sliceCount
                             var didAutoCapture = false
                             if (align.shouldTriggerAutoCapture) {
-                                val sliceBmp = panoramaStitcher.imageProxyToBitmap(imageProxy, isFront, 960)
+                                val sliceBmp = panoramaStitcher.imageProxyToBitmap(imageProxy, isFront, 1080)
                                 if (sliceBmp != null) {
                                     val filtered = try {
                                         val f = filterManager.applyFilterToBitmap(sliceBmp)
@@ -1813,7 +1960,8 @@ class MainActivity : AppCompatActivity() {
                         cameraMode == CameraMode.NIGHT ||
                         currentShootingEffect == "night_sight") &&
                         recording == null && !isPanoramaCapturing && !isPanoramaStitching
-                    if (needsNightDetection && !isNightStacking) {
+                    if (needsNightDetection && !isNightStacking && (nowMs - lastNightCheckMs) >= 160L) {
+                        lastNightCheckMs = nowMs
                         try {
                             val nightInfo = nightExposureStacker.analyzeLowLight(imageProxy)
                             val showHud = cameraMode == CameraMode.NIGHT ||
@@ -1948,6 +2096,13 @@ class MainActivity : AppCompatActivity() {
                                 Log.e(TAG, "Face tracking fallback error", e)
                             }
                         }
+                        if (cameraEffect != null && analysisFrameCounter % 3 == 0 && viewBinding.arFaceOverlayView.hasAnyVisibleOverlay()) {
+                            runOnUiThread {
+                                if (!isFinishing && !isDestroyed) {
+                                    syncOverlayToVideoProcessor()
+                                }
+                            }
+                        }
                     }
 
                     imageProxy.close()
@@ -1983,6 +2138,7 @@ class MainActivity : AppCompatActivity() {
                     cameraControl = camera?.cameraControl
                     initExposureRange()
                     updatePipOverlayVisibility()
+                    syncStylizeLoopState()
                     viewBinding.viewFinder.post { applyLivePreviewColorMatrix() }
                     return
                 } catch (ccErr: Throwable) {
@@ -2018,15 +2174,84 @@ class MainActivity : AppCompatActivity() {
         try {
             cameraProvider.unbindAll()
             cameraEffect = null
+            isPreviewCameraEffectActive = false
 
             val isPhotoType = cameraMode == CameraMode.PHOTO || cameraMode == CameraMode.PORTRAIT || cameraMode == CameraMode.NIGHT || cameraMode == CameraMode.PANORAMA
-            if (isPhotoType) {
+            if (cameraMode == CameraMode.AR_LENS) {
+                // AR LENS Mode binds BOTH ImageCapture (Tap for Photo) AND VideoCapture (Hold >=1s for Video) + ImageAnalysis (FaceMesh)
+                val proc = openGLProcessor ?: OpenGLSurfaceProcessor().also { openGLProcessor = it }
+                syncAllStateToOpenGLProcessor()
+                var boundArCombo = false
+                try {
+                    val effect = OpenGLSurfaceProcessor.createCameraEffect(proc, proc.getExecutor())
+                    val groupBuilder = UseCaseGroup.Builder()
+                        .addUseCase(preview)
+                        .addUseCase(imageCapture!!)
+                        .addUseCase(videoCapture!!)
+                        .addUseCase(imageAnalysis!!)
+                        .addEffect(effect)
+                    camera = cameraProvider.bindToLifecycle(this, lensFacing, groupBuilder.build())
+                    cameraEffect = effect
+                    isPreviewCameraEffectActive = true
+                    boundArCombo = true
+                } catch (effectErr: Exception) {
+                    Log.w(TAG, "AR LENS CameraEffect 4-use-case bind unsupported on HAL, retrying 3-use-case with CameraEffect", effectErr)
+                    cameraEffect = null
+                    isPreviewCameraEffectActive = false
+                }
+                if (!boundArCombo) {
+                    try {
+                        val effect = OpenGLSurfaceProcessor.createCameraEffect(proc, proc.getExecutor())
+                        val groupBuilder = UseCaseGroup.Builder()
+                            .addUseCase(preview)
+                            .addUseCase(imageCapture!!)
+                            .addUseCase(videoCapture!!)
+                            .addEffect(effect)
+                        camera = cameraProvider.bindToLifecycle(this, lensFacing, groupBuilder.build())
+                        cameraEffect = effect
+                        isPreviewCameraEffectActive = true
+                        boundArCombo = true
+                    } catch (threeUcErr: Exception) {
+                        Log.w(TAG, "AR LENS Preview+Photo+Video CameraEffect unsupported on HAL, retrying Video-only CameraEffect", threeUcErr)
+                        cameraEffect = null
+                        isPreviewCameraEffectActive = false
+                    }
+                }
+                if (!boundArCombo) {
+                    try {
+                        val effect = OpenGLSurfaceProcessor.createVideoOnlyCameraEffect(proc, proc.getExecutor())
+                        val groupBuilder = UseCaseGroup.Builder()
+                            .addUseCase(preview)
+                            .addUseCase(imageCapture!!)
+                            .addUseCase(videoCapture!!)
+                            .addEffect(effect)
+                        camera = cameraProvider.bindToLifecycle(this, lensFacing, groupBuilder.build())
+                        cameraEffect = effect
+                        isPreviewCameraEffectActive = false
+                        boundArCombo = true
+                    } catch (vidOnlyErr: Exception) {
+                        Log.w(TAG, "AR LENS Video-only CameraEffect unsupported on HAL, retrying without CameraEffect", vidOnlyErr)
+                        cameraEffect = null
+                        isPreviewCameraEffectActive = false
+                    }
+                }
+                if (!boundArCombo) {
+                    try {
+                        camera = cameraProvider.bindToLifecycle(this, lensFacing, preview, imageCapture!!, videoCapture!!, imageAnalysis!!)
+                        boundArCombo = true
+                    } catch (fourUcErr: Exception) {
+                        Log.w(TAG, "AR LENS 4-use-case bind unsupported on HAL, falling back to Preview + Photo + Video", fourUcErr)
+                    }
+                }
+                if (!boundArCombo) {
+                    camera = cameraProvider.bindToLifecycle(this, lensFacing, preview, imageCapture!!, videoCapture!!)
+                }
+            } else if (isPhotoType) {
                 val usePreviewEisEffect = (::gyroStabilizer.isInitialized && gyroStabilizer.isEnabled && !activeNightExt)
                 var boundPreviewWithEffect = false
                 if (usePreviewEisEffect) {
                     val proc = openGLProcessor ?: OpenGLSurfaceProcessor().also { openGLProcessor = it }
-                    val t = gyroStabilizer.currentTelemetry
-                    proc.setGyroEisTransform(t.isEnabled, t.overscanZoom, t.compXNorm, t.compYNorm, t.compRollDeg)
+                    syncAllStateToOpenGLProcessor()
                     try {
                         val effect = OpenGLSurfaceProcessor.createPreviewCameraEffect(proc, proc.getExecutor())
                         val groupBuilder = UseCaseGroup.Builder()
@@ -2036,10 +2261,12 @@ class MainActivity : AppCompatActivity() {
                             .addEffect(effect)
                         camera = cameraProvider.bindToLifecycle(this, effectiveSelector, groupBuilder.build())
                         cameraEffect = effect
+                        isPreviewCameraEffectActive = true
                         boundPreviewWithEffect = true
                     } catch (effectErr: Exception) {
                         Log.w(TAG, "Preview CameraEffect EIS unsupported on HAL, using View-level EIS fallback", effectErr)
                         cameraEffect = null
+                        isPreviewCameraEffectActive = false
                     }
                 }
                 if (!boundPreviewWithEffect) {
@@ -2047,19 +2274,9 @@ class MainActivity : AppCompatActivity() {
                 }
             } else {
                 val proc = openGLProcessor ?: OpenGLSurfaceProcessor().also { openGLProcessor = it }
-                proc.setShootingEffect(currentShootingEffect)
-                proc.setAdjustments(
-                    viewBinding.proOverlayView.liveBrightnessPercent,
-                    viewBinding.proOverlayView.liveContrastPercent,
-                    viewBinding.proOverlayView.liveSaturationPercent
-                )
-                proc.setNightBoost(cameraMode == CameraMode.NIGHT || currentShootingEffect == "night_sight")
-                if (::gyroStabilizer.isInitialized) {
-                    val t = gyroStabilizer.currentTelemetry
-                    proc.setGyroEisTransform(t.isEnabled, t.overscanZoom, t.compXNorm, t.compYNorm, t.compRollDeg)
-                }
-                syncOverlayToVideoProcessor()
+                syncAllStateToOpenGLProcessor()
                 var boundWithEffect = false
+                // Tier 1: Preview + VideoCapture + ImageAnalysis + Shared GPU CameraEffect
                 try {
                     val effect = OpenGLSurfaceProcessor.createCameraEffect(proc, proc.getExecutor())
                     val groupBuilder = UseCaseGroup.Builder()
@@ -2069,10 +2286,48 @@ class MainActivity : AppCompatActivity() {
                         .addEffect(effect)
                     camera = cameraProvider.bindToLifecycle(this, lensFacing, groupBuilder.build())
                     cameraEffect = effect
+                    isPreviewCameraEffectActive = true
                     boundWithEffect = true
                 } catch (effectErr: Exception) {
-                    Log.w(TAG, "CameraEffect VideoCapture binding unsupported on HAL, falling back to standard VideoCapture", effectErr)
+                    Log.w(TAG, "CameraEffect 3-use-case VideoCapture binding unsupported on HAL, retrying without ImageAnalysis to preserve video effects", effectErr)
                     cameraEffect = null
+                    isPreviewCameraEffectActive = false
+                }
+                // Tier 2: Preview + VideoCapture + Shared GPU CameraEffect (works on 99% of Android HALs so effects bake into MP4!)
+                if (!boundWithEffect) {
+                    try {
+                        val effect = OpenGLSurfaceProcessor.createCameraEffect(proc, proc.getExecutor())
+                        val groupBuilder = UseCaseGroup.Builder()
+                            .addUseCase(preview)
+                            .addUseCase(videoCapture!!)
+                            .addEffect(effect)
+                        camera = cameraProvider.bindToLifecycle(this, lensFacing, groupBuilder.build())
+                        cameraEffect = effect
+                        isPreviewCameraEffectActive = true
+                        boundWithEffect = true
+                    } catch (tier2Err: Exception) {
+                        Log.w(TAG, "Shared Preview+Video CameraEffect unsupported on HAL, retrying Video-only CameraEffect", tier2Err)
+                        cameraEffect = null
+                        isPreviewCameraEffectActive = false
+                    }
+                }
+                // Tier 3: Preview + VideoCapture + Video-only GPU CameraEffect (preview uses ColorMatrix/CPU while MP4 gets full GPU shaders!)
+                if (!boundWithEffect) {
+                    try {
+                        val effect = OpenGLSurfaceProcessor.createVideoOnlyCameraEffect(proc, proc.getExecutor())
+                        val groupBuilder = UseCaseGroup.Builder()
+                            .addUseCase(preview)
+                            .addUseCase(videoCapture!!)
+                            .addEffect(effect)
+                        camera = cameraProvider.bindToLifecycle(this, lensFacing, groupBuilder.build())
+                        cameraEffect = effect
+                        isPreviewCameraEffectActive = false
+                        boundWithEffect = true
+                    } catch (tier3Err: Exception) {
+                        Log.w(TAG, "Video-only CameraEffect unsupported on HAL, falling back to standard VideoCapture", tier3Err)
+                        cameraEffect = null
+                        isPreviewCameraEffectActive = false
+                    }
                 }
                 if (!boundWithEffect) {
                     camera = cameraProvider.bindToLifecycle(this, lensFacing, preview, videoCapture!!, imageAnalysis!!)
@@ -2085,6 +2340,7 @@ class MainActivity : AppCompatActivity() {
             initExposureRange()
 
             // Re-apply real-time ColorMatrix / RenderEffect filter onto TextureView preview
+            syncStylizeLoopState()
             viewBinding.viewFinder.post { applyLivePreviewColorMatrix() }
 
         } catch (exc: Exception) {
@@ -2092,7 +2348,13 @@ class MainActivity : AppCompatActivity() {
             try {
                 cameraProvider.unbindAll()
                 val isPhotoType = cameraMode == CameraMode.PHOTO || cameraMode == CameraMode.PORTRAIT || cameraMode == CameraMode.NIGHT || cameraMode == CameraMode.PANORAMA
-                if (isPhotoType) {
+                if (cameraMode == CameraMode.AR_LENS) {
+                    camera = try {
+                        cameraProvider.bindToLifecycle(this, lensFacing, preview, imageCapture!!, videoCapture!!)
+                    } catch (_: Exception) {
+                        cameraProvider.bindToLifecycle(this, lensFacing, preview, imageCapture!!)
+                    }
+                } else if (isPhotoType) {
                     camera = cameraProvider.bindToLifecycle(this, effectiveSelector, preview, imageCapture!!)
                 } else {
                     camera = cameraProvider.bindToLifecycle(this, lensFacing, preview, videoCapture!!)
@@ -2128,6 +2390,40 @@ class MainActivity : AppCompatActivity() {
             if (cameraMode == CameraMode.PANORAMA) {
                 if (event.action == MotionEvent.ACTION_UP) {
                     togglePanoramaCapture()
+                }
+                return@setOnTouchListener true
+            }
+            if (cameraMode == CameraMode.AR_LENS) {
+                // AR LENS Mode: Tap (< 1000ms) captures AR Photo; Hold (>= 1000ms) records AR Video until release
+                when (event.action) {
+                    MotionEvent.ACTION_DOWN -> {
+                        isArHoldRecording = false
+                        arHoldRunnable?.let { arHoldHandler.removeCallbacks(it) }
+                        arHoldRunnable = Runnable {
+                            if (cameraMode == CameraMode.AR_LENS && recording == null && !isCountingDown) {
+                                isArHoldRecording = true
+                                window.decorView.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                                viewBinding.arLensModeDock.root.visibility = View.GONE
+                                viewBinding.arCalibrationDrawer.visibility = View.GONE
+                                captureVideo()
+                            }
+                        }
+                        arHoldHandler.postDelayed(arHoldRunnable!!, 1000L)
+                        return@setOnTouchListener true
+                    }
+                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                        arHoldRunnable?.let { arHoldHandler.removeCallbacks(it) }
+                        arHoldRunnable = null
+                        if (isArHoldRecording) {
+                            isArHoldRecording = false
+                            if (recording != null) {
+                                captureVideo()
+                            }
+                        } else if (event.action == MotionEvent.ACTION_UP && recording == null) {
+                            onShutterClicked()
+                        }
+                        return@setOnTouchListener true
+                    }
                 }
                 return@setOnTouchListener true
             }
@@ -2340,7 +2636,7 @@ class MainActivity : AppCompatActivity() {
                 for (s in snapshot) {
                     if (!s.bitmap.isRecycled) s.bitmap.recycle()
                 }
-                if (stitched != null && !stitched!!.isRecycled) stitched!!.recycle()
+                stitched?.takeIf { !it.isRecycled }?.recycle()
                 panoramaStitcher.reset()
                 isPanoramaStitching = false
                 runOnUiThread {
@@ -2611,6 +2907,11 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun updateEffectIntensityVisibility() {
+        val showIntensity = (currentShootingEffect != "none") || isComicFilterPreset(currentFilterName)
+        viewBinding.effectsStudioDrawer.layoutEffectIntensity.visibility = if (showIntensity) View.VISIBLE else View.GONE
+    }
+
     private fun selectCreativeCategory(target: CreativeTarget, fromUser: Boolean = true) {
         currentCreativeTarget = target
         if (fromUser) {
@@ -2618,16 +2919,12 @@ class MainActivity : AppCompatActivity() {
         }
 
         val isFilter = target == CreativeTarget.FILTERS
-        val isLens = target == CreativeTarget.LENSES
         val isEffect = target == CreativeTarget.EFFECTS
         val isArt = target == CreativeTarget.ART
         val isToon = target == CreativeTarget.TOON
 
         viewBinding.effectsStudioDrawer.btnCategoryFilters.setBackgroundResource(if (isFilter) R.drawable.bg_cinema_button_active else R.drawable.bg_cinema_button_inactive)
         viewBinding.effectsStudioDrawer.btnCategoryFilters.setTextColor(Color.parseColor(if (isFilter) "#0F172A" else "#94A3B8"))
-
-        viewBinding.effectsStudioDrawer.btnCategoryLenses.setBackgroundResource(if (isLens) R.drawable.bg_cinema_button_active else R.drawable.bg_cinema_button_inactive)
-        viewBinding.effectsStudioDrawer.btnCategoryLenses.setTextColor(Color.parseColor(if (isLens) "#0F172A" else "#94A3B8"))
 
         viewBinding.effectsStudioDrawer.btnCategoryEffects.setBackgroundResource(if (isEffect) R.drawable.bg_cinema_button_active else R.drawable.bg_cinema_button_inactive)
         viewBinding.effectsStudioDrawer.btnCategoryEffects.setTextColor(Color.parseColor(if (isEffect) "#0F172A" else "#94A3B8"))
@@ -2638,21 +2935,30 @@ class MainActivity : AppCompatActivity() {
         viewBinding.effectsStudioDrawer.btnCategoryToon.setBackgroundResource(if (isToon) R.drawable.bg_cinema_button_active else R.drawable.bg_cinema_button_inactive)
         viewBinding.effectsStudioDrawer.btnCategoryToon.setTextColor(Color.parseColor(if (isToon) "#0F172A" else "#94A3B8"))
 
+        val activeTabBtn = when (target) {
+            CreativeTarget.FILTERS -> viewBinding.effectsStudioDrawer.btnCategoryFilters
+            CreativeTarget.EFFECTS -> viewBinding.effectsStudioDrawer.btnCategoryEffects
+            CreativeTarget.ART -> viewBinding.effectsStudioDrawer.btnCategoryArt
+            CreativeTarget.TOON -> viewBinding.effectsStudioDrawer.btnCategoryToon
+        }
+        scrollChipIntoView(viewBinding.effectsStudioDrawer.scrollEffectsCategories, activeTabBtn)
+
         viewBinding.effectsStudioDrawer.scrollFiltersStrip.visibility = if (isFilter) View.VISIBLE else View.GONE
-        viewBinding.effectsStudioDrawer.scrollLensesStrip.visibility = if (isLens) View.VISIBLE else View.GONE
         viewBinding.effectsStudioDrawer.scrollEffectsStrip.visibility = if (isEffect) View.VISIBLE else View.GONE
         viewBinding.effectsStudioDrawer.scrollArtStrip.visibility = if (isArt) View.VISIBLE else View.GONE
         viewBinding.effectsStudioDrawer.scrollToonStrip.visibility = if (isToon) View.VISIBLE else View.GONE
 
-        if (isArt) {
-            updateArtStripModeOrder()
-            updateArtEffectButtons()
-        } else if (isEffect) {
-            updateShootingEffectButtons()
-        } else if (isToon) {
-            updateToonEffectButtons()
+        when (target) {
+            CreativeTarget.FILTERS -> updateFilterButtons(currentFilterName)
+            CreativeTarget.EFFECTS -> updateShootingEffectButtons()
+            CreativeTarget.ART -> {
+                updateArtStripModeOrder()
+                updateArtEffectButtons()
+            }
+            CreativeTarget.TOON -> updateToonEffectButtons()
         }
 
+        updateEffectIntensityVisibility()
         updateCreativeStatusUI()
     }
 
@@ -2714,17 +3020,6 @@ class MainActivity : AppCompatActivity() {
                 val idx = filterPresetOrder.indexOf(currentFilterName)
                 val label = currentFilterName.replace("_", " ").uppercase(Locale.ROOT)
                 if (idx > 0) "FILTER: $label ($idx/$total)" else "FILTER: NORMAL (0/$total)"
-            }
-            CreativeTarget.LENSES -> {
-                val total = (arLensOrder.size - 1).coerceAtLeast(1)
-                val idx = arLensOrder.indexOf(currentArLensName)
-                val label = currentArLensName.replace("_", " ").uppercase(Locale.ROOT)
-                when {
-                    currentArLensName == "comic_frame" && isCartoonShaderActive() -> "LENS: $label · PANEL ON ($idx/$total)"
-                    currentArLensName == "comic_frame" -> "LENS: $label · NEED TOON/COMIC ($idx/$total)"
-                    idx > 0 -> "LENS: $label ($idx/$total)"
-                    else -> "LENS: OFF (0/$total)"
-                }
             }
             CreativeTarget.ART -> {
                 val artList = getModeOrderedArtEffects()
@@ -2829,6 +3124,38 @@ class MainActivity : AppCompatActivity() {
         else -> false
     }
 
+    private fun syncAllStateToOpenGLProcessor() {
+        val proc = openGLProcessor ?: return
+        if (::filterManager.isInitialized) {
+            proc.setFilterPreset(filterManager.getPreset())
+        }
+        val custom = injectedCustomFilters.find { it.id == currentFilterName }
+        if (custom != null) {
+            proc.setCustomFilterParams(true, custom.brightness, custom.contrast, custom.saturation, custom.grayscale > 50)
+        } else {
+            proc.setCustomFilterParams(false, 0, 0, 0, false)
+        }
+        proc.setShootingEffect(currentShootingEffect)
+        proc.setEffectIntensity(currentShootingEffect, (activeEffectIntensity * 100f).toInt().coerceIn(0, 100))
+        proc.setAdjustments(
+            viewBinding.proOverlayView.liveBrightnessPercent,
+            viewBinding.proOverlayView.liveContrastPercent,
+            viewBinding.proOverlayView.liveSaturationPercent
+        )
+        proc.setNightBoost(cameraMode == CameraMode.NIGHT || currentShootingEffect == "night_sight")
+        proc.setComicHalftoneParams(comicHalftoneDensity, comicHalftoneDotSize)
+        proc.setOverlayFlags(
+            filmGrain = viewBinding.proOverlayView.enableFilmGrain || currentFilterName == "ilford_grain",
+            vignette = viewBinding.proOverlayView.enableVignette,
+            cineFlare = viewBinding.proOverlayView.enableCineFlare
+        )
+        if (::gyroStabilizer.isInitialized) {
+            val t = gyroStabilizer.currentTelemetry
+            proc.setGyroEisTransform(t.isEnabled, t.overscanZoom, t.compXNorm, t.compYNorm, t.compRollDeg)
+        }
+        syncOverlayToVideoProcessor()
+    }
+
     private fun applyLivePreviewColorMatrix() {
         val targetView = findTextureView(viewBinding.viewFinder)
         if (targetView == null) {
@@ -2841,7 +3168,7 @@ class MainActivity : AppCompatActivity() {
         val sat = viewBinding.proOverlayView.liveSaturationPercent
         val stylizedActive = isStylizedLiveEffect(currentShootingEffect) || isComicFilterPreset(currentFilterName)
         val isNightActive = (cameraMode == CameraMode.NIGHT || currentShootingEffect == "night_sight")
-        val isIdentity = stylizedActive || (currentFilterName == "normal" && bri == 0 && con == 0 && sat == 0 &&
+        val isIdentity = isPreviewCameraEffectActive || stylizedActive || (currentFilterName == "normal" && bri == 0 && con == 0 && sat == 0 &&
             !isNightActive &&
             currentShootingEffect != "macro_focus" &&
             currentShootingEffect != "double_exposure" &&
@@ -2861,6 +3188,20 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
+        val combined = buildActiveColorMatrix(includeEffectColorLook = true)
+        val colorFilter = ColorMatrixColorFilter(combined)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            targetView.setRenderEffect(RenderEffect.createColorFilterEffect(colorFilter))
+        } else {
+            val paint = Paint().apply { this.colorFilter = colorFilter }
+            targetView.setLayerType(View.LAYER_TYPE_HARDWARE, paint)
+        }
+    }
+
+    private fun buildActiveColorMatrix(includeEffectColorLook: Boolean): ColorMatrix {
+        val bri = viewBinding.proOverlayView.liveBrightnessPercent
+        val con = viewBinding.proOverlayView.liveContrastPercent
+        val sat = viewBinding.proOverlayView.liveSaturationPercent
         val combined = ColorMatrix()
 
         // 1. Base Preset Color Matrix
@@ -3194,6 +3535,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         // 1b. Night Mode & Optical Shooting Effects live luminance boosts
+        if (includeEffectColorLook) {
         if (cameraMode == CameraMode.NIGHT && currentShootingEffect != "night_sight") {
             val gain = if (isNightExtensionActive) 1.22f else 1.38f
             val lift = if (isNightExtensionActive) 18f else 36f
@@ -3513,6 +3855,7 @@ class MainActivity : AppCompatActivity() {
                 )))
             }
         }
+        }
 
         // 2. Live Adjustment Sliders (Brightness / Contrast / Saturation)
         if (sat != 0) {
@@ -3539,13 +3882,7 @@ class MainActivity : AppCompatActivity() {
             )))
         }
 
-        val colorFilter = ColorMatrixColorFilter(combined)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            targetView.setRenderEffect(RenderEffect.createColorFilterEffect(colorFilter))
-        } else {
-            val paint = Paint().apply { this.colorFilter = colorFilter }
-            targetView.setLayerType(View.LAYER_TYPE_HARDWARE, paint)
-        }
+        return combined
     }
 
     private var hudNoticeRunnable: Runnable? = null
@@ -3632,14 +3969,23 @@ class MainActivity : AppCompatActivity() {
             else -> FilterManager.FilterPreset.NORMAL
         }
         filterManager.setPreset(filterPreset)
-        openGLProcessor?.setFilterPreset(filterPreset)
+        syncAllStateToOpenGLProcessor()
         viewBinding.proOverlayView.activeFilterPreset = preset
         syncComicFrameOverlayState()
         if (!isStylizedLiveEffect(currentShootingEffect) && !isComicFilterPreset(preset)) {
             viewBinding.proOverlayView.updateProcessedEffectBitmap(null)
         }
         applyLivePreviewColorMatrix()
+        updateFilterButtons(preset)
+        updateEffectIntensityVisibility()
+        updateCreativeStatusUI()
+        syncStylizeLoopState()
+        if (showNotice) {
+            showHudNotice("Filter: ${preset.replace('_', ' ').uppercase(Locale.ROOT)}")
+        }
+    }
 
+    private fun updateFilterButtons(preset: String) {
         val filterButtons = listOf(
             viewBinding.effectsStudioDrawer.btnFilterNormal to "normal",
             viewBinding.effectsStudioDrawer.btnFilterLutRec709 to "lut_rec709",
@@ -3687,10 +4033,6 @@ class MainActivity : AppCompatActivity() {
                 btn.setTextColor(Color.parseColor("#94A3B8"))
             }
         }
-        updateCreativeStatusUI()
-        if (showNotice) {
-            showHudNotice("Filter: ${preset.replace('_', ' ').uppercase(Locale.ROOT)}")
-        }
     }
 
     private fun setArLens(lens: String, showNotice: Boolean = true) {
@@ -3710,9 +4052,8 @@ class MainActivity : AppCompatActivity() {
         }
         val prevLens = currentArLensName
         currentArLensName = lens
-        if (showNotice) {
-            currentCreativeTarget = CreativeTarget.LENSES
-            isLastActionCreative = true
+        if (lens != "none") {
+            lastActiveArLensName = lens
         }
         val mappedMode = when (lens.lowercase(Locale.ROOT)) {
             "mesh_contour", "mesh" -> ARFaceOverlayView.ArLensMode.MESH_CONTOUR
@@ -3723,11 +4064,43 @@ class MainActivity : AppCompatActivity() {
             else -> {
                 val customLens = injectedCustomLenses.find { it.id == lens }
                 if (customLens != null) {
-                    when (customLens.anchor.lowercase(Locale.ROOT)) {
-                        "forehead" -> ARFaceOverlayView.ArLensMode.GOLDEN_CROWN
-                        "eyes" -> ARFaceOverlayView.ArLensMode.CYBERPUNK_VISOR
-                        "mouth", "nose_cheeks" -> ARFaceOverlayView.ArLensMode.SCIFI_HUD
-                        else -> ARFaceOverlayView.ArLensMode.MESH_CONTOUR
+                    if (customLens.style.equals("glb_3d", ignoreCase = true) &&
+                        (customLens.glbFilePath.isNotEmpty() || customLens.glbAssetPath.isNotEmpty())
+                    ) {
+                        val loaded = if (customLens.glbFilePath.isNotEmpty()) {
+                            viewBinding.arFaceOverlayView.loadGlbModelFromFile(
+                                filePath = customLens.glbFilePath,
+                                anchor = customLens.anchor,
+                                modelScale = customLens.modelScale,
+                                offsetY = customLens.modelOffsetY,
+                                rotYDeg = customLens.modelRotationY,
+                                rotXDeg = customLens.modelRotationX,
+                                autoSpin = customLens.autoSpin
+                            )
+                        } else {
+                            viewBinding.arFaceOverlayView.loadGlbModelFromAsset(
+                                assetPath = customLens.glbAssetPath,
+                                anchor = customLens.anchor,
+                                modelScale = customLens.modelScale,
+                                offsetY = customLens.modelOffsetY,
+                                rotYDeg = customLens.modelRotationY,
+                                rotXDeg = customLens.modelRotationX,
+                                autoSpin = customLens.autoSpin
+                            )
+                        }
+                        if (loaded) {
+                            ARFaceOverlayView.ArLensMode.GLB_3D
+                        } else {
+                            showHudNotice("Failed to load 3D GLB model: ${customLens.name}", isWarning = true)
+                            ARFaceOverlayView.ArLensMode.NONE
+                        }
+                    } else {
+                        when (customLens.anchor.lowercase(Locale.ROOT)) {
+                            "forehead" -> ARFaceOverlayView.ArLensMode.GOLDEN_CROWN
+                            "eyes" -> ARFaceOverlayView.ArLensMode.CYBERPUNK_VISOR
+                            "mouth", "nose_cheeks" -> ARFaceOverlayView.ArLensMode.SCIFI_HUD
+                            else -> ARFaceOverlayView.ArLensMode.MESH_CONTOUR
+                        }
                     }
                 } else ARFaceOverlayView.ArLensMode.NONE
             }
@@ -3738,38 +4111,58 @@ class MainActivity : AppCompatActivity() {
             viewBinding.arFaceOverlayView.clear()
         }
         syncOverlayToVideoProcessor()
+        updateLensButtons(lens)
+        updateArDockStatusLabel()
+        if (isAutoAdaptEnabled && lens != "none" && lens != prevLens) {
+            val recommendedFront = lens in setOf("mesh_contour", "cyberpunk_visor", "golden_crown", "comic_frame") ||
+                mappedMode == ARFaceOverlayView.ArLensMode.GLB_3D
+            val isCurrentlyFront = (lensFacing == CameraSelector.DEFAULT_FRONT_CAMERA)
+            if (recommendedFront != isCurrentlyFront && recording == null) {
+                switchCamera()
+            }
+        }
+        if (showNotice) {
+            if (mappedMode == ARFaceOverlayView.ArLensMode.COMIC_FRAME && !isCartoonShaderActive()) {
+                showHudNotice("AR Lens: COMIC FRAME (Activate Comic Book or Toon shader)", isWarning = true)
+            } else if (mappedMode == ARFaceOverlayView.ArLensMode.GLB_3D) {
+                val displayName = injectedCustomLenses.find { it.id == lens }?.name ?: lens
+                showHudNotice("3D GLB AR Lens: ${displayName.uppercase(Locale.ROOT)}")
+            } else {
+                showHudNotice("AR Lens: ${lens.replace('_', ' ').uppercase(Locale.ROOT)}")
+            }
+        }
+    }
+
+    private fun updateArDockStatusLabel() {
+        val total = (arLensOrder.size - 1).coerceAtLeast(1)
+        val idx = arLensOrder.indexOf(currentArLensName)
+        val label = currentArLensName.replace("_", " ").uppercase(Locale.ROOT)
+        viewBinding.arLensModeDock.tvArDockStatus.text = when {
+            currentArLensName == "comic_frame" && isCartoonShaderActive() -> "AR LENS: $label · PANEL ON ($idx/$total)"
+            currentArLensName == "comic_frame" -> "AR LENS: $label · NEED TOON/COMIC"
+            idx > 0 -> "AR LENS: $label ($idx/$total)"
+            else -> "AR LENS: OFF (0/$total)"
+        }
+    }
+
+    private fun updateLensButtons(lens: String) {
         val lensButtons = listOf(
-            viewBinding.effectsStudioDrawer.btnArNone to "none",
-            viewBinding.effectsStudioDrawer.btnArMesh to "mesh_contour",
-            viewBinding.effectsStudioDrawer.btnArVisor to "cyberpunk_visor",
-            viewBinding.effectsStudioDrawer.btnArCrown to "golden_crown",
-            viewBinding.effectsStudioDrawer.btnArHud to "scifi_hud",
-            viewBinding.effectsStudioDrawer.btnArComicFrame to "comic_frame"
+            viewBinding.arLensModeDock.btnArNone to "none",
+            viewBinding.arLensModeDock.btnArMesh to "mesh_contour",
+            viewBinding.arLensModeDock.btnArVisor to "cyberpunk_visor",
+            viewBinding.arLensModeDock.btnArCrown to "golden_crown",
+            viewBinding.arLensModeDock.btnArHud to "scifi_hud",
+            viewBinding.arLensModeDock.btnArComicFrame to "comic_frame"
         ) + dynamicLensChips
         for ((btn, name) in lensButtons) {
             val isActive = name == lens
             if (isActive) {
                 btn.setBackgroundResource(R.drawable.bg_cinema_button_active)
                 btn.setTextColor(Color.parseColor("#0F172A"))
-                scrollChipIntoView(viewBinding.effectsStudioDrawer.scrollLensesStrip, btn)
+                scrollChipIntoView(viewBinding.arLensModeDock.scrollArModeLensesStrip, btn)
             } else {
                 btn.setBackgroundResource(R.drawable.bg_cinema_button_inactive)
                 btn.setTextColor(Color.parseColor("#94A3B8"))
-            }
-        }
-        if (isAutoAdaptEnabled && lens != "none" && lens != prevLens) {
-            val recommendedFront = lens in setOf("mesh_contour", "cyberpunk_visor", "golden_crown", "comic_frame")
-            val isCurrentlyFront = (lensFacing == CameraSelector.DEFAULT_FRONT_CAMERA)
-            if (recommendedFront != isCurrentlyFront && recording == null) {
-                switchCamera()
-            }
-        }
-        updateCreativeStatusUI()
-        if (showNotice) {
-            if (mappedMode == ARFaceOverlayView.ArLensMode.COMIC_FRAME && !isCartoonShaderActive()) {
-                showHudNotice("AR Lens: COMIC FRAME (Activate Comic Book or Toon shader)", isWarning = true)
-            } else {
-                showHudNotice("AR Lens: ${lens.replace('_', ' ').uppercase(Locale.ROOT)}")
             }
         }
     }
@@ -3777,13 +4170,13 @@ class MainActivity : AppCompatActivity() {
     private fun toggleComicOnomatopoeia() {
         val next = !viewBinding.arFaceOverlayView.enableComicOnomatopoeia
         viewBinding.arFaceOverlayView.enableComicOnomatopoeia = next
-        viewBinding.effectsStudioDrawer.btnArComicOnomatopoeia.setBackgroundResource(
+        viewBinding.arLensModeDock.btnArComicOnomatopoeia.setBackgroundResource(
             if (next) R.drawable.bg_cinema_button_active else R.drawable.bg_cinema_button_inactive
         )
-        viewBinding.effectsStudioDrawer.btnArComicOnomatopoeia.setTextColor(
+        viewBinding.arLensModeDock.btnArComicOnomatopoeia.setTextColor(
             Color.parseColor(if (next) "#0F172A" else "#FACC15")
         )
-        viewBinding.effectsStudioDrawer.btnArComicOnomatopoeia.text = if (next) "POW! ON" else "POW! COMIC"
+        viewBinding.arLensModeDock.btnArComicOnomatopoeia.text = if (next) "POW! ON" else "POW! COMIC SFX"
         if (next && !isAudioMuted) {
             playCameraCue(ToneGenerator.TONE_PROP_BEEP2, 110)
             comicSfxHelper?.playComicBurst(comicSfxPow, comicSfxBam, comicSfxZap, 0.72f, isAudioMuted)
@@ -3952,8 +4345,6 @@ class MainActivity : AppCompatActivity() {
         if (!isStylizedLiveEffect(effectId) && !isComicFilterPreset(currentFilterName)) {
             viewBinding.proOverlayView.updateProcessedEffectBitmap(null)
         }
-        openGLProcessor?.setShootingEffect(effectId)
-        openGLProcessor?.setNightBoost(cameraMode == CameraMode.NIGHT || effectId == "night_sight")
         viewBinding.proOverlayView.enableVignette = (effectId == "vignette")
 
         isUpdatingEffectSwitches = true
@@ -3968,6 +4359,7 @@ class MainActivity : AppCompatActivity() {
         } finally {
             isUpdatingEffectSwitches = false
         }
+        syncAllStateToOpenGLProcessor()
 
         dollyZoomAnimator?.cancel()
         dollyZoomAnimator = null
@@ -4005,8 +4397,9 @@ class MainActivity : AppCompatActivity() {
 
         applyLivePreviewColorMatrix()
         updateShootingEffectButtons()
-        viewBinding.effectsStudioDrawer.layoutEffectIntensity.visibility = if (effectId != "none") View.VISIBLE else View.GONE
+        updateEffectIntensityVisibility()
         updateCreativeStatusUI()
+        syncStylizeLoopState()
         if (showNotice) {
             showHudNotice("Effect: ${getShootingEffectLabel(effectId)}")
         }
@@ -4327,7 +4720,7 @@ class MainActivity : AppCompatActivity() {
         }
         val w = srcBmp.width.coerceAtLeast(1)
         val h = srcBmp.height.coerceAtLeast(1)
-        val maxSample = if (forLivePreview) 420 else 860
+        val maxSample = if (forLivePreview) 360 else 1440
         val sw: Int
         val sh: Int
         if (w >= h) {
@@ -4337,6 +4730,7 @@ class MainActivity : AppCompatActivity() {
             sh = Math.min(h, maxSample)
             sw = Math.max(64, (sh * (w / h.toFloat())).toInt())
         }
+        val refScale = (Math.min(sw, sh).toFloat() / 400f).coerceIn(1f, 3.8f)
 
         if (effectId == "kaleidoscope") {
             val out = Bitmap.createBitmap(sw, sh, Bitmap.Config.ARGB_8888)
@@ -4372,8 +4766,8 @@ class MainActivity : AppCompatActivity() {
 
         // IMPORTANT: Painterly Kuwahara is ONLY for Art painting effects — NEVER for Toon/Cartoon shaders!
         val kuwaharaRadius = when (effectId) {
-            "oil_canvas", "watercolor_wash" -> if (forLivePreview) 3 else 5
-            "pastel_chalk", "lithograph" -> if (forLivePreview) 2 else 4
+            "oil_canvas", "watercolor_wash" -> if (forLivePreview) 3 else 6
+            "pastel_chalk", "lithograph" -> if (forLivePreview) 2 else 5
             else -> 0
         }
         val baseArr = if (kuwaharaRadius > 0) applyKuwaharaIntArray(rawArr, sw, sh, kuwaharaRadius) else rawArr
@@ -4660,14 +5054,15 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             "clay_vinyl_3d" -> {
-                // Smooth 3D Toy / Pixar Vinyl Toon: 4-pass bilateral surface (no blocky Kuwahara) + 2px smooth normals + vinyl specular
+                // Smooth 3D Toy / Pixar Vinyl Toon: 4-pass bilateral surface (no blocky Kuwahara) + scaled smooth normals + vinyl specular
+                val gStep = Math.max(2, Math.round(2f * refScale))
                 for (y in 0 until sh) {
-                    val ym = (y - 2).coerceIn(0, sh - 1) * sw
-                    val yp = (y + 2).coerceIn(0, sh - 1) * sw
+                    val ym = (y - gStep).coerceIn(0, sh - 1) * sw
+                    val yp = (y + gStep).coerceIn(0, sh - 1) * sw
                     val row = y * sw
                     for (x in 0 until sw) {
-                        val xm = (x - 2).coerceIn(0, sw - 1)
-                        val xp = (x + 2).coerceIn(0, sw - 1)
+                        val xm = (x - gStep).coerceIn(0, sw - 1)
+                        val xp = (x + gStep).coerceIn(0, sw - 1)
                         val idx = row + x
                         val c = pxArr[idx]
                         val gx = (lum[row + xp] - lum[row + xm]) * 0.012f
@@ -4699,28 +5094,29 @@ class MainActivity : AppCompatActivity() {
             // AUTHENTIC ART EFFECTS
             // ========================
             "oil_canvas" -> {
-                // Organic painterly oil canvas: wide 2px gradient impasto on bilateral-smoothed Kuwahara + fine linen weave (zero square grid!)
+                // Organic painterly oil canvas: resolution-normalized gradient impasto on bilateral-smoothed Kuwahara + fine linen weave
+                val gStep = Math.max(2, Math.round(2f * refScale))
                 for (y in 0 until sh) {
-                    val ym = (y - 2).coerceIn(0, sh - 1) * sw
-                    val yp = (y + 2).coerceIn(0, sh - 1) * sw
+                    val ym = (y - gStep).coerceIn(0, sh - 1) * sw
+                    val yp = (y + gStep).coerceIn(0, sh - 1) * sw
                     val row = y * sw
+                    val fy = y / refScale
                     for (x in 0 until sw) {
-                        val xm = (x - 2).coerceIn(0, sw - 1)
-                        val xp = (x + 2).coerceIn(0, sw - 1)
+                        val xm = (x - gStep).coerceIn(0, sw - 1)
+                        val xp = (x + gStep).coerceIn(0, sw - 1)
                         val idx = row + x
                         val c = pxArr[idx]
                         val r0 = (c shr 16) and 0xFF
                         val g0 = (c shr 8) and 0xFF
                         val b0 = c and 0xFF
                         val l = lum[idx]
-                        // Smooth 2px-radius directional paint ridge (no sharp 1px box-grid edges!)
+                        val fx = x / refScale
                         val dx = lum[row + xp] - lum[row + xm]
                         val dy = lum[yp + x] - lum[ym + x]
                         val gradMag = Math.abs(dx) + Math.abs(dy)
                         val ridge = ((-dx * 0.45f - dy * 0.55f) * 0.22f).coerceIn(-12f, 16f)
-                        // Organic curved bristle streak along diagonal strokes + fine canvas tooth
-                        val bristle = (Math.sin(x * 0.58 + y * 0.52 + Math.sin((x - y) * 0.14) * 1.8) * 3.8).toFloat()
-                        val weave = (Math.sin(x * 1.9) * Math.sin(y * 1.9) * 2.2).toFloat()
+                        val bristle = (Math.sin(fx * 0.58 + fy * 0.52 + Math.sin((fx - fy) * 0.14) * 1.8) * 3.8).toFloat()
+                        val weave = (Math.sin(fx * 1.9) * Math.sin(fy * 1.9) * 2.2).toFloat()
                         val brushTone = ridge + bristle * (0.4f + Math.min(0.6f, gradMag / 90f)) + weave
                         outArr[idx] = packRgb(
                             (l + (r0 - l) * 1.32f + brushTone + 3f).toInt(),
@@ -4733,16 +5129,18 @@ class MainActivity : AppCompatActivity() {
             "charcoal_sketch" -> {
                 for (y in 0 until sh) {
                     val row = y * sw
+                    val fy = y / refScale
                     for (x in 0 until sw) {
                         val idx = row + x
+                        val fx = x / refScale
                         val edgeInk = smoothstep(22f, 52f, edges[idx])
                         val l = lum[idx]
-                        val h1 = 0.5f + 0.5f * Math.sin((x + y) * 0.88 + Math.sin(y * 0.12)).toFloat()
-                        val h2 = 0.5f + 0.5f * Math.sin((x - y) * 0.88 + Math.cos(x * 0.12)).toFloat()
+                        val h1 = 0.5f + 0.5f * Math.sin((fx + fy) * 0.88 + Math.sin(fy * 0.12)).toFloat()
+                        val h2 = 0.5f + 0.5f * Math.sin((fx - fy) * 0.88 + Math.cos(fx * 0.12)).toFloat()
                         val midShade = smoothstep(158f, 76f, l) * (0.26f + 0.40f * h1)
                         val deepShade = smoothstep(82f, 24f, l) * (0.42f + 0.46f * h2)
                         val shade = Math.max(edgeInk * 0.94f, Math.max(midShade, deepShade))
-                        val tooth = (Math.sin(x * 1.6 + y * 0.8) * Math.cos(y * 1.2 - x * 0.6) * 5.0).toFloat()
+                        val tooth = (Math.sin(fx * 1.6 + fy * 0.8) * Math.cos(fy * 1.2 - fx * 0.6) * 5.0).toFloat()
                         val paperL = 245f - (1f - (l / 255f).coerceIn(0f, 1f)) * 18f + tooth
                         val v = paperL * (1f - shade) + 20f * shade
                         outArr[idx] = packRgb((v + 3f).toInt(), v.toInt(), (v - 6f).toInt())
@@ -4752,13 +5150,15 @@ class MainActivity : AppCompatActivity() {
             "ink_and_line" -> {
                 for (y in 0 until sh) {
                     val row = y * sw
+                    val fy = y / refScale
                     for (x in 0 until sw) {
                         val idx = row + x
+                        val fx = x / refScale
                         val edgeInk = smoothstep(22f, 48f, edges[idx])
                         val l = lum[idx]
                         val solidDark = smoothstep(42f, 20f, l)
-                        val w1 = smoothstep(0.62f, 0.92f, 0.5f + 0.5f * Math.sin((x + y) * 1.15).toFloat())
-                        val w2 = smoothstep(0.62f, 0.92f, 0.5f + 0.5f * Math.sin((x - y) * 1.15).toFloat())
+                        val w1 = smoothstep(0.62f, 0.92f, 0.5f + 0.5f * Math.sin((fx + fy) * 1.15).toFloat())
+                        val w2 = smoothstep(0.62f, 0.92f, 0.5f + 0.5f * Math.sin((fx - fy) * 1.15).toFloat())
                         val hatch = Math.max(
                             smoothstep(108f, 68f, l) * w1 * 0.78f,
                             smoothstep(64f, 34f, l) * w2 * 0.85f
@@ -4775,8 +5175,10 @@ class MainActivity : AppCompatActivity() {
             "watercolor_wash" -> {
                 for (y in 0 until sh) {
                     val row = y * sw
+                    val fy = y / refScale
                     for (x in 0 until sw) {
                         val idx = row + x
+                        val fx = x / refScale
                         val c = pxArr[idx]
                         val r0 = (c shr 16) and 0xFF
                         val g0 = (c shr 8) and 0xFF
@@ -4787,7 +5189,7 @@ class MainActivity : AppCompatActivity() {
                         var g = (l + (g0 - l) * 1.46f + 14f) * (1f - bleach) + 248f * bleach
                         var b = (l + (b0 - l) * 1.46f + 12f) * (1f - bleach) + 240f * bleach
                         val pool = 1f - smoothstep(26f, 70f, edges[idx]) * 0.24f
-                        val tooth = ((Math.sin(x * 0.8 + y * 0.45) + Math.cos(y * 0.7 - x * 0.35)) * 3.0).toFloat()
+                        val tooth = ((Math.sin(fx * 0.8 + fy * 0.45) + Math.cos(fy * 0.7 - fx * 0.35)) * 3.0).toFloat()
                         outArr[idx] = packRgb((r * pool + tooth).toInt(), (g * pool + tooth).toInt(), (b * pool + tooth).toInt())
                     }
                 }
@@ -4795,8 +5197,10 @@ class MainActivity : AppCompatActivity() {
             "pastel_chalk" -> {
                 for (y in 0 until sh) {
                     val row = y * sw
+                    val fy = y / refScale
                     for (x in 0 until sw) {
                         val idx = row + x
+                        val fx = x / refScale
                         val c = pxArr[idx]
                         val r0 = (c shr 16) and 0xFF
                         val g0 = (c shr 8) and 0xFF
@@ -4804,7 +5208,7 @@ class MainActivity : AppCompatActivity() {
                         val l = Math.max(1f, lum[idx])
                         val softL = softArtBand(l, 7)
                         val sc = softL / l
-                        val chalkTooth = (Math.sin(x * 0.42 + y * 0.32) * 2.2 + Math.cos(y * 0.80) * 1.4).toFloat()
+                        val chalkTooth = (Math.sin(fx * 0.42 + fy * 0.32) * 2.2 + Math.cos(fy * 0.80) * 1.4).toFloat()
                         val outline = smoothstep(32f, 80f, edges[idx]) * 0.16f
                         val r = ((l + (r0 - l) * 0.88f) * sc * 0.78f + 56f + chalkTooth) * (1f - outline)
                         val g = ((l + (g0 - l) * 0.88f) * sc * 0.78f + 54f + chalkTooth) * (1f - outline)
@@ -4843,10 +5247,12 @@ class MainActivity : AppCompatActivity() {
             "woodcut_engraving" -> {
                 for (y in 0 until sh) {
                     val row = y * sw
+                    val fy = y / refScale
                     for (x in 0 until sw) {
                         val idx = row + x
+                        val fx = x / refScale
                         val l = (lum[idx] / 255f).coerceIn(0f, 1f)
-                        val wave = 0.5f + 0.5f * Math.sin(y * 1.35 + Math.sin(x * 0.05) * 2.2).toFloat()
+                        val wave = 0.5f + 0.5f * Math.sin(fy * 1.35 + Math.sin(fx * 0.05) * 2.2).toFloat()
                         val burin = smoothstep(l - 0.14f, l + 0.14f, wave)
                         val borderInk = smoothstep(24f, 54f, edges[idx])
                         val ink = if (l < 0.14f) 1f else if (l > 0.88f) borderInk else Math.max(borderInk, burin)
@@ -4861,8 +5267,10 @@ class MainActivity : AppCompatActivity() {
             "lithograph" -> {
                 for (y in 0 until sh) {
                     val row = y * sw
+                    val fy = y / refScale
                     for (x in 0 until sw) {
                         val idx = row + x
+                        val fx = x / refScale
                         val c = pxArr[idx]
                         val r0 = (c shr 16) and 0xFF
                         val g0 = (c shr 8) and 0xFF
@@ -4870,7 +5278,7 @@ class MainActivity : AppCompatActivity() {
                         val l = Math.max(1f, lum[idx])
                         val stoneBand = softArtBand(l, 5)
                         val sc = stoneBand / l
-                        val stipple = (Math.sin(x * 2.1 + y * 1.7) * Math.cos(x * 1.3 - y * 2.3) * 6.0).toFloat()
+                        val stipple = (Math.sin(fx * 2.1 + fy * 1.7) * Math.cos(fx * 1.3 - fy * 2.3) * 6.0).toFloat()
                         val inkLine = smoothstep(26f, 60f, edges[idx]) * 0.44f
                         val r = ((l + (r0 - l) * 0.42f) * sc * 0.92f + 16f + stipple) * (1f - inkLine)
                         val g = ((l + (g0 - l) * 0.42f) * sc * 0.90f + 14f + stipple) * (1f - inkLine)
@@ -4966,10 +5374,14 @@ class MainActivity : AppCompatActivity() {
         if (isClean) {
             viewBinding.btnCleanScreen.setImageResource(R.drawable.ic_eye_off)
             viewBinding.btnCleanScreen.setColorFilter(Color.parseColor("#E2E8F0"))
+            viewBinding.arLensModeDock.root.visibility = View.GONE
             // silent (no popup)
         } else {
             viewBinding.btnCleanScreen.setImageResource(R.drawable.ic_eye)
             viewBinding.btnCleanScreen.setColorFilter(Color.parseColor("#CCCCCC"))
+            if (cameraMode == CameraMode.AR_LENS && recording == null) {
+                viewBinding.arLensModeDock.root.visibility = View.VISIBLE
+            }
             // silent (no popup)
         }
     }
@@ -5084,14 +5496,6 @@ class MainActivity : AppCompatActivity() {
             ProOverlayView.GridType.CINEMATIC_239 -> ProOverlayView.GridType.NONE
         }
         setGridMode(nextMode)
-        val name = when (nextMode) {
-            ProOverlayView.GridType.NONE -> "Grid: OFF (No Grid)"
-            ProOverlayView.GridType.RULE_OF_THIRDS -> "Grid: Rule of Thirds"
-            ProOverlayView.GridType.GOLDEN_SPIRAL -> "Grid: Golden Spiral"
-            ProOverlayView.GridType.GOLDEN_RATIO_PHI -> "Grid: Golden Ratio (Phi)"
-            ProOverlayView.GridType.DIAGONAL_SYMMETRY -> "Grid: Dynamic Symmetry"
-            ProOverlayView.GridType.CINEMATIC_239 -> "Grid: 2.39:1 CinemaScope"
-        }
         // silent (no popup)
     }
 
@@ -5174,14 +5578,6 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        val label = when (matte) {
-            ProOverlayView.AspectMatte.NONE -> "Matte: OFF (Full Sensor)"
-            ProOverlayView.AspectMatte.CINE_239 -> "Matte: 2.39:1 CinemaScope"
-            ProOverlayView.AspectMatte.SQUARE_1_1 -> "Matte: 1:1 Square Feed"
-            ProOverlayView.AspectMatte.VERTICAL_9_16 -> "Matte: 9:16 Vertical Reel"
-            ProOverlayView.AspectMatte.PORTRAIT_4_5 -> "Matte: 4:5 Social Portrait"
-            ProOverlayView.AspectMatte.WIDESCREEN_16_9 -> "Matte: 16:9 Cinema"
-        }
         // silent (no popup)
         updateActiveInstrumentsCount()
     }
@@ -5240,6 +5636,9 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
+        // Ensure OpenGL SurfaceProcessor has the latest active filter, effect, intensity, adjustments & AR overlay before recording starts
+        syncAllStateToOpenGLProcessor()
+
         // Start a new recording session
         val name = SimpleDateFormat(FILENAME_FORMAT, Locale.US).format(System.currentTimeMillis())
         val contentValues = ContentValues().apply {
@@ -5273,22 +5672,28 @@ class MainActivity : AppCompatActivity() {
                         isRecordingPaused = false
                         viewBinding.btnCapture.setImageResource(R.drawable.bg_record_button_active)
                         viewBinding.recordingTimer.visibility = View.VISIBLE
-                        viewBinding.tvRecordingStatus.text = "REC"
+                        viewBinding.tvRecordingStatus.text = if (cameraMode == CameraMode.AR_LENS) "AR REC" else "REC"
                         viewBinding.tvRecordingStatus.setTextColor(Color.parseColor("#EF4444"))
                         viewBinding.recordingDot.visibility = View.VISIBLE
-                        viewBinding.btnPauseResume.visibility = View.VISIBLE
+                        viewBinding.btnPauseResume.visibility = if (cameraMode == CameraMode.AR_LENS) View.GONE else View.VISIBLE
                         viewBinding.btnGallery.visibility = View.VISIBLE
                         viewBinding.btnPauseResume.setImageResource(R.drawable.ic_pause)
+                        if (cameraMode == CameraMode.AR_LENS) {
+                            viewBinding.arLensModeDock.root.visibility = View.GONE
+                            viewBinding.arCalibrationDrawer.visibility = View.GONE
+                        }
 
                         // Reset stopped offset and start chronometer from 00:00
                         timeWhenStopped = 0L
                         viewBinding.chronometer.base = SystemClock.elapsedRealtime()
+                        viewBinding.chronometer.setTextColor(Color.parseColor("#FFFFFF"))
                         viewBinding.chronometer.start()
 
                         startAutoLoopTicker()
 
                         viewBinding.tabPhoto.isEnabled = false
                         viewBinding.tabVideo.isEnabled = false
+                        viewBinding.tabArLens.isEnabled = false
                         viewBinding.btnSwitchCamera.isEnabled = false
                     }
 
@@ -5311,7 +5716,7 @@ class MainActivity : AppCompatActivity() {
                         // Offset base by saved elapsed time so counting resumes seamlessly from where it stopped
                         viewBinding.chronometer.base = SystemClock.elapsedRealtime() - timeWhenStopped
                         viewBinding.chronometer.start()
-                        viewBinding.tvRecordingStatus.text = "REC"
+                        viewBinding.tvRecordingStatus.text = if (cameraMode == CameraMode.AR_LENS) "AR REC" else "REC"
                         viewBinding.tvRecordingStatus.setTextColor(Color.parseColor("#EF4444"))
                         viewBinding.recordingDot.visibility = View.VISIBLE
                         viewBinding.btnPauseResume.setImageResource(R.drawable.ic_pause)
@@ -5321,18 +5726,31 @@ class MainActivity : AppCompatActivity() {
                     is VideoRecordEvent.Finalize -> {
                         playCameraCue(ToneGenerator.TONE_PROP_BEEP, 110)
                         stopAutoLoopTicker()
+                        isArHoldRecording = false
                         viewBinding.chronometer.stop()
                         timeWhenStopped = 0L
-                        viewBinding.tvRecordingStatus.text = "STANDBY"
-                        viewBinding.tvRecordingStatus.setTextColor(ContextCompat.getColor(this, android.R.color.darker_gray))
-                        viewBinding.recordingDot.visibility = View.GONE
-                        viewBinding.chronometer.text = "00:00:00"
                         viewBinding.btnPauseResume.visibility = View.GONE
                         viewBinding.btnGallery.visibility = View.VISIBLE
-                        viewBinding.btnCapture.setImageResource(R.drawable.bg_record_button_idle)
+                        if (cameraMode == CameraMode.AR_LENS) {
+                            viewBinding.tvRecordingStatus.text = "AR LENS"
+                            viewBinding.tvRecordingStatus.setTextColor(Color.parseColor("#E879F9"))
+                            viewBinding.recordingDot.setBackgroundResource(R.drawable.bg_green_dot)
+                            viewBinding.recordingDot.visibility = View.VISIBLE
+                            viewBinding.chronometer.text = "TAP PHOTO · HOLD 1S VID"
+                            viewBinding.chronometer.setTextColor(Color.parseColor("#F0ABFC"))
+                            viewBinding.btnCapture.setImageResource(R.drawable.bg_shutter_button)
+                            viewBinding.arLensModeDock.root.visibility = View.VISIBLE
+                        } else {
+                            viewBinding.tvRecordingStatus.text = "STANDBY"
+                            viewBinding.tvRecordingStatus.setTextColor(ContextCompat.getColor(this, android.R.color.darker_gray))
+                            viewBinding.recordingDot.visibility = View.GONE
+                            viewBinding.chronometer.text = "00:00:00"
+                            viewBinding.btnCapture.setImageResource(R.drawable.bg_record_button_idle)
+                        }
 
                         viewBinding.tabPhoto.isEnabled = true
                         viewBinding.tabVideo.isEnabled = true
+                        viewBinding.tabArLens.isEnabled = true
                         viewBinding.btnSwitchCamera.isEnabled = true
 
                         if (!recordEvent.hasError()) {
@@ -5386,19 +5804,22 @@ class MainActivity : AppCompatActivity() {
         val imageCapture = imageCapture ?: return
 
         val name = SimpleDateFormat(FILENAME_FORMAT, Locale.US).format(System.currentTimeMillis())
-        val contentValues = ContentValues().apply {
-            put(MediaStore.MediaColumns.DISPLAY_NAME, name)
-            put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/CameraX-Image")
-            }
-        }
-
-        val outputOptions = ImageCapture.OutputFileOptions.Builder(
-            contentResolver,
-            MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-            contentValues
-        ).build()
+        val needsPostProcess = cameraMode == CameraMode.NIGHT ||
+            isMultiCamPipEnabled && viewBinding.pipCardContainer.visibility == View.VISIBLE ||
+            currentFilterName != "normal" ||
+            currentShootingEffect != "none" ||
+            viewBinding.proOverlayView.liveBrightnessPercent != 0 ||
+            viewBinding.proOverlayView.liveContrastPercent != 0 ||
+            viewBinding.proOverlayView.liveSaturationPercent != 0 ||
+            viewBinding.arFaceOverlayView.currentLens != ARFaceOverlayView.ArLensMode.NONE ||
+            viewBinding.arFaceOverlayView.enableComicOnomatopoeia ||
+            viewBinding.arFaceOverlayView.enableComicSpeechBubble ||
+            viewBinding.arFaceOverlayView.hasArTextItems() ||
+            viewBinding.proOverlayView.enableFilmGrain ||
+            viewBinding.proOverlayView.enableDateStamp ||
+            viewBinding.proOverlayView.enableCineFlare ||
+            viewBinding.proOverlayView.enableVignette ||
+            viewBinding.proOverlayView.showWatermark
 
         if (!isBurst) {
             if (cameraMode == CameraMode.NIGHT) {
@@ -5419,6 +5840,67 @@ class MainActivity : AppCompatActivity() {
             null
         }
 
+        if (needsPostProcess) {
+            // Capture to private cache file first, apply all filters/effects/Art/Toon/AR cleanly,
+            // then publish ONCE into MediaStore (IS_PENDING=1 -> write -> IS_PENDING=0) so OEM Scoped Storage never blocks overwrite!
+            val tempFile = File(cacheDir, "raw_capture_${System.currentTimeMillis()}.jpg")
+            val tempOutputOptions = ImageCapture.OutputFileOptions.Builder(tempFile).build()
+            imageCapture.takePicture(
+                tempOutputOptions,
+                ContextCompat.getMainExecutor(this),
+                object : ImageCapture.OnImageSavedCallback {
+                    override fun onError(exc: ImageCaptureException) {
+                        if (pipBitmapSnapshot != null && !pipBitmapSnapshot.isRecycled) pipBitmapSnapshot.recycle()
+                        tempFile.delete()
+                        Log.e(TAG, "Photo capture failed: ${exc.message}", exc)
+                        if (cameraMode == CameraMode.NIGHT) {
+                            runOnUiThread {
+                                viewBinding.tvRecordingStatus.text = "NIGHT"
+                                viewBinding.tvRecordingStatus.setTextColor(Color.parseColor("#818CF8"))
+                            }
+                        }
+                    }
+
+                    override fun onImageSaved(output: ImageCapture.OutputFileResults) {
+                        cameraExecutor.execute {
+                            val finalUri = processAndSaveCreativePhoto(tempFile, name, pipBitmapSnapshot)
+                            runOnUiThread {
+                                if (cameraMode == CameraMode.NIGHT) {
+                                    viewBinding.tvRecordingStatus.text = "NIGHT"
+                                    viewBinding.tvRecordingStatus.setTextColor(Color.parseColor("#818CF8"))
+                                }
+                                if (finalUri != null) {
+                                    lastCapturedUri = finalUri
+                                    lastCapturedMimeType = "image/jpeg"
+                                    try {
+                                        viewBinding.ivGalleryThumbnail.setImageURI(null)
+                                        viewBinding.ivGalleryThumbnail.setImageURI(finalUri)
+                                    } catch (e: Exception) {
+                                        Log.e(TAG, "Failed updating gallery thumbnail", e)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            )
+            return
+        }
+
+        val contentValues = ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, name)
+            put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/CameraX-Image")
+            }
+        }
+
+        val outputOptions = ImageCapture.OutputFileOptions.Builder(
+            contentResolver,
+            MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+            contentValues
+        ).build()
+
         imageCapture.takePicture(
             outputOptions,
             ContextCompat.getMainExecutor(this),
@@ -5426,12 +5908,6 @@ class MainActivity : AppCompatActivity() {
                 override fun onError(exc: ImageCaptureException) {
                     if (pipBitmapSnapshot != null && !pipBitmapSnapshot.isRecycled) pipBitmapSnapshot.recycle()
                     Log.e(TAG, "Photo capture failed: ${exc.message}", exc)
-                    if (cameraMode == CameraMode.NIGHT) {
-                        runOnUiThread {
-                            viewBinding.tvRecordingStatus.text = "NIGHT"
-                            viewBinding.tvRecordingStatus.setTextColor(Color.parseColor("#818CF8"))
-                        }
-                    }
                 }
 
                 override fun onImageSaved(output: ImageCapture.OutputFileResults) {
@@ -5440,48 +5916,12 @@ class MainActivity : AppCompatActivity() {
                     if (savedUri != null) {
                         lastCapturedUri = savedUri
                         lastCapturedMimeType = "image/jpeg"
-
-                        val needsPostProcess = cameraMode == CameraMode.NIGHT ||
-                            pipBitmapSnapshot != null ||
-                            currentFilterName != "normal" ||
-                            currentShootingEffect != "none" ||
-                            viewBinding.proOverlayView.liveBrightnessPercent != 0 ||
-                            viewBinding.proOverlayView.liveContrastPercent != 0 ||
-                            viewBinding.proOverlayView.liveSaturationPercent != 0 ||
-                            viewBinding.arFaceOverlayView.currentLens != ARFaceOverlayView.ArLensMode.NONE ||
-                            viewBinding.arFaceOverlayView.enableComicOnomatopoeia ||
-                            viewBinding.arFaceOverlayView.enableComicSpeechBubble ||
-                            viewBinding.arFaceOverlayView.hasArTextItems() ||
-                            viewBinding.proOverlayView.enableFilmGrain ||
-                            viewBinding.proOverlayView.enableDateStamp ||
-                            viewBinding.proOverlayView.enableCineFlare ||
-                            viewBinding.proOverlayView.enableVignette ||
-                            viewBinding.proOverlayView.showWatermark
-
-                        if (needsPostProcess) {
-                            cameraExecutor.execute {
-                                applyCreativeLookToSavedPhoto(savedUri, pipBitmapSnapshot)
-                                runOnUiThread {
-                                    if (cameraMode == CameraMode.NIGHT) {
-                                        viewBinding.tvRecordingStatus.text = "NIGHT"
-                                        viewBinding.tvRecordingStatus.setTextColor(Color.parseColor("#818CF8"))
-                                    }
-                                    try {
-                                        viewBinding.ivGalleryThumbnail.setImageURI(null)
-                                        viewBinding.ivGalleryThumbnail.setImageURI(savedUri)
-                                    } catch (e: Exception) {
-                                        Log.e(TAG, "Failed updating gallery thumbnail", e)
-                                    }
-                                }
-                            }
-                        } else {
-                            runOnUiThread {
-                                try {
-                                    viewBinding.ivGalleryThumbnail.setImageURI(null)
-                                    viewBinding.ivGalleryThumbnail.setImageURI(savedUri)
-                                } catch (e: Exception) {
-                                    Log.e(TAG, "Failed updating gallery thumbnail", e)
-                                }
+                        runOnUiThread {
+                            try {
+                                viewBinding.ivGalleryThumbnail.setImageURI(null)
+                                viewBinding.ivGalleryThumbnail.setImageURI(savedUri)
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Failed updating gallery thumbnail", e)
                             }
                         }
                     }
@@ -5608,7 +6048,6 @@ class MainActivity : AppCompatActivity() {
             }
 
             cameraExecutor.execute {
-                var stackedUri: Uri? = null
                 var stackedBmp: Bitmap? = null
                 try {
                     stackedBmp = nightExposureStacker.stackExposureFrames(snapshot, avgLumaHint)
@@ -5622,7 +6061,7 @@ class MainActivity : AppCompatActivity() {
                             put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/CameraX-Image")
                         }
                     }
-                    stackedUri = contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, cv)
+                    val stackedUri = contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, cv)
                     val uri = stackedUri
                     if (uri != null) {
                         contentResolver.openOutputStream(uri, "wt")?.use { out ->
@@ -5656,7 +6095,7 @@ class MainActivity : AppCompatActivity() {
                     for (bmp in snapshot) {
                         if (!bmp.isRecycled) bmp.recycle()
                     }
-                    if (stackedBmp != null && !stackedBmp!!.isRecycled) stackedBmp!!.recycle()
+                    stackedBmp?.takeIf { !it.isRecycled }?.recycle()
                     isNightStacking = false
                     runOnUiThread {
                         viewBinding.proOverlayView.updateNightStackProgress(false, 0, totalFrames)
@@ -5723,6 +6162,107 @@ class MainActivity : AppCompatActivity() {
         captureBracketStep(0)
     }
 
+    private fun computeSafeInSampleSize(srcW: Int, srcH: Int, maxEdge: Int = 2560): Int {
+        var sample = 1
+        var w = srcW
+        var h = srcH
+        while (Math.max(w, h) > maxEdge * 1.45f) {
+            sample *= 2
+            w /= 2
+            h /= 2
+        }
+        return sample.coerceAtLeast(1)
+    }
+
+    private fun decodeOrientedBitmapSafely(rawFile: File): Bitmap? {
+        val orientation = try {
+            ExifInterface(rawFile.absolutePath).getAttributeInt(
+                ExifInterface.TAG_ORIENTATION,
+                ExifInterface.ORIENTATION_NORMAL
+            )
+        } catch (_: Throwable) {
+            ExifInterface.ORIENTATION_NORMAL
+        }
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(rawFile.absolutePath, bounds)
+        val sampleSize = computeSafeInSampleSize(bounds.outWidth.coerceAtLeast(1), bounds.outHeight.coerceAtLeast(1), 2560)
+        val decodeOpts = BitmapFactory.Options().apply {
+            inSampleSize = sampleSize
+            inPreferredConfig = Bitmap.Config.ARGB_8888
+        }
+        val rawBmp = BitmapFactory.decodeFile(rawFile.absolutePath, decodeOpts) ?: return null
+        val rotDeg = when (orientation) {
+            ExifInterface.ORIENTATION_ROTATE_90 -> 90f
+            ExifInterface.ORIENTATION_ROTATE_180 -> 180f
+            ExifInterface.ORIENTATION_ROTATE_270 -> 270f
+            else -> 0f
+        }
+        return if (rotDeg != 0f) {
+            val m = Matrix().apply { postRotate(rotDeg) }
+            Bitmap.createBitmap(rawBmp, 0, 0, rawBmp.width, rawBmp.height, m, true).also {
+                if (it != rawBmp) rawBmp.recycle()
+            }
+        } else {
+            rawBmp
+        }
+    }
+
+    private fun processAndSaveCreativePhoto(rawFile: File, displayName: String, pipBitmapSnapshot: Bitmap? = null): Uri? {
+        try {
+            val orientedBmp = decodeOrientedBitmapSafely(rawFile)
+            if (orientedBmp == null) {
+                if (pipBitmapSnapshot != null && !pipBitmapSnapshot.isRecycled) pipBitmapSnapshot.recycle()
+                return null
+            }
+            val finalBmp = renderCreativeLookOntoBitmap(orientedBmp, pipBitmapSnapshot, skipNightLut = false)
+            val cv = ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, displayName)
+                put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/CameraX-Image")
+                    put(MediaStore.Images.Media.IS_PENDING, 1)
+                }
+            }
+            val uri = contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, cv)
+            if (uri != null) {
+                contentResolver.openOutputStream(uri)?.use { out ->
+                    finalBmp.compress(Bitmap.CompressFormat.JPEG, 94, out)
+                    out.flush()
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    val doneCv = ContentValues().apply { put(MediaStore.Images.Media.IS_PENDING, 0) }
+                    contentResolver.update(uri, doneCv, null, null)
+                }
+            }
+            if (!finalBmp.isRecycled) finalBmp.recycle()
+            return uri
+        } catch (t: Throwable) {
+            if (pipBitmapSnapshot != null && !pipBitmapSnapshot.isRecycled) pipBitmapSnapshot.recycle()
+            Log.e(TAG, "Failed processing creative photo, falling back to raw file save", t)
+            return try {
+                val cv = ContentValues().apply {
+                    put(MediaStore.MediaColumns.DISPLAY_NAME, displayName)
+                    put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/CameraX-Image")
+                    }
+                }
+                val uri = contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, cv)
+                if (uri != null) {
+                    rawFile.inputStream().use { input ->
+                        contentResolver.openOutputStream(uri)?.use { output -> input.copyTo(output) }
+                    }
+                }
+                uri
+            } catch (fallbackErr: Throwable) {
+                Log.e(TAG, "Fallback raw photo save failed", fallbackErr)
+                null
+            }
+        } finally {
+            try { rawFile.delete() } catch (_: Throwable) {}
+        }
+    }
+
     private fun applyCreativeLookToSavedPhoto(savedUri: Uri, pipBitmapSnapshot: Bitmap? = null, skipNightLut: Boolean = false) {
         try {
             var orientation = ExifInterface.ORIENTATION_NORMAL
@@ -5734,8 +6274,16 @@ class MainActivity : AppCompatActivity() {
                 )
             }
 
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            contentResolver.openInputStream(savedUri)?.use { input ->
+                BitmapFactory.decodeStream(input, null, bounds)
+            }
+            val sampleSize = computeSafeInSampleSize(bounds.outWidth.coerceAtLeast(1), bounds.outHeight.coerceAtLeast(1), 2560)
             val rawBmp = contentResolver.openInputStream(savedUri)?.use { input ->
-                val opts = BitmapFactory.Options().apply { inSampleSize = 1 }
+                val opts = BitmapFactory.Options().apply {
+                    inSampleSize = sampleSize
+                    inPreferredConfig = Bitmap.Config.ARGB_8888
+                }
                 BitmapFactory.decodeStream(input, null, opts)
             }
             if (rawBmp == null) {
@@ -5758,10 +6306,54 @@ class MainActivity : AppCompatActivity() {
                 rawBmp
             }
 
-            val filtered = filterManager.applyFilterToBitmap(orientedBmp)
-            var finalBmp = filtered.copy(Bitmap.Config.ARGB_8888, true)
-            if (filtered != orientedBmp) filtered.recycle()
-            if (finalBmp != orientedBmp && !orientedBmp.isRecycled) orientedBmp.recycle()
+            val finalBmp = renderCreativeLookOntoBitmap(orientedBmp, pipBitmapSnapshot, skipNightLut)
+            val outStream = try {
+                contentResolver.openOutputStream(savedUri, "wt")
+            } catch (_: Throwable) {
+                contentResolver.openOutputStream(savedUri, "w")
+            }
+            outStream?.use { out ->
+                finalBmp.compress(Bitmap.CompressFormat.JPEG, 94, out)
+                out.flush()
+            }
+            if (!finalBmp.isRecycled) finalBmp.recycle()
+        } catch (e: Throwable) {
+            if (pipBitmapSnapshot != null && !pipBitmapSnapshot.isRecycled) pipBitmapSnapshot.recycle()
+            Log.e(TAG, "Failed post-processing photo creative look", e)
+        }
+    }
+
+    private fun renderCreativeLookOntoBitmap(orientedBmp: Bitmap, pipBitmapSnapshot: Bitmap? = null, skipNightLut: Boolean = false): Bitmap {
+            var finalBmp = Bitmap.createBitmap(orientedBmp.width, orientedBmp.height, Bitmap.Config.ARGB_8888)
+            run {
+                val baseCanvas = Canvas(finalBmp)
+                val basePaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+                val hasColorMatrix = !isComicFilterPreset(currentFilterName) && (
+                    currentFilterName != "normal" ||
+                    viewBinding.proOverlayView.liveBrightnessPercent != 0 ||
+                    viewBinding.proOverlayView.liveContrastPercent != 0 ||
+                    viewBinding.proOverlayView.liveSaturationPercent != 0
+                )
+                if (hasColorMatrix) {
+                    basePaint.colorFilter = ColorMatrixColorFilter(buildActiveColorMatrix(includeEffectColorLook = false))
+                }
+                baseCanvas.drawBitmap(orientedBmp, 0f, 0f, basePaint)
+                if (!orientedBmp.isRecycled) orientedBmp.recycle()
+
+                // If Comic Book base filter preset is selected, apply multi-pass GPU Comic shader with reliable CPU fallback
+                if (isComicFilterPreset(currentFilterName)) {
+                    val gpuComic = try {
+                        filterManager.applyToonEffectToBitmap(finalBmp, "comic_book", 0.92f)
+                    } catch (_: Throwable) {
+                        null
+                    }
+                    val comicStyled = gpuComic ?: renderStylizedEffectBitmap(finalBmp, "comic_book", forLivePreview = false)
+                    val writableComic = comicStyled.copy(Bitmap.Config.ARGB_8888, true)
+                    if (comicStyled != finalBmp && !comicStyled.isRecycled) comicStyled.recycle()
+                    if (!finalBmp.isRecycled) finalBmp.recycle()
+                    finalBmp = writableComic
+                }
+            }
 
             // Bake Macro Focus 1.28x or Action Stabilization / Dolly Zoom crop before drawing overlays
             if (currentShootingEffect == "macro_focus" || currentShootingEffect == "action_stabilization" || currentShootingEffect == "dolly_zoom") {
@@ -5968,7 +6560,11 @@ class MainActivity : AppCompatActivity() {
                 }
                 "cel_shaded_studio", "graphic_novel_noir", "manga_ink", "pop_art_print",
                 "line_art_minimalist", "ligne_claire" -> {
-                    val gpuToon = filterManager.applyToonEffectToBitmap(finalBmp, currentShootingEffect, activeEffectIntensity)
+                    val gpuToon = try {
+                        filterManager.applyToonEffectToBitmap(finalBmp, currentShootingEffect, activeEffectIntensity)
+                    } catch (_: Throwable) {
+                        null
+                    }
                     val styledBmp = gpuToon ?: renderStylizedEffectBitmap(finalBmp, currentShootingEffect, forLivePreview = false)
                     canvas.drawBitmap(styledBmp, 0f, 0f, null)
                     if (styledBmp != finalBmp && !styledBmp.isRecycled) styledBmp.recycle()
@@ -6127,20 +6723,7 @@ class MainActivity : AppCompatActivity() {
                 canvas.drawText(dateText, finalBmp.width - tw - (finalBmp.width * 0.05f), finalBmp.height - (finalBmp.height * 0.06f), stampPaint)
             }
 
-            // Bake Anamorphic Cine Flare if enabled
-            if (viewBinding.proOverlayView.enableCineFlare) {
-                val cy = finalBmp.height * 0.48f
-                val streakH = (finalBmp.height * 0.015f).coerceAtLeast(14f)
-                val flarePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                    shader = android.graphics.LinearGradient(
-                        0f, cy, finalBmp.width.toFloat(), cy,
-                        intArrayOf(Color.TRANSPARENT, Color.parseColor("#B300D4FF"), Color.parseColor("#E6FFFFFF"), Color.parseColor("#B300D4FF"), Color.TRANSPARENT),
-                        floatArrayOf(0f, 0.35f, 0.5f, 0.65f, 1f),
-                        android.graphics.Shader.TileMode.CLAMP
-                    )
-                }
-                canvas.drawRect(0f, cy - streakH, finalBmp.width.toFloat(), cy + streakH, flarePaint)
-            }
+            // Retro Date Stamp handled above; Cine Flare already baked at line above without double-drawing
 
             // Bake AR Face Lens & Freehand AR Text overlays cleanly onto captured image (without selection guides)
             syncComicFrameOverlayState()
@@ -6196,14 +6779,7 @@ class MainActivity : AppCompatActivity() {
                 }
             }
 
-            contentResolver.openOutputStream(savedUri, "wt")?.use { out ->
-                finalBmp.compress(Bitmap.CompressFormat.JPEG, 94, out)
-            }
-            finalBmp.recycle()
-        } catch (e: Exception) {
-            if (pipBitmapSnapshot != null && !pipBitmapSnapshot.isRecycled) pipBitmapSnapshot.recycle()
-            Log.e(TAG, "Failed post-processing photo creative look", e)
-        }
+            return finalBmp
     }
 
     private val allCameraModes = listOf(
@@ -6212,7 +6788,8 @@ class MainActivity : AppCompatActivity() {
         CameraMode.PHOTO,
         CameraMode.PORTRAIT,
         CameraMode.NIGHT,
-        CameraMode.PANORAMA
+        CameraMode.PANORAMA,
+        CameraMode.AR_LENS
     )
 
     private fun getModeLabel(mode: CameraMode): String = when (mode) {
@@ -6222,6 +6799,7 @@ class MainActivity : AppCompatActivity() {
         CameraMode.PORTRAIT -> "PORTRAIT"
         CameraMode.NIGHT -> "NIGHT"
         CameraMode.PANORAMA -> "PANORAMA"
+        CameraMode.AR_LENS -> "AR LENS"
     }
 
     private fun updateModeCarouselSlots(animated: Boolean = true, slideDirection: Int = 0) {
@@ -6246,7 +6824,8 @@ class MainActivity : AppCompatActivity() {
             viewBinding.tabPhoto to CameraMode.PHOTO,
             viewBinding.tabPortrait to CameraMode.PORTRAIT,
             viewBinding.tabNight to CameraMode.NIGHT,
-            viewBinding.tabPanorama to CameraMode.PANORAMA
+            viewBinding.tabPanorama to CameraMode.PANORAMA,
+            viewBinding.tabArLens to CameraMode.AR_LENS
         )
         for ((tab, m) in modeTabs) {
             val isActive = m == cameraMode
@@ -6269,21 +6848,56 @@ class MainActivity : AppCompatActivity() {
 
     private fun setMode(mode: CameraMode, slideDirection: Int = 0) {
         if (recording != null || isNightStacking) return
+        val prevMode = cameraMode
         if (isPanoramaCapturing && mode != CameraMode.PANORAMA) {
             cancelPanoramaCapture()
+        }
+        if (prevMode == CameraMode.AR_LENS && mode != CameraMode.AR_LENS) {
+            arHoldRunnable?.let { arHoldHandler.removeCallbacks(it) }
+            arHoldRunnable = null
+            isArHoldRecording = false
+            if (currentArLensName != "none") {
+                lastActiveArLensName = currentArLensName
+            }
+            stopBatchLoop()
+            isBatchModeActive = false
+            viewBinding.arLensModeDock.btnArBatch.text = "BATCH: OFF"
+            viewBinding.arLensModeDock.btnArBatch.setBackgroundResource(R.drawable.bg_cinema_button_inactive)
+            viewBinding.arLensModeDock.btnArBatch.setTextColor(Color.parseColor("#94A3B8"))
+            viewBinding.arLensModeDock.root.visibility = View.GONE
+            viewBinding.arCalibrationDrawer.visibility = View.GONE
+            setArLens("none", showNotice = false)
         }
         cameraMode = mode
         nightExposureStacker.clearDarkEpisodeLock()
         viewBinding.proOverlayView.isNightModeHudActive = (mode == CameraMode.NIGHT || currentShootingEffect == "night_sight")
         isLastActionCreative = false
-        showHudNotice("Mode: ${getModeLabel(mode)}")
+        showHudNotice(if (mode == CameraMode.AR_LENS) "AR LENS · Tap Photo · Hold 1s Video" else "Mode: ${getModeLabel(mode)}")
         viewBinding.proOverlayView.isPanoramaModeActive = (mode == CameraMode.PANORAMA)
 
         updateModeCarouselSlots(animated = true, slideDirection = slideDirection)
 
         val isVideoType = mode == CameraMode.VIDEO || mode == CameraMode.SLOW_MO
         viewBinding.recordingTimer.visibility = View.VISIBLE
-        if (!isVideoType) {
+        if (mode == CameraMode.AR_LENS) {
+            viewBinding.effectsStudioDrawer.root.visibility = View.GONE
+            viewBinding.proStudioDrawer.root.visibility = View.GONE
+            viewBinding.layoutGuideFloatingBar.visibility = View.GONE
+            viewBinding.arLensModeDock.root.visibility = View.VISIBLE
+            viewBinding.btnCapture.setImageResource(R.drawable.bg_shutter_button)
+            viewBinding.btnPauseResume.visibility = View.GONE
+            viewBinding.layoutBtnTimer.visibility = View.VISIBLE
+            viewBinding.btnAutoLoop.visibility = View.GONE
+            viewBinding.recordingDot.setBackgroundResource(R.drawable.bg_green_dot)
+            viewBinding.recordingDot.visibility = View.VISIBLE
+            viewBinding.tvRecordingStatus.text = "AR LENS"
+            viewBinding.tvRecordingStatus.setTextColor(Color.parseColor("#E879F9"))
+            viewBinding.chronometer.text = "TAP PHOTO · HOLD 1S VID"
+            viewBinding.chronometer.setTextColor(Color.parseColor("#F0ABFC"))
+            val restoreLens = if (lastActiveArLensName == "none") "cyberpunk_visor" else lastActiveArLensName
+            setArLens(restoreLens, showNotice = false)
+            syncArDockFromCalibration()
+        } else if (!isVideoType) {
             viewBinding.btnCapture.setImageResource(R.drawable.bg_shutter_button)
             viewBinding.btnPauseResume.visibility = View.GONE
             viewBinding.layoutBtnTimer.visibility = if (mode == CameraMode.PANORAMA) View.GONE else View.VISIBLE
@@ -6339,7 +6953,7 @@ class MainActivity : AppCompatActivity() {
         bindCameraUseCases()
     }
 
-    private fun centerModeTab(mode: CameraMode, smooth: Boolean = true) {
+    private fun centerModeTab(@Suppress("UNUSED_PARAMETER") mode: CameraMode, smooth: Boolean = true) {
         updateModeCarouselSlots(animated = smooth, slideDirection = 0)
     }
 
@@ -6499,14 +7113,24 @@ class MainActivity : AppCompatActivity() {
         window.decorView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
     }
 
+    private fun navigateNextArLens() {
+        val currentIdx = arLensOrder.indexOf(currentArLensName)
+        val safeIdx = if (currentIdx >= 0) currentIdx else 0
+        val nextIdx = (safeIdx + 1) % arLensOrder.size
+        setArLens(arLensOrder[nextIdx])
+        window.decorView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+    }
+
+    private fun navigatePreviousArLens() {
+        val currentIdx = arLensOrder.indexOf(currentArLensName)
+        val safeIdx = if (currentIdx >= 0) currentIdx else 0
+        val prevIdx = if (safeIdx <= 0) arLensOrder.size - 1 else safeIdx - 1
+        setArLens(arLensOrder[prevIdx])
+        window.decorView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+    }
+
     private fun navigateNextEffectOrFilter() {
         when (currentCreativeTarget) {
-            CreativeTarget.LENSES -> {
-                val currentIdx = arLensOrder.indexOf(currentArLensName)
-                val safeIdx = if (currentIdx >= 0) currentIdx else 0
-                val nextIdx = (safeIdx + 1) % arLensOrder.size
-                setArLens(arLensOrder[nextIdx])
-            }
             CreativeTarget.EFFECTS -> {
                 val modeEffects = getModeFilteredShootingEffects()
                 val currentIdx = modeEffects.indexOf(currentShootingEffect)
@@ -6539,12 +7163,6 @@ class MainActivity : AppCompatActivity() {
 
     private fun navigatePreviousEffectOrFilter() {
         when (currentCreativeTarget) {
-            CreativeTarget.LENSES -> {
-                val currentIdx = arLensOrder.indexOf(currentArLensName)
-                val safeIdx = if (currentIdx >= 0) currentIdx else 0
-                val prevIdx = if (safeIdx <= 0) arLensOrder.size - 1 else safeIdx - 1
-                setArLens(arLensOrder[prevIdx])
-            }
             CreativeTarget.EFFECTS -> {
                 val modeEffects = getModeFilteredShootingEffects()
                 val currentIdx = modeEffects.indexOf(currentShootingEffect)
@@ -6615,6 +7233,10 @@ class MainActivity : AppCompatActivity() {
 
         val gestureDetector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
             override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+                if (suppressNextTapFocus) {
+                    suppressNextTapFocus = false
+                    return true
+                }
                 if (viewBinding.proOverlayView.currentGrid == ProOverlayView.GridType.GOLDEN_SPIRAL) {
                     val nextRot = (viewBinding.proOverlayView.spiralOrientation + 1) % 4
                     setSpiralOrientation(nextRot)
@@ -6653,9 +7275,9 @@ class MainActivity : AppCompatActivity() {
             if (viewBinding.arFaceOverlayView.handleArTextTouch(event)) {
                 return@setOnTouchListener true
             }
-            var handled = scaleGestureDetector.onTouchEvent(event)
+            scaleGestureDetector.onTouchEvent(event)
             if (!scaleGestureDetector.isInProgress) {
-                handled = gestureDetector.onTouchEvent(event) || handled
+                gestureDetector.onTouchEvent(event)
             }
             if (event.action == MotionEvent.ACTION_UP) {
                 view.performClick()
@@ -6731,6 +7353,7 @@ class MainActivity : AppCompatActivity() {
     private var isMultiTouchGesture = false
     private var downInModeCarousel = false
     private var downInIgnoredControl = false
+    private var suppressNextTapFocus = false
 
     private fun isPointInView(view: View, rawX: Float, rawY: Float): Boolean {
         if (view.visibility != View.VISIBLE) return false
@@ -6752,6 +7375,10 @@ class MainActivity : AppCompatActivity() {
             if (isNext) navigateNextEffectOrFilter() else navigatePreviousEffectOrFilter()
             return
         }
+        if (cameraMode == CameraMode.AR_LENS) {
+            if (isNext) navigateNextArLens() else navigatePreviousArLens()
+            return
+        }
         if (isNext) navigateNextCameraMode() else navigatePreviousCameraMode()
     }
 
@@ -6762,14 +7389,17 @@ class MainActivity : AppCompatActivity() {
                 touchDownY = ev.rawY
                 touchDownTime = SystemClock.uptimeMillis()
                 isSwipeConsumed = false
+                suppressNextTapFocus = false
                 isMultiTouchGesture = ev.pointerCount > 1
 
                 downInModeCarousel = isPointInView(viewBinding.modeScrollView, ev.rawX, ev.rawY)
                 downInIgnoredControl =
+                    isPointInView(viewBinding.pipCardContainer, ev.rawX, ev.rawY) ||
                     isPointInView(viewBinding.proModeBar, ev.rawX, ev.rawY) ||
                     isPointInView(viewBinding.bottomControls, ev.rawX, ev.rawY) ||
                     isPointInView(viewBinding.zoomControls, ev.rawX, ev.rawY) ||
                     isPointInView(viewBinding.proStudioDrawer.root, ev.rawX, ev.rawY) ||
+                    isPointInView(viewBinding.arLensModeDock.root, ev.rawX, ev.rawY) ||
                     isPointInView(viewBinding.arCalibrationDrawer, ev.rawX, ev.rawY) ||
                     (viewBinding.effectsStudioDrawer.root.visibility == View.VISIBLE && (
                         isPointInView(viewBinding.effectsStudioDrawer.layoutEffectsHeader, ev.rawX, ev.rawY) ||
@@ -6870,12 +7500,15 @@ class MainActivity : AppCompatActivity() {
                     }
                     if (viewBinding.arCalibrationDrawer.visibility == View.VISIBLE &&
                         !isPointInView(viewBinding.arCalibrationDrawer, ev.rawX, ev.rawY) &&
-                        !isPointInView(viewBinding.effectsStudioDrawer.btnArCalibrate, ev.rawX, ev.rawY)
+                        !isPointInView(viewBinding.arLensModeDock.btnArCalibrate, ev.rawX, ev.rawY)
                     ) {
                         viewBinding.arCalibrationDrawer.visibility = View.GONE
+                        viewBinding.arLensModeDock.btnArCalibrate.setBackgroundResource(R.drawable.bg_cinema_button_inactive)
+                        viewBinding.arLensModeDock.btnArCalibrate.setTextColor(Color.parseColor("#38BDF8"))
                         closedDrawer = true
                     }
                     if (closedDrawer) {
+                        suppressNextTapFocus = true
                         window.decorView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                     }
                 }
@@ -6956,7 +7589,19 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun addCustomLensChipIfMissing(cl: CustomLensDef) {
+        if (!arLensOrder.contains(cl.id)) {
+            arLensOrder.add(cl.id)
+            val label = if (cl.style.equals("glb_3d", ignoreCase = true)) "3D · ${cl.name}" else cl.name
+            val chip = createStudioChipView(label)
+            chip.setOnClickListener { setArLens(cl.id) }
+            viewBinding.arLensModeDock.layoutArModeLensesContainer.addView(chip)
+            dynamicLensChips.add(chip to cl.id)
+        }
+    }
+
     private fun setupDynamicConfigChips() {
+        loadPersistedDeviceGlbLenses()
         for (cf in injectedCustomFilters) {
             if (!filterPresetOrder.contains(cf.id)) {
                 filterPresetOrder.add(cf.id)
@@ -6967,13 +7612,153 @@ class MainActivity : AppCompatActivity() {
             }
         }
         for (cl in injectedCustomLenses) {
-            if (!arLensOrder.contains(cl.id)) {
-                arLensOrder.add(cl.id)
-                val chip = createStudioChipView(cl.name)
-                chip.setOnClickListener { setArLens(cl.id) }
-                viewBinding.effectsStudioDrawer.layoutLensesContainer.addView(chip)
-                dynamicLensChips.add(chip to cl.id)
+            addCustomLensChipIfMissing(cl)
+        }
+    }
+
+    private fun launchGlbLensPicker() {
+        try {
+            importGlbLensLauncher.launch(arrayOf("model/gltf-binary", "application/octet-stream", "*/*"))
+        } catch (e: Exception) {
+            Log.e(TAG, "Unable to launch .glb file picker", e)
+            showHudNotice("Unable to open file picker", isWarning = true)
+        }
+    }
+
+    private fun resolveDisplayName(uri: Uri): String {
+        var name = "Custom_3D_Lens.glb"
+        try {
+            contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val idx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                    if (idx >= 0) {
+                        val value = cursor.getString(idx)
+                        if (!value.isNullOrBlank()) name = value
+                    }
+                }
             }
+        } catch (_: Exception) {}
+        return name
+    }
+
+    private fun importGlbLensFromUri(uri: Uri) {
+        try {
+            val rawName = resolveDisplayName(uri)
+            val cleanBase = rawName.replace(Regex("\\.glb$", RegexOption.IGNORE_CASE), "")
+                .replace(Regex("[^a-zA-Z0-9 _-]"), " ")
+                .trim()
+                .ifEmpty { "3D Model" }
+                .take(22)
+
+            val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                ?: throw IllegalStateException("Unable to read selected file")
+
+            if (bytes.size < 20 || bytes[0] != 0x67.toByte() || bytes[1] != 0x6C.toByte() ||
+                bytes[2] != 0x54.toByte() || bytes[3] != 0x46.toByte()
+            ) {
+                showHudNotice("Selected file is not a valid glTF 2.0 binary (.glb)", isWarning = true)
+                return
+            }
+
+            val modelsDir = File(filesDir, "ar_models").apply { if (!exists()) mkdirs() }
+            val lensId = "glb_${System.currentTimeMillis()}"
+            val outFile = File(modelsDir, "$lensId.glb")
+            FileOutputStream(outFile).use { it.write(bytes) }
+
+            val anchorChoices = arrayOf("Forehead / Hat / Crown", "Eyes / Glasses / Visor", "Nose & Cheeks / Mask", "Full Face / Helmet")
+            val anchorKeys = arrayOf("forehead", "eyes", "nose_cheeks", "full_face")
+
+            AlertDialog.Builder(this)
+                .setTitle("Anchor for '$cleanBase' (.glb)")
+                .setItems(anchorChoices) { _, which ->
+                    val anchor = anchorKeys[which.coerceIn(anchorKeys.indices)]
+                    val newDef = CustomLensDef(
+                        id = lensId,
+                        name = cleanBase,
+                        anchor = anchor,
+                        style = "glb_3d",
+                        primaryColor = "#22D3EE",
+                        accentColor = "#F59E0B",
+                        glbAssetPath = "",
+                        glbFilePath = outFile.absolutePath,
+                        modelScale = 1.0f,
+                        modelOffsetY = 0f,
+                        modelRotationY = 0f,
+                        modelRotationX = 0f,
+                        autoSpin = true
+                    )
+                    injectedCustomLenses.add(newDef)
+                    savePersistedDeviceGlbLenses()
+                    addCustomLensChipIfMissing(newDef)
+                    setArLens(lensId)
+                }
+                .setNegativeButton("Cancel") { _, _ ->
+                    try { outFile.delete() } catch (_: Exception) {}
+                }
+                .show()
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to import .glb AR lens", e)
+            showHudNotice("GLB import failed: ${e.localizedMessage ?: "I/O error"}", isWarning = true)
+        }
+    }
+
+    private fun savePersistedDeviceGlbLenses() {
+        try {
+            val prefs = getSharedPreferences("camerax_ar_glb_lenses", Context.MODE_PRIVATE)
+            val arr = JSONArray()
+            for (cl in injectedCustomLenses) {
+                if (cl.glbFilePath.isNotEmpty() && File(cl.glbFilePath).exists()) {
+                    val obj = JSONObject().apply {
+                        put("id", cl.id)
+                        put("name", cl.name)
+                        put("anchor", cl.anchor)
+                        put("glbFilePath", cl.glbFilePath)
+                        put("modelScale", cl.modelScale.toDouble())
+                        put("modelOffsetY", cl.modelOffsetY.toDouble())
+                        put("modelRotationY", cl.modelRotationY.toDouble())
+                        put("modelRotationX", cl.modelRotationX.toDouble())
+                        put("autoSpin", cl.autoSpin)
+                    }
+                    arr.put(obj)
+                }
+            }
+            prefs.edit().putString("saved_glb_lenses_json", arr.toString()).apply()
+        } catch (e: Exception) {
+            Log.w(TAG, "Unable to persist device GLB lenses: ${e.message}")
+        }
+    }
+
+    private fun loadPersistedDeviceGlbLenses() {
+        try {
+            val prefs = getSharedPreferences("camerax_ar_glb_lenses", Context.MODE_PRIVATE)
+            val raw = prefs.getString("saved_glb_lenses_json", null) ?: return
+            val arr = JSONArray(raw)
+            for (i in 0 until arr.length()) {
+                val obj = arr.optJSONObject(i) ?: continue
+                val id = obj.optString("id", "")
+                val filePath = obj.optString("glbFilePath", "")
+                if (id.isEmpty() || filePath.isEmpty() || !File(filePath).exists()) continue
+                if (injectedCustomLenses.any { it.id == id }) continue
+                injectedCustomLenses.add(
+                    CustomLensDef(
+                        id = id,
+                        name = obj.optString("name", "3D GLB"),
+                        anchor = obj.optString("anchor", "forehead"),
+                        style = "glb_3d",
+                        primaryColor = "#22D3EE",
+                        accentColor = "#F59E0B",
+                        glbAssetPath = "",
+                        glbFilePath = filePath,
+                        modelScale = obj.optDouble("modelScale", 1.0).toFloat(),
+                        modelOffsetY = obj.optDouble("modelOffsetY", 0.0).toFloat(),
+                        modelRotationY = obj.optDouble("modelRotationY", 0.0).toFloat(),
+                        modelRotationX = obj.optDouble("modelRotationX", 0.0).toFloat(),
+                        autoSpin = obj.optBoolean("autoSpin", true)
+                    )
+                )
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Unable to restore persisted device GLB lenses: ${e.message}")
         }
     }
 
@@ -7089,6 +7874,7 @@ class MainActivity : AppCompatActivity() {
         filterManager.setComicHalftoneParams(1.0f, 1.0f)
         openGLProcessor?.setComicHalftoneParams(1.0f, 1.0f)
         pushArCalibrationToOverlay()
+        syncArDockFromCalibration()
         showHudNotice("AR Calibration Reset")
     }
 
@@ -7099,10 +7885,10 @@ class MainActivity : AppCompatActivity() {
             viewBinding.proStudioDrawer.root.visibility = View.GONE
             viewBinding.layoutGuideFloatingBar.visibility = View.GONE
         }
-        viewBinding.effectsStudioDrawer.btnArCalibrate.setBackgroundResource(
+        viewBinding.arLensModeDock.btnArCalibrate.setBackgroundResource(
             if (show) R.drawable.bg_cinema_button_active else R.drawable.bg_cinema_button_inactive
         )
-        viewBinding.effectsStudioDrawer.btnArCalibrate.setTextColor(Color.parseColor(if (show) "#0F172A" else "#38BDF8"))
+        viewBinding.arLensModeDock.btnArCalibrate.setTextColor(Color.parseColor(if (show) "#0F172A" else "#38BDF8"))
         window.decorView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
     }
 
@@ -7129,13 +7915,296 @@ class MainActivity : AppCompatActivity() {
         viewBinding.btnComicPalette.text = "PALETTE: ${p.name}"
     }
 
+    private fun colorIntToHex(colorInt: Int): String {
+        return String.format(Locale.US, "#%06X", 0xFFFFFF and colorInt)
+    }
+
+    private fun parseValidHexOrFallback(candidate: String?, fallback: String): String {
+        if (candidate.isNullOrBlank()) return fallback
+        val trimmed = candidate.trim()
+        return try {
+            Color.parseColor(trimmed)
+            trimmed
+        } catch (_: Exception) {
+            fallback
+        }
+    }
+
+    private fun buildArCalibrationJsonString(): String {
+        val pxX = (calibOffsetX * 600f).roundToInt().coerceIn(-150, 150)
+        val pxY = (calibOffsetY * 600f).roundToInt().coerceIn(-150, 150)
+        val pxForehead = (calibForehead * 800f).roundToInt().coerceIn(-80, 80)
+        val pxChin = (calibChin * 800f).roundToInt().coerceIn(-80, 80)
+
+        val overlay = viewBinding.arFaceOverlayView
+        val bubbleStyleStr = when (overlay.speechBubbleStyle) {
+            ARFaceOverlayView.ComicSpeechBubbleStyle.THOUGHT -> "thought"
+            ARFaceOverlayView.ComicSpeechBubbleStyle.SHOUT -> "shout"
+            else -> "speech"
+        }
+
+        val root = JSONObject().apply {
+            put("schemaVersion", 1)
+            put("targetLens", currentArLensName)
+            put("pixelOffsets", JSONObject().apply {
+                put("x", pxX)
+                put("y", pxY)
+                put("forehead", pxForehead)
+                put("chin", pxChin)
+            })
+            put("normalizedOffsets", JSONObject().apply {
+                put("x", (pxX / 720.0))
+                put("y", (pxY / 960.0))
+                put("forehead", (pxForehead / 960.0))
+                put("chin", (pxChin / 960.0))
+            })
+            put("transform", JSONObject().apply {
+                put("scale", calibScale.toDouble())
+                put("rotationDeg", calibRotDeg.toDouble())
+                put("eyeSpacingFactor", calibEyeSpace.toDouble())
+                put("depthZ", 1.0)
+            })
+            put("debugMeshActive", calibDebug)
+            put("comicOnomatopoeia", overlay.enableComicOnomatopoeia)
+            put("comicSpeechBubble", JSONObject().apply {
+                put("enabled", overlay.enableComicSpeechBubble)
+                put("style", bubbleStyleStr)
+                put("text", overlay.speechBubbleText)
+            })
+            put("comicLabelDepth", comicLabelDepth.toDouble())
+            put("cartoonShaderHalftone", JSONObject().apply {
+                put("halftoneDensity", comicHalftoneDensity.toDouble())
+                put("halftoneDotSize", comicHalftoneDotSize.toDouble())
+            })
+            put("comicOnomatopoeiaPalette", JSONObject().apply {
+                put("presetId", comicPalettePresets[comicPaletteIndex % comicPalettePresets.size].id)
+                put("pow", JSONObject().apply {
+                    put("topColor", colorIntToHex(overlay.powPalette.topColor))
+                    put("bottomColor", colorIntToHex(overlay.powPalette.bottomColor))
+                    put("extrudeColor", colorIntToHex(overlay.powPalette.extrudeColor))
+                    put("burstColor", colorIntToHex(overlay.powPalette.burstColor))
+                })
+                put("bam", JSONObject().apply {
+                    put("topColor", colorIntToHex(overlay.bamPalette.topColor))
+                    put("bottomColor", colorIntToHex(overlay.bamPalette.bottomColor))
+                    put("extrudeColor", colorIntToHex(overlay.bamPalette.extrudeColor))
+                    put("burstColor", colorIntToHex(overlay.bamPalette.burstColor))
+                })
+                put("zap", JSONObject().apply {
+                    put("topColor", colorIntToHex(overlay.zapPalette.topColor))
+                    put("bottomColor", colorIntToHex(overlay.zapPalette.bottomColor))
+                    put("extrudeColor", colorIntToHex(overlay.zapPalette.extrudeColor))
+                    put("burstColor", colorIntToHex(overlay.zapPalette.burstColor))
+                })
+            })
+            put("comicOnomatopoeiaSounds", JSONObject().apply {
+                put("enabled", true)
+                put("pow", JSONObject().apply { put("presetId", comicSfxPow); put("volume", 0.85) })
+                put("bam", JSONObject().apply { put("presetId", comicSfxBam); put("volume", 0.85) })
+                put("zap", JSONObject().apply { put("presetId", comicSfxZap); put("volume", 0.85) })
+            })
+        }
+        return root.toString(2)
+    }
+
+    private fun applyArCalibrationJsonString(rawJson: String): Boolean {
+        val data = JSONObject(rawJson)
+        val pixelOffsets = data.optJSONObject("pixelOffsets")
+        val normalizedOffsets = data.optJSONObject("normalizedOffsets")
+        val transform = data.optJSONObject("transform")
+        val halftoneObj = data.optJSONObject("cartoonShaderHalftone")
+        val speechObj = data.optJSONObject("comicSpeechBubble")
+        val paletteObj = data.optJSONObject("comicOnomatopoeiaPalette")
+        val soundsObj = data.optJSONObject("comicOnomatopoeiaSounds")
+
+        val hasKnownFields = pixelOffsets != null ||
+            normalizedOffsets != null ||
+            transform != null ||
+            halftoneObj != null ||
+            paletteObj != null ||
+            data.has("offsetX") ||
+            data.has("offsetY") ||
+            data.has("scale") ||
+            data.has("rotationDeg") ||
+            data.has("eyeSpacingFactor") ||
+            data.has("foreheadOffset") ||
+            data.has("chinOffset") ||
+            data.has("debugMeshActive") ||
+            data.has("showMeshDebug")
+        if (!hasKnownFields) return false
+
+        fun readOffsetPx(
+            pxKey: String,
+            normKey: String,
+            flatKey: String,
+            refPx: Float,
+            minPx: Int,
+            maxPx: Int,
+            fallbackPx: Int
+        ): Int {
+            return when {
+                pixelOffsets != null && pixelOffsets.has(pxKey) ->
+                    pixelOffsets.optDouble(pxKey, fallbackPx.toDouble()).roundToInt().coerceIn(minPx, maxPx)
+                normalizedOffsets != null && normalizedOffsets.has(normKey) ->
+                    (normalizedOffsets.optDouble(normKey, 0.0) * refPx).roundToInt().coerceIn(minPx, maxPx)
+                data.has(flatKey) ->
+                    data.optDouble(flatKey, fallbackPx.toDouble()).roundToInt().coerceIn(minPx, maxPx)
+                else -> fallbackPx
+            }
+        }
+
+        val pxX = readOffsetPx("x", "x", "offsetX", 720f, -150, 150, (calibOffsetX * 600f).roundToInt())
+        val pxY = readOffsetPx("y", "y", "offsetY", 960f, -150, 150, (calibOffsetY * 600f).roundToInt())
+        val pxForehead = readOffsetPx("forehead", "forehead", "foreheadOffset", 960f, -80, 80, (calibForehead * 800f).roundToInt())
+        val pxChin = readOffsetPx("chin", "chin", "chinOffset", 960f, -80, 80, (calibChin * 800f).roundToInt())
+
+        calibOffsetX = pxX / 600f
+        calibOffsetY = pxY / 600f
+        calibForehead = pxForehead / 800f
+        calibChin = pxChin / 800f
+
+        val rawScale = when {
+            transform != null && transform.has("scale") -> transform.optDouble("scale", calibScale.toDouble()).toFloat()
+            data.has("scale") -> data.optDouble("scale", calibScale.toDouble()).toFloat()
+            else -> calibScale
+        }
+        calibScale = rawScale.coerceIn(0.5f, 2.0f)
+
+        val rawRot = when {
+            transform != null && transform.has("rotationDeg") -> transform.optDouble("rotationDeg", calibRotDeg.toDouble()).toFloat()
+            data.has("rotationDeg") -> data.optDouble("rotationDeg", calibRotDeg.toDouble()).toFloat()
+            else -> calibRotDeg
+        }
+        calibRotDeg = rawRot.coerceIn(-45f, 45f)
+
+        val rawEye = when {
+            transform != null && transform.has("eyeSpacingFactor") -> transform.optDouble("eyeSpacingFactor", calibEyeSpace.toDouble()).toFloat()
+            data.has("eyeSpacingFactor") -> data.optDouble("eyeSpacingFactor", calibEyeSpace.toDouble()).toFloat()
+            else -> calibEyeSpace
+        }
+        calibEyeSpace = rawEye.coerceIn(0.6f, 1.6f)
+
+        calibDebug = when {
+            data.has("debugMeshActive") -> data.optBoolean("debugMeshActive", calibDebug)
+            data.has("showMeshDebug") -> data.optBoolean("showMeshDebug", calibDebug)
+            else -> calibDebug
+        }
+
+        if (data.has("comicOnomatopoeia")) {
+            viewBinding.arFaceOverlayView.enableComicOnomatopoeia = data.optBoolean("comicOnomatopoeia", false)
+        }
+
+        if (speechObj != null) {
+            val enabled = speechObj.optBoolean("enabled", viewBinding.arFaceOverlayView.enableComicSpeechBubble)
+            val style = when (speechObj.optString("style", "speech").lowercase(Locale.ROOT)) {
+                "thought" -> ARFaceOverlayView.ComicSpeechBubbleStyle.THOUGHT
+                "shout" -> ARFaceOverlayView.ComicSpeechBubbleStyle.SHOUT
+                else -> ARFaceOverlayView.ComicSpeechBubbleStyle.SPEECH
+            }
+            val text = speechObj.optString("text", viewBinding.arFaceOverlayView.speechBubbleText).take(48)
+            viewBinding.arFaceOverlayView.speechBubbleStyle = style
+            viewBinding.arFaceOverlayView.speechBubbleText = if (text.isNotBlank()) text else "HERO MODE!"
+            viewBinding.switchComicSpeechBubble.isChecked = enabled
+            updateBubbleStyleButtons(style)
+            viewBinding.btnCycleBubblePhrase.text = "TEXT: ${viewBinding.arFaceOverlayView.speechBubbleText}"
+        }
+
+        if (data.has("comicLabelDepth")) {
+            comicLabelDepth = data.optDouble("comicLabelDepth", comicLabelDepth.toDouble()).toFloat().coerceIn(0.0f, 2.5f)
+            viewBinding.arFaceOverlayView.comicLabelDepth = comicLabelDepth
+        }
+
+        val rawHalftoneDensity = when {
+            halftoneObj != null && halftoneObj.has("halftoneDensity") -> halftoneObj.optDouble("halftoneDensity", comicHalftoneDensity.toDouble()).toFloat()
+            data.has("halftoneDensity") -> data.optDouble("halftoneDensity", comicHalftoneDensity.toDouble()).toFloat()
+            else -> comicHalftoneDensity
+        }
+        val rawHalftoneDotSize = when {
+            halftoneObj != null && halftoneObj.has("halftoneDotSize") -> halftoneObj.optDouble("halftoneDotSize", comicHalftoneDotSize.toDouble()).toFloat()
+            data.has("halftoneDotSize") -> data.optDouble("halftoneDotSize", comicHalftoneDotSize.toDouble()).toFloat()
+            else -> comicHalftoneDotSize
+        }
+        comicHalftoneDensity = rawHalftoneDensity.coerceIn(0.4f, 2.2f)
+        comicHalftoneDotSize = rawHalftoneDotSize.coerceIn(0.3f, 1.8f)
+
+        if (paletteObj != null) {
+            val overlay = viewBinding.arFaceOverlayView
+            val powObj = paletteObj.optJSONObject("pow")
+            val bamObj = paletteObj.optJSONObject("bam")
+            val zapObj = paletteObj.optJSONObject("zap")
+            overlay.setComicOnomatopoeiaPalette(
+                parseValidHexOrFallback(powObj?.optString("topColor"), colorIntToHex(overlay.powPalette.topColor)),
+                parseValidHexOrFallback(powObj?.optString("bottomColor"), colorIntToHex(overlay.powPalette.bottomColor)),
+                parseValidHexOrFallback(powObj?.optString("extrudeColor"), colorIntToHex(overlay.powPalette.extrudeColor)),
+                parseValidHexOrFallback(powObj?.optString("burstColor"), colorIntToHex(overlay.powPalette.burstColor)),
+                parseValidHexOrFallback(bamObj?.optString("topColor"), colorIntToHex(overlay.bamPalette.topColor)),
+                parseValidHexOrFallback(bamObj?.optString("bottomColor"), colorIntToHex(overlay.bamPalette.bottomColor)),
+                parseValidHexOrFallback(bamObj?.optString("extrudeColor"), colorIntToHex(overlay.bamPalette.extrudeColor)),
+                parseValidHexOrFallback(bamObj?.optString("burstColor"), colorIntToHex(overlay.bamPalette.burstColor)),
+                parseValidHexOrFallback(zapObj?.optString("topColor"), colorIntToHex(overlay.zapPalette.topColor)),
+                parseValidHexOrFallback(zapObj?.optString("bottomColor"), colorIntToHex(overlay.zapPalette.bottomColor)),
+                parseValidHexOrFallback(zapObj?.optString("extrudeColor"), colorIntToHex(overlay.zapPalette.extrudeColor)),
+                parseValidHexOrFallback(zapObj?.optString("burstColor"), colorIntToHex(overlay.zapPalette.burstColor))
+            )
+            val presetId = paletteObj.optString("presetId", "")
+            val matchedIdx = comicPalettePresets.indexOfFirst { it.id == presetId }
+            if (matchedIdx >= 0) {
+                comicPaletteIndex = matchedIdx
+                viewBinding.btnComicPalette.text = "PALETTE: ${comicPalettePresets[matchedIdx].name}"
+            } else {
+                viewBinding.btnComicPalette.text = "PALETTE: IMPORTED"
+            }
+        }
+
+        if (soundsObj != null) {
+            val powSfx = soundsObj.optJSONObject("pow")?.optString("presetId", comicSfxPow)
+            val bamSfx = soundsObj.optJSONObject("bam")?.optString("presetId", comicSfxBam)
+            val zapSfx = soundsObj.optJSONObject("zap")?.optString("presetId", comicSfxZap)
+            if (powSfx in comicSfxChoices) comicSfxPow = powSfx!!
+            if (bamSfx in comicSfxChoices) comicSfxBam = bamSfx!!
+            if (zapSfx in comicSfxChoices) comicSfxZap = zapSfx!!
+        }
+
+        // Sync UI SeekBars & Switches to imported values
+        viewBinding.sbCalibOffsetX.progress = (pxX + 150).coerceIn(0, 300)
+        viewBinding.sbCalibOffsetY.progress = (pxY + 150).coerceIn(0, 300)
+        viewBinding.sbCalibScale.progress = (((calibScale - 0.5f) / 1.5f) * 100f).roundToInt().coerceIn(0, 100)
+        viewBinding.sbCalibRotation.progress = (calibRotDeg.roundToInt() + 45).coerceIn(0, 90)
+        viewBinding.sbCalibEyeSpace.progress = ((calibEyeSpace - 0.6f) * 100f).roundToInt().coerceIn(0, 100)
+        viewBinding.sbCalibForehead.progress = (pxForehead + 80).coerceIn(0, 160)
+        viewBinding.sbCalibChin.progress = (pxChin + 80).coerceIn(0, 160)
+        viewBinding.switchArMeshDebug.isChecked = calibDebug
+        viewBinding.sbHalftoneDensity.progress = (((comicHalftoneDensity - 0.4f) / 1.8f) * 100f).roundToInt().coerceIn(0, 100)
+        viewBinding.sbHalftoneDotSize.progress = (((comicHalftoneDotSize - 0.3f) / 1.5f) * 100f).roundToInt().coerceIn(0, 100)
+        viewBinding.sbComicLabelDepth.progress = ((comicLabelDepth / 2.5f) * 100f).roundToInt().coerceIn(0, 100)
+
+        filterManager.setComicHalftoneParams(comicHalftoneDensity, comicHalftoneDotSize)
+        openGLProcessor?.setComicHalftoneParams(comicHalftoneDensity, comicHalftoneDotSize)
+        pushArCalibrationToOverlay()
+        syncArDockFromCalibration()
+
+        val targetLens = data.optString("targetLens", "").trim()
+        val knownBuiltIn = setOf("none", "mesh_contour", "cyberpunk_visor", "golden_crown", "scifi_hud", "comic_frame")
+        if (targetLens.isNotEmpty() && (targetLens in knownBuiltIn || injectedCustomLenses.any { it.id == targetLens })) {
+            setArLens(targetLens, showNotice = false)
+        }
+        return true
+    }
+
     private fun setupArCalibrationControls() {
         viewBinding.btnCloseArCalibDrawer.setOnClickListener {
             viewBinding.arCalibrationDrawer.visibility = View.GONE
-            viewBinding.effectsStudioDrawer.btnArCalibrate.setBackgroundResource(R.drawable.bg_cinema_button_inactive)
-            viewBinding.effectsStudioDrawer.btnArCalibrate.setTextColor(Color.parseColor("#38BDF8"))
+            viewBinding.arLensModeDock.btnArCalibrate.setBackgroundResource(R.drawable.bg_cinema_button_inactive)
+            viewBinding.arLensModeDock.btnArCalibrate.setTextColor(Color.parseColor("#38BDF8"))
         }
         viewBinding.btnArCalibReset.setOnClickListener { resetArCalibrationValues() }
+        viewBinding.btnArCalibExportJson.setOnClickListener {
+            val safeLens = currentArLensName.replace(Regex("[^a-zA-Z0-9_-]"), "_")
+            exportArCalibrationJsonLauncher.launch("ar-calibration-$safeLens.json")
+        }
+        viewBinding.btnArCalibImportJson.setOnClickListener {
+            importArCalibrationJsonLauncher.launch(arrayOf("application/json", "text/plain"))
+        }
 
         viewBinding.sbCalibOffsetX.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
@@ -7336,6 +8405,134 @@ class MainActivity : AppCompatActivity() {
         updateBatchQueueHud()
     }
 
+    private fun selectArDockTab(tab: ArDockTab) {
+        currentArDockTab = tab
+        val isLenses = tab == ArDockTab.LENSES
+        val isAdjust = tab == ArDockTab.ADJUST
+        val isComicText = tab == ArDockTab.COMIC_TEXT
+
+        viewBinding.arLensModeDock.tabArDockLenses.setBackgroundResource(if (isLenses) R.drawable.bg_cinema_button_active else R.drawable.bg_cinema_button_inactive)
+        viewBinding.arLensModeDock.tabArDockLenses.setTextColor(Color.parseColor(if (isLenses) "#0F172A" else "#94A3B8"))
+        viewBinding.arLensModeDock.tabArDockAdjust.setBackgroundResource(if (isAdjust) R.drawable.bg_cinema_button_active else R.drawable.bg_cinema_button_inactive)
+        viewBinding.arLensModeDock.tabArDockAdjust.setTextColor(Color.parseColor(if (isAdjust) "#0F172A" else "#94A3B8"))
+        viewBinding.arLensModeDock.tabArDockComicText.setBackgroundResource(if (isComicText) R.drawable.bg_cinema_button_active else R.drawable.bg_cinema_button_inactive)
+        viewBinding.arLensModeDock.tabArDockComicText.setTextColor(Color.parseColor(if (isComicText) "#0F172A" else "#94A3B8"))
+
+        viewBinding.arLensModeDock.scrollArModeLensesStrip.visibility = if (isLenses) View.VISIBLE else View.GONE
+        viewBinding.arLensModeDock.layoutArModeAdjustPanel.visibility = if (isAdjust) View.VISIBLE else View.GONE
+        viewBinding.arLensModeDock.layoutArModeComicTextPanel.visibility = if (isComicText) View.VISIBLE else View.GONE
+
+        if (isArDockCollapsed) {
+            isArDockCollapsed = false
+            viewBinding.arLensModeDock.layoutArDockBody.visibility = View.VISIBLE
+            viewBinding.arLensModeDock.btnArDockToggle.text = "v"
+        }
+        if (isAdjust) syncArDockFromCalibration()
+    }
+
+    private fun syncArDockFromCalibration() {
+        isSyncingArDockSliders = true
+        val dock = viewBinding.arLensModeDock
+        val scaleProg = (((calibScale - 0.5f) / 1.5f) * 100f).roundToInt().coerceIn(0, 100)
+        val offXProg = (((calibOffsetX * 600f) + 150f) / 3f).roundToInt().coerceIn(0, 100)
+        val offYProg = (((calibOffsetY * 600f) + 150f) / 3f).roundToInt().coerceIn(0, 100)
+        val rotProg = (calibRotDeg.roundToInt() + 45).coerceIn(0, 90)
+        dock.sbArDockScale.progress = scaleProg
+        dock.tvArDockScaleVal.text = String.format(Locale.US, "%.2fx", calibScale)
+        dock.sbArDockOffsetX.progress = offXProg
+        dock.tvArDockOffsetXVal.text = "${(calibOffsetX * 600f).roundToInt()}px"
+        dock.sbArDockOffsetY.progress = offYProg
+        dock.tvArDockOffsetYVal.text = "${(calibOffsetY * 600f).roundToInt()}px"
+        dock.sbArDockRotation.progress = rotProg
+        dock.tvArDockRotationVal.text = "${calibRotDeg.roundToInt()}°"
+        dock.switchArDockMeshDebug.isChecked = calibDebug
+        dock.switchArDockBubble.isChecked = viewBinding.arFaceOverlayView.enableComicSpeechBubble
+        dock.switchArDockAutoAdapt.isChecked = isAutoAdaptEnabled
+        isSyncingArDockSliders = false
+    }
+
+    private fun setupArLensModeDock() {
+        val dock = viewBinding.arLensModeDock
+        dock.tabArDockLenses.setOnClickListener { selectArDockTab(ArDockTab.LENSES) }
+        dock.tabArDockAdjust.setOnClickListener { selectArDockTab(ArDockTab.ADJUST) }
+        dock.tabArDockComicText.setOnClickListener { selectArDockTab(ArDockTab.COMIC_TEXT) }
+        dock.btnArDockToggle.setOnClickListener {
+            isArDockCollapsed = !isArDockCollapsed
+            dock.layoutArDockBody.visibility = if (isArDockCollapsed) View.GONE else View.VISIBLE
+            dock.btnArDockToggle.text = if (isArDockCollapsed) "^" else "v"
+        }
+        dock.btnArDockReset.setOnClickListener { resetArCalibrationValues() }
+
+        dock.sbArDockScale.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
+                if (isSyncingArDockSliders || !fromUser) return
+                val s = 0.5f + (progress / 100f) * 1.5f
+                calibScale = s
+                dock.tvArDockScaleVal.text = String.format(Locale.US, "%.2fx", s)
+                viewBinding.sbCalibScale.progress = progress
+                pushArCalibrationToOverlay()
+            }
+            override fun onStartTrackingTouch(sb: SeekBar?) {}
+            override fun onStopTrackingTouch(sb: SeekBar?) {}
+        })
+        dock.sbArDockOffsetX.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
+                if (isSyncingArDockSliders || !fromUser) return
+                val px = (progress - 50) * 3
+                calibOffsetX = px / 600f
+                dock.tvArDockOffsetXVal.text = "${px}px"
+                viewBinding.sbCalibOffsetX.progress = (px + 150).coerceIn(0, 300)
+                pushArCalibrationToOverlay()
+            }
+            override fun onStartTrackingTouch(sb: SeekBar?) {}
+            override fun onStopTrackingTouch(sb: SeekBar?) {}
+        })
+        dock.sbArDockOffsetY.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
+                if (isSyncingArDockSliders || !fromUser) return
+                val px = (progress - 50) * 3
+                calibOffsetY = px / 600f
+                dock.tvArDockOffsetYVal.text = "${px}px"
+                viewBinding.sbCalibOffsetY.progress = (px + 150).coerceIn(0, 300)
+                pushArCalibrationToOverlay()
+            }
+            override fun onStartTrackingTouch(sb: SeekBar?) {}
+            override fun onStopTrackingTouch(sb: SeekBar?) {}
+        })
+        dock.sbArDockRotation.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
+                if (isSyncingArDockSliders || !fromUser) return
+                val deg = (progress - 45).toFloat()
+                calibRotDeg = deg
+                dock.tvArDockRotationVal.text = "${deg.toInt()}°"
+                viewBinding.sbCalibRotation.progress = progress
+                pushArCalibrationToOverlay()
+            }
+            override fun onStartTrackingTouch(sb: SeekBar?) {}
+            override fun onStopTrackingTouch(sb: SeekBar?) {}
+        })
+        dock.switchArDockMeshDebug.setOnCheckedChangeListener { _, isChecked ->
+            if (isSyncingArDockSliders) return@setOnCheckedChangeListener
+            calibDebug = isChecked
+            viewBinding.switchArMeshDebug.isChecked = isChecked
+            pushArCalibrationToOverlay()
+        }
+        dock.switchArDockBubble.setOnCheckedChangeListener { _, isChecked ->
+            if (isSyncingArDockSliders) return@setOnCheckedChangeListener
+            viewBinding.arFaceOverlayView.enableComicSpeechBubble = isChecked
+            viewBinding.switchComicSpeechBubble.isChecked = isChecked
+            showHudNotice("Comic Speech Bubble ${if (isChecked) "ON" else "OFF"}")
+        }
+        dock.switchArDockAutoAdapt.setOnCheckedChangeListener { _, isChecked ->
+            if (isSyncingArDockSliders) return@setOnCheckedChangeListener
+            isAutoAdaptEnabled = isChecked
+            viewBinding.switchArAutoAdapt.isChecked = isChecked
+            showHudNotice("AR Auto-Adapt ${if (isChecked) "ON" else "OFF"}")
+        }
+        selectArDockTab(ArDockTab.LENSES)
+        syncArDockFromCalibration()
+    }
+
     private fun toggleArBatchMode() {
         isBatchModeActive = !isBatchModeActive
         if (isBatchModeActive && batchLensQueue.isEmpty()) {
@@ -7348,11 +8545,11 @@ class MainActivity : AppCompatActivity() {
         } else {
             stopBatchLoop()
         }
-        viewBinding.effectsStudioDrawer.btnArBatch.text = if (isBatchModeActive) "BATCH: ON" else "BATCH: OFF"
-        viewBinding.effectsStudioDrawer.btnArBatch.setBackgroundResource(
+        viewBinding.arLensModeDock.btnArBatch.text = if (isBatchModeActive) "BATCH: ON" else "BATCH: OFF"
+        viewBinding.arLensModeDock.btnArBatch.setBackgroundResource(
             if (isBatchModeActive) R.drawable.bg_cinema_button_active else R.drawable.bg_cinema_button_inactive
         )
-        viewBinding.effectsStudioDrawer.btnArBatch.setTextColor(Color.parseColor(if (isBatchModeActive) "#0F172A" else "#94A3B8"))
+        viewBinding.arLensModeDock.btnArBatch.setTextColor(Color.parseColor(if (isBatchModeActive) "#0F172A" else "#94A3B8"))
     }
 
     private fun stepBatchQueue(delta: Int) {
@@ -7476,19 +8673,19 @@ class MainActivity : AppCompatActivity() {
                 } else {
                     overlay.addOrSelectArText(txt, chosenScale, chosenColor, chosenStyle)
                 }
-                viewBinding.effectsStudioDrawer.btnArTextStudio.text = if (overlay.hasArTextItems()) "TEXT (${overlay.arTextItems.size})" else "Aa TEXT"
+                viewBinding.arLensModeDock.btnArTextStudio.text = if (overlay.hasArTextItems()) "TEXT (${overlay.arTextItems.size})" else "Aa AR TEXT STUDIO"
                 showHudNotice("Hold & drag AR text anywhere on screen")
             }
             .setNeutralButton("Add New") { _, _ ->
                 val txt = input.text.toString().trim().ifEmpty { "HELLO AR!" }
                 overlay.addOrSelectArText(txt, chosenScale, chosenColor, chosenStyle)
-                viewBinding.effectsStudioDrawer.btnArTextStudio.text = "TEXT (${overlay.arTextItems.size})"
+                viewBinding.arLensModeDock.btnArTextStudio.text = "TEXT (${overlay.arTextItems.size})"
                 showHudNotice("Added AR text — hold & drag to move")
             }
         if (selected != null) {
             builder.setNegativeButton("Delete") { _, _ ->
                 overlay.removeSelectedArText()
-                viewBinding.effectsStudioDrawer.btnArTextStudio.text = if (overlay.hasArTextItems()) "TEXT (${overlay.arTextItems.size})" else "Aa TEXT"
+                viewBinding.arLensModeDock.btnArTextStudio.text = if (overlay.hasArTextItems()) "TEXT (${overlay.arTextItems.size})" else "Aa AR TEXT STUDIO"
             }
         } else {
             builder.setNegativeButton("Cancel", null)
@@ -7523,8 +8720,10 @@ class MainActivity : AppCompatActivity() {
         try { toneGenerator?.release() } catch (_: Throwable) {}
         sensorManager.unregisterListener(sensorEventListener)
         faceMeshHelper?.clear()
+        viewBinding.arFaceOverlayView.releaseGlbEngine()
         cameraExecutor.shutdown()
         burstHandler.removeCallbacksAndMessages(null)
+        arHoldHandler.removeCallbacksAndMessages(null)
     }
 
     companion object {

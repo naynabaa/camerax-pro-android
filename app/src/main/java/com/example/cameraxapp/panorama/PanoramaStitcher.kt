@@ -1,21 +1,18 @@
 package com.example.cameraxapp.panorama
 
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
-import android.graphics.ImageFormat
 import android.graphics.LinearGradient
 import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.PorterDuff
 import android.graphics.PorterDuffXfermode
-import android.graphics.Rect
 import android.graphics.Shader
-import android.graphics.YuvImage
 import androidx.camera.core.ImageProxy
-import java.io.ByteArrayOutputStream
 import kotlin.math.abs
+import kotlin.math.ceil
+import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -31,21 +28,18 @@ import kotlin.math.roundToInt
  *    - Runs 2D sliding-window Sum of Absolute Differences (SAD) correlation against the last
  *      captured anchor slice (`anchorGrid`) across horizontal shift `dx` and vertical drift `dy`.
  *    - Computes exact frame-to-frame overlap ratio (`0.0f..1.0f`), optical alignment offset
- *      `(dxNorm, dyNorm)`, match confidence, and real-time UI guidance arrows
- *      (`PAN_RIGHT`, `PAN_LEFT`, `TILT_UP`, `TILT_DOWN`, `SLOW_DOWN`).
+ *      `(dxNorm, dyNorm)`, match confidence, and real-time UI guidance arrows.
  *
  * 2. AUTOMATED CAPTURE TRIGGER SEQUENCE:
  *    - Triggers automatic slice capture when frame overlap drops into the optimal stitching window
- *      (`overlapRatio <= 0.72f` — i.e., 28%+ new scene shift since anchor) with >= 260ms cooldown,
- *      with gyro yaw fusion fallback (`>= 7.5 deg`) for low-texture sky/wall sweeps.
- *    - Converts the live `ImageProxy` (YUV_420_888 -> NV21 -> `YuvImage` JPEG -> rotated `Bitmap`)
- *      using standard Android `android.graphics.YuvImage` & `BitmapFactory`.
+ *      (`overlapRatio <= 0.70f`) with >= 260ms cooldown, or gyro yaw fusion fallback (`>= 7.8 deg`).
+ *    - Decodes `ImageProxy` YUV_420_888 directly to lossless ARGB pixels (zero JPEG smear, zero
+ *      digital upscaling above native camera resolution).
  *
  * 3. STANDARD ANDROID IMAGE PROCESSING STITCHER (`stitchSlices`):
- *    - Refines adjacent slice seam offsets at pixel resolution (`refineSeamOffsetPx`).
- *    - Composites aligned frames onto a seamless panoramic `Bitmap` via `Canvas`,
- *      `LinearGradient`, and `PorterDuff.Mode.DST_IN` feather alpha blending across overlap seams,
- *      then trims vertical handheld pitch margins.
+ *    - Refines adjacent slice seam coordinates via 2-stage coarse-to-fine `refineSeamOffsetPx`.
+ *    - Composites slices with a narrow seam feather mask (preventing double-exposure ghosting),
+ *      trims exact pitch-drift borders, and applies mild unsharp crispness enhancement.
  */
 class PanoramaStitcher {
 
@@ -200,13 +194,11 @@ class PanoramaStitcher {
         val meanAllSad = if (sadSamples > 0) sadAccum / sadSamples else bestSad
         val confidence = ((meanAllSad - bestSad) / max(meanAllSad, 1f)).coerceIn(0f, 1f)
 
-        // Since ax = x + dx, panning right moves landmarks left in currGrid (bestDx > 0), while panning left yields bestDx < 0.
         val opticalShiftAbs = abs(bestDx).toFloat() / GRID_W.toFloat()
         val opticalDyNorm = bestDy.toFloat() / GRID_H.toFloat()
         val yawSinceAnchor = abs(normalizeAngleDelta(anchorYawDeg, gyroDeltaYawDeg))
         val gyroShiftAbs = (yawSinceAnchor / 36.0f).coerceIn(0f, 0.75f)
 
-        // Use visual SAD correlation when scene has detail; blend with gyro displacement on low-texture sky
         val effectiveShiftAbs = if (confidence >= 0.14f) {
             (opticalShiftAbs * 0.78f + gyroShiftAbs * 0.22f)
         } else {
@@ -264,27 +256,27 @@ class PanoramaStitcher {
     }
 
     /**
-     * Converts CameraX YUV_420_888 ImageProxy to an upright, scaled ARGB Bitmap
-     * using standard Android APIs (ImageFormat.NV21 -> YuvImage -> BitmapFactory + Matrix).
+     * Converts CameraX YUV_420_888 ImageProxy directly to an upright lossless ARGB Bitmap.
+     * Never digitally upscales above native upright frame height (scale <= 1.0f) and avoids
+     * lossy YuvImage JPEG recompression blur.
      */
     fun imageProxyToBitmap(imageProxy: ImageProxy, isFrontFacing: Boolean, targetHeight: Int = 960): Bitmap? {
         if (imageProxy.planes.size < 3) return null
-        val nv21 = yuv420888ToNv21(imageProxy)
-        val yuvImage = YuvImage(nv21, ImageFormat.NV21, imageProxy.width, imageProxy.height, null)
-        val jpegOut = ByteArrayOutputStream()
-        yuvImage.compressToJpeg(Rect(0, 0, imageProxy.width, imageProxy.height), 92, jpegOut)
-        val jpegBytes = jpegOut.toByteArray()
-        val rawBmp = BitmapFactory.decodeByteArray(jpegBytes, 0, jpegBytes.size) ?: return null
+        val rawBmp = yuv420888ToArgbBitmap(imageProxy) ?: return null
 
         val rotDeg = imageProxy.imageInfo.rotationDegrees.toFloat()
         val rotatedSideways = (imageProxy.imageInfo.rotationDegrees == 90 || imageProxy.imageInfo.rotationDegrees == 270)
         val uprightH = (if (rotatedSideways) rawBmp.width else rawBmp.height).coerceAtLeast(1)
-        val scale = targetHeight.toFloat() / uprightH.toFloat()
+        val scale = min(1.0f, targetHeight.toFloat() / uprightH.toFloat())
+        val needsTransform = rotDeg != 0f || isFrontFacing || scale < 0.98f
+        if (!needsTransform) {
+            return rawBmp
+        }
 
         val matrix = Matrix().apply {
             if (rotDeg != 0f) postRotate(rotDeg)
             if (isFrontFacing) postScale(-1f, 1f)
-            if (abs(scale - 1f) > 0.02f) postScale(scale, scale)
+            if (scale < 0.98f) postScale(scale, scale)
         }
         val finalBmp = Bitmap.createBitmap(rawBmp, 0, 0, rawBmp.width, rawBmp.height, matrix, true)
         if (finalBmp != rawBmp && !rawBmp.isRecycled) {
@@ -296,21 +288,20 @@ class PanoramaStitcher {
     /**
      * Step 3: Standard Android Image Processing Stitcher.
      *
-     * Refines per-slice seam coordinates using local pixel-strip correlation and composites slices
-     * left-to-right on a single `Canvas` using `LinearGradient` + `PorterDuff.Mode.DST_IN`
-     * feather alpha masks to eliminate visible vertical seams.
+     * Uses 2-stage coarse-to-fine pixel-strip seam alignment and a narrow 32–64px seam feather
+     * mask so overlapping textures never smear into double-exposure ghosting, followed by exact
+     * vertical border trimming and a mild unsharp crispness pass.
      */
     fun stitchSlices(rawSlices: List<PanoramaSlice>): Bitmap? {
         if (rawSlices.isEmpty()) return null
         val ordered = if (panDirection < 0) rawSlices.reversed() else rawSlices
         if (ordered.size == 1) {
-            return ordered[0].bitmap.copy(Bitmap.Config.ARGB_8888, false)
+            return sharpenPanoramaBitmap(ordered[0].bitmap.copy(Bitmap.Config.ARGB_8888, true))
         }
 
         val sliceH = ordered[0].bitmap.height.coerceAtLeast(64)
         val sliceW = ordered[0].bitmap.width.coerceAtLeast(64)
 
-        // Accumulate pixel-refined x/y positions for each slice relative to canvas origin
         val xPositions = FloatArray(ordered.size)
         val yPositions = FloatArray(ordered.size)
         xPositions[0] = 0f
@@ -323,15 +314,15 @@ class PanoramaStitcher {
             val roughStepPx = (roughStepNorm * sliceW).roundToInt()
 
             val refined = refineSeamOffsetPx(prevBmp, currBmp, roughStepPx)
-            val stepX = refined.first.toFloat().coerceIn(sliceW * 0.14f, sliceW * 0.56f)
-            val driftY = (-(ordered[i].pitchDriftDeg * 3.2f) + refined.second * 0.45f)
-                .coerceIn(-sliceH * 0.12f, sliceH * 0.12f)
+            val stepX = refined.first.toFloat().coerceIn(sliceW * 0.14f, sliceW * 0.58f)
+            val gyroDyHint = -(ordered[i].pitchDriftDeg * 2.2f)
+            val stepRelY = if (refined.second != 0) refined.second.toFloat() else (gyroDyHint - yPositions[i - 1])
 
             xPositions[i] = xPositions[i - 1] + stepX
-            yPositions[i] = driftY
+            yPositions[i] = (yPositions[i - 1] + stepRelY).coerceIn(-sliceH * 0.14f, sliceH * 0.14f)
         }
 
-        val totalWidth = min(4608, (xPositions.last() + sliceW).roundToInt().coerceAtLeast(sliceW))
+        val totalWidth = min(5120, (xPositions.last() + sliceW).roundToInt().coerceAtLeast(sliceW))
         val canvasBmp = Bitmap.createBitmap(totalWidth, sliceH, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(canvasBmp)
         canvas.drawColor(Color.BLACK)
@@ -339,10 +330,10 @@ class PanoramaStitcher {
         val maskPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_IN)
         }
-        val solidMaskPaint = Paint().apply {
-            xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_IN)
-            color = Color.BLACK
+        val clearPaint = Paint().apply {
+            xfermode = PorterDuffXfermode(PorterDuff.Mode.CLEAR)
         }
+        val slicePaint = Paint(Paint.FILTER_BITMAP_FLAG)
 
         for (i in ordered.indices) {
             val bmp = ordered[i].bitmap
@@ -350,93 +341,178 @@ class PanoramaStitcher {
             val drawY = yPositions[i]
 
             if (i == 0) {
-                canvas.drawBitmap(bmp, drawX, drawY, null)
+                canvas.drawBitmap(bmp, drawX, drawY, slicePaint)
             } else {
                 val overlapPx = ((xPositions[i - 1] + ordered[i - 1].bitmap.width) - drawX)
                     .coerceIn(28f, bmp.width * 0.80f)
+                val seamCenter = overlapPx * 0.50f
+                val featherHalf = min(overlapPx * 0.42f, (overlapPx * 0.16f).coerceIn(14f, 32f))
+                val gradStart = (seamCenter - featherHalf).coerceAtLeast(0f)
+                val gradEnd = (seamCenter + featherHalf).coerceAtMost(overlapPx)
 
                 val featherSlice = Bitmap.createBitmap(bmp.width, bmp.height, Bitmap.Config.ARGB_8888)
                 val fCanvas = Canvas(featherSlice)
-                fCanvas.drawBitmap(bmp, 0f, 0f, null)
+                fCanvas.drawBitmap(bmp, 0f, 0f, slicePaint)
 
+                if (gradStart > 0.5f) {
+                    fCanvas.drawRect(0f, 0f, gradStart, bmp.height.toFloat(), clearPaint)
+                }
                 maskPaint.shader = LinearGradient(
-                    0f, 0f, overlapPx, 0f,
+                    gradStart, 0f, gradEnd, 0f,
                     intArrayOf(Color.TRANSPARENT, Color.BLACK),
                     null,
                     Shader.TileMode.CLAMP
                 )
-                fCanvas.drawRect(0f, 0f, overlapPx, bmp.height.toFloat(), maskPaint)
-                fCanvas.drawRect(overlapPx, 0f, bmp.width.toFloat(), bmp.height.toFloat(), solidMaskPaint)
+                fCanvas.drawRect(gradStart, 0f, gradEnd, bmp.height.toFloat(), maskPaint)
 
-                canvas.drawBitmap(featherSlice, drawX, drawY, null)
+                canvas.drawBitmap(featherSlice, drawX, drawY, slicePaint)
                 featherSlice.recycle()
             }
         }
         maskPaint.shader = null
 
-        // Auto-crop symmetric top/bottom black wedge borders from handheld pitch variation
-        val cropMargin = (sliceH * 0.08f).roundToInt().coerceAtLeast(0)
-        val cropH = (sliceH - cropMargin * 2).coerceAtLeast(64)
-        val cleanBmp = Bitmap.createBitmap(canvasBmp, 0, cropMargin, canvasBmp.width, cropH)
-        if (cleanBmp != canvasBmp && !canvasBmp.isRecycled) {
-            canvasBmp.recycle()
+        var validTop = 0
+        var validBottom = sliceH
+        for (i in ordered.indices) {
+            val top = ceil(yPositions[i].toDouble()).toInt()
+            val bot = floor((yPositions[i] + ordered[i].bitmap.height).toDouble()).toInt()
+            if (top > validTop) validTop = top
+            if (bot < validBottom) validBottom = bot
         }
-        return cleanBmp
+        val topCrop = validTop.coerceIn(0, max(0, sliceH / 3))
+        val bottomCrop = validBottom.coerceIn(min(sliceH, topCrop + 64), sliceH)
+        val cropH = (bottomCrop - topCrop).coerceAtLeast(64)
+
+        val cleanBmp = if (topCrop > 0 || cropH < sliceH) {
+            Bitmap.createBitmap(canvasBmp, 0, topCrop, canvasBmp.width, cropH).also {
+                if (it != canvasBmp && !canvasBmp.isRecycled) canvasBmp.recycle()
+            }
+        } else {
+            canvasBmp
+        }
+        return sharpenPanoramaBitmap(cleanBmp)
     }
 
     /**
-     * Local vertical & horizontal pixel-strip alignment refinement around the rough step offset.
+     * Two-stage coarse-to-fine vertical & horizontal pixel-strip alignment refinement.
      */
     private fun refineSeamOffsetPx(prevBmp: Bitmap, currBmp: Bitmap, roughStepPx: Int): Pair<Int, Int> {
         val w = min(prevBmp.width, currBmp.width)
         val h = min(prevBmp.height, currBmp.height)
         if (w < 64 || h < 64) return Pair(roughStepPx, 0)
 
-        val bandW = min(64, w / 4).coerceAtLeast(24)
-        val bandH = (h * 0.56f).roundToInt().coerceAtLeast(32)
+        val bandW = min(84, w / 3).coerceAtLeast(28)
+        val bandH = (h * 0.60f).roundToInt().coerceAtLeast(48)
         val yStart = (h - bandH) / 2
-        val currStripX = 24.coerceAtMost(w - bandW - 1)
+        val currStripX = min(28, max(8, w - bandW - 1))
 
         val prevRow = IntArray(w)
         val currRow = IntArray(bandW)
-        val sampleRows = 18
-        val rowStep = max(2, bandH / sampleRows)
+        val rowStep = max(2, bandH / 22)
 
+        fun evalOffset(candStep: Int, dy: Int, xStride: Int): Long {
+            val prevMatchX = candStep + currStripX
+            if (prevMatchX !in 0 until (w - bandW)) return Long.MAX_VALUE
+            var err = 0L
+            var count = 0
+            var ry = yStart
+            while (ry < yStart + bandH) {
+                val py = (ry + dy).coerceIn(0, h - 1)
+                prevBmp.getPixels(prevRow, 0, w, 0, py, w, 1)
+                currBmp.getPixels(currRow, 0, bandW, currStripX, ry, bandW, 1)
+                var rx = 0
+                while (rx < bandW) {
+                    val c1 = prevRow[prevMatchX + rx]
+                    val c2 = currRow[rx]
+                    val l1 = (((c1 ushr 16) and 0xFF) * 3 + ((c1 ushr 8) and 0xFF) * 6 + (c1 and 0xFF)) / 10
+                    val l2 = (((c2 ushr 16) and 0xFF) * 3 + ((c2 ushr 8) and 0xFF) * 6 + (c2 and 0xFF)) / 10
+                    err += abs(l1 - l2)
+                    count++
+                    rx += xStride
+                }
+                ry += rowStep
+            }
+            return if (count > 0) err / count else Long.MAX_VALUE
+        }
+
+        // Stage 1: Coarse search +/- 28px X, +/- 12px Y
         var bestStep = roughStepPx
         var bestDy = 0
         var bestScore = Long.MAX_VALUE
-
-        for (dy in -10..10 step 2) {
-            for (dStep in -14..14 step 2) {
-                val candStep = roughStepPx + dStep
-                val prevMatchX = candStep + currStripX
-                if (prevMatchX !in 0 until (w - bandW)) continue
-
-                var err = 0L
-                var count = 0
-                var ry = yStart
-                while (ry < yStart + bandH) {
-                    val py = (ry + dy).coerceIn(0, h - 1)
-                    prevBmp.getPixels(prevRow, 0, w, 0, py, w, 1)
-                    currBmp.getPixels(currRow, 0, bandW, currStripX, ry, bandW, 1)
-                    for (rx in 0 until bandW step 3) {
-                        val c1 = prevRow[prevMatchX + rx]
-                        val c2 = currRow[rx]
-                        val l1 = (((c1 ushr 16) and 0xFF) * 3 + ((c1 ushr 8) and 0xFF) * 6 + (c1 and 0xFF)) / 10
-                        val l2 = (((c2 ushr 16) and 0xFF) * 3 + ((c2 ushr 8) and 0xFF) * 6 + (c2 and 0xFF)) / 10
-                        err += abs(l1 - l2)
-                        count++
-                    }
-                    ry += rowStep
+        for (dy in -12..12 step 3) {
+            for (dStep in -28..28 step 3) {
+                val cand = roughStepPx + dStep
+                val score = evalOffset(cand, dy, 4)
+                if (score < bestScore) {
+                    bestScore = score
+                    bestStep = cand
+                    bestDy = dy
                 }
-                if (count > 0 && err / count < bestScore) {
-                    bestScore = err / count
-                    bestStep = candStep
+            }
+        }
+
+        // Stage 2: 1px fine refinement around coarse optimum
+        val coarseStep = bestStep
+        val coarseDy = bestDy
+        for (dy in (coarseDy - 3)..(coarseDy + 3)) {
+            for (dStep in -4..4) {
+                val cand = coarseStep + dStep
+                val score = evalOffset(cand, dy, 2)
+                if (score < bestScore) {
+                    bestScore = score
+                    bestStep = cand
                     bestDy = dy
                 }
             }
         }
         return Pair(bestStep, bestDy)
+    }
+
+    /**
+     * Mild 3x3 unsharp-mask crispness pass to restore fine micro-contrast across stitched panoramas.
+     */
+    private fun sharpenPanoramaBitmap(src: Bitmap, amount: Float = 0.28f): Bitmap {
+        val w = src.width
+        val h = src.height
+        if (w < 8 || h < 8 || amount <= 0.01f) return src
+        val px = IntArray(w * h)
+        val out = IntArray(w * h)
+        src.getPixels(px, 0, w, 0, 0, w, h)
+
+        for (x in 0 until w) {
+            out[x] = px[x]
+            out[(h - 1) * w + x] = px[(h - 1) * w + x]
+        }
+        for (y in 1 until h - 1) {
+            val row = y * w
+            val rowUp = (y - 1) * w
+            val rowDn = (y + 1) * w
+            out[row] = px[row]
+            out[row + w - 1] = px[row + w - 1]
+            for (x in 1 until w - 1) {
+                val c = px[row + x]
+                val u = px[rowUp + x]
+                val d = px[rowDn + x]
+                val l = px[row + x - 1]
+                val r = px[row + x + 1]
+
+                val cr = (c ushr 16) and 0xFF
+                val cg = (c ushr 8) and 0xFF
+                val cb = c and 0xFF
+
+                val blurR = (((u ushr 16) and 0xFF) + ((d ushr 16) and 0xFF) + ((l ushr 16) and 0xFF) + ((r ushr 16) and 0xFF)) shr 2
+                val blurG = (((u ushr 8) and 0xFF) + ((d ushr 8) and 0xFF) + ((l ushr 8) and 0xFF) + ((r ushr 8) and 0xFF)) shr 2
+                val blurB = ((u and 0xFF) + (d and 0xFF) + (l and 0xFF) + (r and 0xFF)) shr 2
+
+                val nr = (cr + ((cr - blurR) * amount)).roundToInt().coerceIn(0, 255)
+                val ng = (cg + ((cg - blurG) * amount)).roundToInt().coerceIn(0, 255)
+                val nb = (cb + ((cb - blurB) * amount)).roundToInt().coerceIn(0, 255)
+                out[row + x] = (0xFF shl 24) or (nr shl 16) or (ng shl 8) or nb
+            }
+        }
+        val sharpened = Bitmap.createBitmap(out, w, h, Bitmap.Config.ARGB_8888)
+        if (!src.isRecycled) src.recycle()
+        return sharpened
     }
 
     private fun extractLumaGrid(imageProxy: ImageProxy, isFrontFacing: Boolean) {
@@ -483,46 +559,58 @@ class PanoramaStitcher {
         }
     }
 
-    private fun yuv420888ToNv21(image: ImageProxy): ByteArray {
+    private fun yuv420888ToArgbBitmap(image: ImageProxy): Bitmap? {
         val width = image.width
         val height = image.height
-        val ySize = width * height
-        val uvSize = width * height / 4
-        val nv21 = ByteArray(ySize + uvSize * 2)
+        if (width <= 0 || height <= 0 || image.planes.size < 3) return null
 
-        val yBuf = image.planes[0].buffer.duplicate().apply { rewind() }
-        val uBuf = image.planes[1].buffer.duplicate().apply { rewind() }
-        val vBuf = image.planes[2].buffer.duplicate().apply { rewind() }
+        val yPlane = image.planes[0]
+        val uPlane = image.planes[1]
+        val vPlane = image.planes[2]
+        val yBuf = yPlane.buffer.duplicate().apply { rewind() }
+        val uBuf = uPlane.buffer.duplicate().apply { rewind() }
+        val vBuf = vPlane.buffer.duplicate().apply { rewind() }
 
-        val yRowStride = image.planes[0].rowStride
-        val yPixelStride = image.planes[0].pixelStride
-        var pos = 0
-        if (yPixelStride == 1 && yRowStride == width) {
-            yBuf.get(nv21, 0, min(ySize, yBuf.remaining()))
-            pos = ySize
-        } else {
-            for (row in 0 until height) {
-                for (col in 0 until width) {
-                    val idx = row * yRowStride + col * yPixelStride
-                    nv21[pos++] = if (idx < yBuf.limit()) yBuf.get(idx) else 0
-                }
+        val yRowStride = yPlane.rowStride
+        val yPixelStride = yPlane.pixelStride
+        val uRowStride = uPlane.rowStride
+        val uPixelStride = uPlane.pixelStride
+        val vRowStride = vPlane.rowStride
+        val vPixelStride = vPlane.pixelStride
+        val yLimit = yBuf.limit()
+        val uLimit = uBuf.limit()
+        val vLimit = vBuf.limit()
+
+        val argb = IntArray(width * height)
+        for (row in 0 until height) {
+            val yRowOff = row * yRowStride
+            val uvRow = row ushr 1
+            val uRowOff = uvRow * uRowStride
+            val vRowOff = uvRow * vRowStride
+            val outRow = row * width
+            for (col in 0 until width) {
+                val yIdx = yRowOff + col * yPixelStride
+                val uvCol = col ushr 1
+                val uIdx = uRowOff + uvCol * uPixelStride
+                val vIdx = vRowOff + uvCol * vPixelStride
+
+                val yVal = if (yIdx in 0 until yLimit) (yBuf.get(yIdx).toInt() and 0xFF) else 0
+                val uVal = (if (uIdx in 0 until uLimit) (uBuf.get(uIdx).toInt() and 0xFF) else 128) - 128
+                val vVal = (if (vIdx in 0 until vLimit) (vBuf.get(vIdx).toInt() and 0xFF) else 128) - 128
+
+                val yFixed = 1192 * max(0, yVal - 16)
+                var r = yFixed + 1634 * vVal
+                var g = yFixed - 833 * vVal - 400 * uVal
+                var b = yFixed + 2066 * uVal
+
+                r = if (r < 0) 0 else if (r > 262143) 255 else (r shr 10)
+                g = if (g < 0) 0 else if (g > 262143) 255 else (g shr 10)
+                b = if (b < 0) 0 else if (b > 262143) 255 else (b shr 10)
+
+                argb[outRow + col] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
             }
         }
-
-        val vRowStride = image.planes[2].rowStride
-        val vPixelStride = image.planes[2].pixelStride
-        val uRowStride = image.planes[1].rowStride
-        val uPixelStride = image.planes[1].pixelStride
-
-        for (row in 0 until height / 2) {
-            for (col in 0 until width / 2) {
-                val vIdx = row * vRowStride + col * vPixelStride
-                val uIdx = row * uRowStride + col * uPixelStride
-                nv21[pos++] = if (vIdx < vBuf.limit()) vBuf.get(vIdx) else (-128).toByte()
-                nv21[pos++] = if (uIdx < uBuf.limit()) uBuf.get(uIdx) else (-128).toByte()
-            }
-        }
-        return nv21
+        return Bitmap.createBitmap(argb, width, height, Bitmap.Config.ARGB_8888)
     }
 
     private fun normalizeAngleDelta(fromDeg: Float, toDeg: Float): Float {

@@ -32,6 +32,8 @@ import androidx.camera.core.ImageCapture;
 import androidx.camera.core.ImageCaptureException;
 import androidx.camera.core.ImageProxy;
 import androidx.camera.core.Preview;
+import androidx.camera.core.resolutionselector.ResolutionSelector;
+import androidx.camera.core.resolutionselector.ResolutionStrategy;
 import androidx.camera.lifecycle.ProcessCameraProvider;
 import androidx.camera.video.MediaStoreOutputOptions;
 import androidx.camera.video.Quality;
@@ -71,7 +73,7 @@ import java.util.concurrent.Executors;
  */
 public class MainActivity extends AppCompatActivity {
 
-    public enum CameraMode { SLOW_MO, VIDEO, PHOTO, PORTRAIT, NIGHT, PANORAMA }
+    public enum CameraMode { SLOW_MO, VIDEO, PHOTO, PORTRAIT, NIGHT, PANORAMA, AR_LENS }
 
     private static final List<CameraMode> ALL_MODES = Arrays.asList(
             CameraMode.SLOW_MO,
@@ -79,7 +81,8 @@ public class MainActivity extends AppCompatActivity {
             CameraMode.PHOTO,
             CameraMode.PORTRAIT,
             CameraMode.NIGHT,
-            CameraMode.PANORAMA
+            CameraMode.PANORAMA,
+            CameraMode.AR_LENS
     );
 
     private static final String TAG = "CameraXProJava";
@@ -87,10 +90,10 @@ public class MainActivity extends AppCompatActivity {
 
     private PreviewView viewFinder;
     private ImageButton btnCapture, btnSwitchCamera, btnPauseResume, btnProStudio, btnTimer;
-    private TextView tabSlowMo, tabVideo, tabPhoto, tabPortrait, tabNight, tabPanorama;
+    private TextView tabSlowMo, tabVideo, tabPhoto, tabPortrait, tabNight, tabPanorama, tabArLens;
     private TextView tabSlotFarLeft, tabSlotLeft, tabSlotCenter, tabSlotRight, tabSlotFarRight;
     private TextView tvExposureValue, tvCountdown, tvBurstBadge, tvRecordingStatus;
-    private View recordingTimer, proModeBar, gridOverlay, exposureLayout, layoutBtnTimer, recordingDot;
+    private View recordingTimer, proModeBar, gridOverlay, exposureLayout, layoutBtnTimer, recordingDot, arLensModeDock;
     private ProOverlayView proOverlayView;
     private Chronometer chronometer;
     private SeekBar exposureSlider;
@@ -111,6 +114,11 @@ public class MainActivity extends AppCompatActivity {
     private int burstCount = 0;
     private final Handler burstHandler = new Handler(Looper.getMainLooper());
     private Runnable burstRunnable;
+
+    // AR Lens Mode Hold (>=1s) Video Recording State
+    private boolean isArHoldRecording = false;
+    private final Handler arHoldHandler = new Handler(Looper.getMainLooper());
+    private Runnable arHoldRunnable;
 
     // Automated Panorama Mode ImageAnalysis & Stitching State
     private final PanoramaStitcher panoramaStitcher = new PanoramaStitcher();
@@ -286,6 +294,8 @@ public class MainActivity extends AppCompatActivity {
         tabPortrait = findViewById(R.id.tabPortrait);
         tabNight = findViewById(R.id.tabNight);
         tabPanorama = findViewById(R.id.tabPanorama);
+        tabArLens = findViewById(R.id.tabArLens);
+        arLensModeDock = findViewById(R.id.arLensModeDock);
         tabSlotFarLeft = findViewById(R.id.tabSlotFarLeft);
         tabSlotLeft = findViewById(R.id.tabSlotLeft);
         tabSlotCenter = findViewById(R.id.tabSlotCenter);
@@ -317,6 +327,7 @@ public class MainActivity extends AppCompatActivity {
         if (tabPortrait != null) tabPortrait.setOnClickListener(v -> setMode(CameraMode.PORTRAIT));
         if (tabNight != null) tabNight.setOnClickListener(v -> setMode(CameraMode.NIGHT));
         if (tabPanorama != null) tabPanorama.setOnClickListener(v -> setMode(CameraMode.PANORAMA));
+        if (tabArLens != null) tabArLens.setOnClickListener(v -> setMode(CameraMode.AR_LENS));
 
         if (tabSlotFarLeft != null) tabSlotFarLeft.setOnClickListener(v -> shiftModeBy(-2));
         if (tabSlotLeft != null) tabSlotLeft.setOnClickListener(v -> shiftModeBy(-1));
@@ -408,6 +419,7 @@ public class MainActivity extends AppCompatActivity {
             case PORTRAIT: return "PORTRAIT";
             case NIGHT: return "NIGHT";
             case PANORAMA: return "PANORAMA";
+            case AR_LENS: return "AR LENS";
             case PHOTO:
             default:
                 return "PHOTO";
@@ -424,7 +436,7 @@ public class MainActivity extends AppCompatActivity {
         if (tabSlotRight != null) tabSlotRight.setText(getModeLabel(ALL_MODES.get((curIdx + 1) % total)));
         if (tabSlotFarRight != null) tabSlotFarRight.setText(getModeLabel(ALL_MODES.get((curIdx + 2) % total)));
 
-        TextView[] tabs = new TextView[]{tabSlowMo, tabVideo, tabPhoto, tabPortrait, tabNight, tabPanorama};
+        TextView[] tabs = new TextView[]{tabSlowMo, tabVideo, tabPhoto, tabPortrait, tabNight, tabPanorama, tabArLens};
         for (int i = 0; i < tabs.length; i++) {
             if (tabs[i] == null) continue;
             boolean active = (ALL_MODES.get(i) == cameraMode);
@@ -440,6 +452,35 @@ public class MainActivity extends AppCompatActivity {
 
     private void setupBurstMode() {
         btnCapture.setOnTouchListener((v, event) -> {
+            if (cameraMode == CameraMode.AR_LENS) {
+                // AR LENS Mode: Tap (< 1000ms) -> Capture AR Photo; Hold (>= 1000ms) -> Record AR Video until release
+                if (event.getAction() == MotionEvent.ACTION_DOWN) {
+                    isArHoldRecording = false;
+                    if (arHoldRunnable != null) arHoldHandler.removeCallbacks(arHoldRunnable);
+                    arHoldRunnable = () -> {
+                        if (cameraMode == CameraMode.AR_LENS && recording == null && !isCountingDown) {
+                            isArHoldRecording = true;
+                            if (arLensModeDock != null) arLensModeDock.setVisibility(View.GONE);
+                            captureVideo();
+                        }
+                    };
+                    arHoldHandler.postDelayed(arHoldRunnable, 1000L);
+                    return true;
+                } else if (event.getAction() == MotionEvent.ACTION_UP || event.getAction() == MotionEvent.ACTION_CANCEL) {
+                    if (arHoldRunnable != null) {
+                        arHoldHandler.removeCallbacks(arHoldRunnable);
+                        arHoldRunnable = null;
+                    }
+                    if (isArHoldRecording) {
+                        isArHoldRecording = false;
+                        if (recording != null) captureVideo();
+                    } else if (event.getAction() == MotionEvent.ACTION_UP && recording == null) {
+                        onShutterClick();
+                    }
+                    return true;
+                }
+                return true;
+            }
             if (!isPhotoStyleMode(cameraMode)) {
                 if (event.getAction() == MotionEvent.ACTION_UP) captureVideo();
                 return true;
@@ -553,7 +594,12 @@ public class MainActivity extends AppCompatActivity {
                 : ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY;
         ImageCapture.Builder captureBuilder = new ImageCapture.Builder().setCaptureMode(captureMode);
         if (thermalGuardManager != null && thermalGuardManager.getCurrentPolicy().maxImageCaptureResolution != null) {
-            captureBuilder.setTargetResolution(thermalGuardManager.getCurrentPolicy().maxImageCaptureResolution);
+            ResolutionSelector capResSelector = new ResolutionSelector.Builder()
+                    .setResolutionStrategy(new ResolutionStrategy(
+                            thermalGuardManager.getCurrentPolicy().maxImageCaptureResolution,
+                            ResolutionStrategy.FALLBACK_RULE_CLOSEST_LOWER_THEN_HIGHER))
+                    .build();
+            captureBuilder.setResolutionSelector(capResSelector);
         }
         imageCapture = captureBuilder.build();
 
@@ -565,18 +611,25 @@ public class MainActivity extends AppCompatActivity {
                 .setQualitySelector(QualitySelector.from(constrainedQuality)).build();
         videoCapture = VideoCapture.withOutput(recorder);
 
-        ImageAnalysis.Builder analysisBuilder = new ImageAnalysis.Builder()
-                .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST);
         android.util.Size ecoRes = (ecoPowerManager != null)
                 ? ecoPowerManager.getCurrentPolicy().targetAnalysisResolution
                 : new android.util.Size(640, 480);
         android.util.Size thermalRes = (thermalGuardManager != null)
                 ? thermalGuardManager.getCurrentPolicy().targetAnalysisResolution
                 : new android.util.Size(640, 480);
-        analysisBuilder.setTargetResolution(new android.util.Size(
-                Math.min(ecoRes.getWidth(), thermalRes.getWidth()),
-                Math.min(ecoRes.getHeight(), thermalRes.getHeight())
-        ));
+        int baseW = Math.min(ecoRes.getWidth(), thermalRes.getWidth());
+        int baseH = Math.min(ecoRes.getHeight(), thermalRes.getHeight());
+        android.util.Size targetAnalysisSize = (cameraMode == CameraMode.PANORAMA && baseW >= 640)
+                ? new android.util.Size(1280, 960)
+                : new android.util.Size(baseW, baseH);
+        ResolutionSelector analysisResSelector = new ResolutionSelector.Builder()
+                .setResolutionStrategy(new ResolutionStrategy(
+                        targetAnalysisSize,
+                        ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER))
+                .build();
+        ImageAnalysis.Builder analysisBuilder = new ImageAnalysis.Builder()
+                .setResolutionSelector(analysisResSelector)
+                .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST);
         imageAnalysis = analysisBuilder.build();
         imageAnalysis.setAnalyzer(cameraExecutor, imageProxy -> {
             if (ecoPowerManager != null && !ecoPowerManager.shouldProcessAnalysisFrame()) {
@@ -593,7 +646,7 @@ public class MainActivity extends AppCompatActivity {
             if (cameraMode == CameraMode.PANORAMA && isPanoramaCapturing && !isPanoramaStitching) {
                 PanoramaStitcher.AlignmentResult align = panoramaStitcher.analyzeFrame(imageProxy, isFront);
                 if (align.shouldAutoCapture && panoramaSlices.size() < MAX_PANORAMA_SLICES) {
-                    Bitmap sliceBmp = panoramaStitcher.imageProxyToBitmap(imageProxy, 960);
+                    Bitmap sliceBmp = panoramaStitcher.imageProxyToBitmap(imageProxy, isFront, 1080);
                     if (sliceBmp != null) {
                         panoramaSlices.add(new PanoramaStitcher.Slice(sliceBmp, align.dxNorm, align.dyNorm));
                         panoramaStitcher.lockCurrentFrameAsAnchor();
@@ -639,7 +692,13 @@ public class MainActivity extends AppCompatActivity {
 
         try {
             cameraProvider.unbindAll();
-            if (isPhotoStyleMode(cameraMode)) {
+            if (cameraMode == CameraMode.AR_LENS) {
+                try {
+                    camera = cameraProvider.bindToLifecycle(this, cameraSelector, preview, imageCapture, videoCapture, imageAnalysis);
+                } catch (Exception comboErr) {
+                    camera = cameraProvider.bindToLifecycle(this, cameraSelector, preview, imageCapture, videoCapture);
+                }
+            } else if (isPhotoStyleMode(cameraMode)) {
                 camera = cameraProvider.bindToLifecycle(this, cameraSelector, preview, imageCapture, imageAnalysis);
             } else {
                 camera = cameraProvider.bindToLifecycle(this, cameraSelector, preview, videoCapture);
@@ -811,9 +870,21 @@ public class MainActivity extends AppCompatActivity {
                 }
                 chronometer.stop();
                 timeWhenStopped = 0L;
-                recordingTimer.setVisibility(View.GONE);
+                isArHoldRecording = false;
                 btnPauseResume.setVisibility(View.GONE);
-                btnCapture.setImageResource(R.drawable.bg_record_button_idle);
+                if (cameraMode == CameraMode.AR_LENS) {
+                    if (recordingTimer != null) recordingTimer.setVisibility(View.VISIBLE);
+                    if (tvRecordingStatus != null) {
+                        tvRecordingStatus.setText("AR LENS");
+                        tvRecordingStatus.setTextColor(Color.parseColor("#E879F9"));
+                    }
+                    if (chronometer != null) chronometer.setText("TAP PHOTO · HOLD 1S VID");
+                    btnCapture.setImageResource(R.drawable.bg_shutter_button);
+                    if (arLensModeDock != null) arLensModeDock.setVisibility(View.VISIBLE);
+                } else {
+                    recordingTimer.setVisibility(View.GONE);
+                    btnCapture.setImageResource(R.drawable.bg_record_button_idle);
+                }
             }
         });
     }
@@ -973,6 +1044,14 @@ public class MainActivity extends AppCompatActivity {
         if (isPanoramaCapturing && mode != CameraMode.PANORAMA) {
             cancelPanoramaCapture();
         }
+        if (cameraMode == CameraMode.AR_LENS && mode != CameraMode.AR_LENS) {
+            if (arHoldRunnable != null) {
+                arHoldHandler.removeCallbacks(arHoldRunnable);
+                arHoldRunnable = null;
+            }
+            isArHoldRecording = false;
+            if (arLensModeDock != null) arLensModeDock.setVisibility(View.GONE);
+        }
         cameraMode = mode;
         updateModeCarouselSlots();
 
@@ -981,7 +1060,19 @@ public class MainActivity extends AppCompatActivity {
             proOverlayView.setNightModeHudActive(mode == CameraMode.NIGHT);
         }
 
-        if (isPhotoStyleMode(mode)) {
+        if (mode == CameraMode.AR_LENS) {
+            btnCapture.setImageResource(R.drawable.bg_shutter_button);
+            btnPauseResume.setVisibility(View.GONE);
+            if (layoutBtnTimer != null) layoutBtnTimer.setVisibility(View.VISIBLE);
+            proModeBar.setVisibility(View.VISIBLE);
+            if (recordingTimer != null) recordingTimer.setVisibility(View.VISIBLE);
+            if (arLensModeDock != null) arLensModeDock.setVisibility(View.VISIBLE);
+            if (tvRecordingStatus != null) {
+                tvRecordingStatus.setText("AR LENS");
+                tvRecordingStatus.setTextColor(Color.parseColor("#E879F9"));
+                if (chronometer != null) chronometer.setText("TAP PHOTO · HOLD 1S VID");
+            }
+        } else if (isPhotoStyleMode(mode)) {
             btnCapture.setImageResource(R.drawable.bg_shutter_button);
             btnPauseResume.setVisibility(View.GONE);
             if (layoutBtnTimer != null) {
@@ -1048,6 +1139,7 @@ public class MainActivity extends AppCompatActivity {
         super.onDestroy();
         cameraExecutor.shutdown();
         burstHandler.removeCallbacksAndMessages(null);
+        arHoldHandler.removeCallbacksAndMessages(null);
         nightHandler.removeCallbacksAndMessages(null);
         panoramaStitcher.reset();
         clearPanoramaSlices();

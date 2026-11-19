@@ -38,8 +38,9 @@
             android:orientation="horizontal"
             android:gravity="center_vertical">
 
-            <!-- Category Switcher Pill: FILTERS | LENSES | EFFECTS | ART | TOON -->
+            <!-- Category Switcher Pill: FILTERS | EFFECTS | ART | TOON -->
             <HorizontalScrollView
+                android:id="@+id/scrollEffectsCategories"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
@@ -64,19 +65,6 @@
                         android:textStyle="bold"
                         android:fontFamily="monospace"
                         android:background="@drawable/bg_cinema_button_active" />
-
-                    <TextView
-                        android:id="@+id/btnCategoryLenses"
-                        android:layout_width="wrap_content"
-                        android:layout_height="28dp"
-                        android:layout_marginStart="2dp"
-                        android:paddingHorizontal="8dp"
-                        android:gravity="center"
-                        android:text="LENSES"
-                        android:textColor="#94A3B8"
-                        android:textSize="9sp"
-                        android:fontFamily="monospace"
-                        android:background="@drawable/bg_cinema_button_inactive" />
 
                     <TextView
                         android:id="@+id/btnCategoryEffects"
@@ -713,166 +701,7 @@
             </LinearLayout>
         </HorizontalScrollView>
 
-        <!-- Category 2: AR Face Lenses Horizontal Scroll Strip -->
-        <HorizontalScrollView
-            android:id="@+id/scrollLensesStrip"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:scrollbars="none"
-            android:visibility="gone">
-
-            <LinearLayout
-                android:id="@+id/layoutLensesContainer"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:gravity="center_vertical">
-
-                <TextView
-                    android:id="@+id/btnArNone"
-                    android:layout_width="wrap_content"
-                    android:minWidth="76dp"
-                    android:layout_height="36dp"
-                    android:paddingHorizontal="12dp"
-                    android:gravity="center"
-                    android:text="OFF"
-                    android:textColor="#0F172A"
-                    android:textSize="10sp"
-                    android:textStyle="bold"
-                    android:fontFamily="monospace"
-                    android:background="@drawable/bg_cinema_button_active" />
-
-                <TextView
-                    android:id="@+id/btnArMesh"
-                    android:layout_width="wrap_content"
-                    android:minWidth="76dp"
-                    android:layout_height="36dp"
-                    android:layout_marginStart="6dp"
-                    android:paddingHorizontal="12dp"
-                    android:gravity="center"
-                    android:text="3D MESH"
-                    android:textColor="#94A3B8"
-                    android:textSize="10sp"
-                    android:fontFamily="monospace"
-                    android:background="@drawable/bg_cinema_button_inactive" />
-
-                <TextView
-                    android:id="@+id/btnArVisor"
-                    android:layout_width="wrap_content"
-                    android:minWidth="76dp"
-                    android:layout_height="36dp"
-                    android:layout_marginStart="6dp"
-                    android:paddingHorizontal="12dp"
-                    android:gravity="center"
-                    android:text="CYBER"
-                    android:textColor="#94A3B8"
-                    android:textSize="10sp"
-                    android:fontFamily="monospace"
-                    android:background="@drawable/bg_cinema_button_inactive" />
-
-                <TextView
-                    android:id="@+id/btnArCrown"
-                    android:layout_width="wrap_content"
-                    android:minWidth="76dp"
-                    android:layout_height="36dp"
-                    android:layout_marginStart="6dp"
-                    android:paddingHorizontal="12dp"
-                    android:gravity="center"
-                    android:text="TIARA"
-                    android:textColor="#94A3B8"
-                    android:textSize="10sp"
-                    android:fontFamily="monospace"
-                    android:background="@drawable/bg_cinema_button_inactive" />
-
-                <TextView
-                    android:id="@+id/btnArHud"
-                    android:layout_width="wrap_content"
-                    android:minWidth="76dp"
-                    android:layout_height="36dp"
-                    android:layout_marginStart="6dp"
-                    android:paddingHorizontal="12dp"
-                    android:gravity="center"
-                    android:text="HUD"
-                    android:textColor="#94A3B8"
-                    android:textSize="10sp"
-                    android:fontFamily="monospace"
-                    android:background="@drawable/bg_cinema_button_inactive" />
-
-                <TextView
-                    android:id="@+id/btnArComicFrame"
-                    android:layout_width="wrap_content"
-                    android:minWidth="92dp"
-                    android:layout_height="36dp"
-                    android:layout_marginStart="6dp"
-                    android:paddingHorizontal="12dp"
-                    android:gravity="center"
-                    android:text="COMIC FRAME"
-                    android:textColor="#94A3B8"
-                    android:textSize="10sp"
-                    android:fontFamily="monospace"
-                    android:background="@drawable/bg_cinema_button_inactive" />
-
-                <TextView
-                    android:id="@+id/btnArComicOnomatopoeia"
-                    android:layout_width="wrap_content"
-                    android:minWidth="94dp"
-                    android:layout_height="36dp"
-                    android:layout_marginStart="6dp"
-                    android:paddingHorizontal="12dp"
-                    android:gravity="center"
-                    android:text="POW! COMIC"
-                    android:textColor="#FACC15"
-                    android:textSize="10sp"
-                    android:fontFamily="monospace"
-                    android:background="@drawable/bg_cinema_button_inactive" />
-
-                <TextView
-                    android:id="@+id/btnArTextStudio"
-                    android:layout_width="wrap_content"
-                    android:minWidth="86dp"
-                    android:layout_height="36dp"
-                    android:layout_marginStart="6dp"
-                    android:paddingHorizontal="12dp"
-                    android:gravity="center"
-                    android:text="Aa TEXT"
-                    android:textColor="#34D399"
-                    android:textSize="10sp"
-                    android:textStyle="bold"
-                    android:fontFamily="monospace"
-                    android:background="@drawable/bg_cinema_button_inactive" />
-
-                <TextView
-                    android:id="@+id/btnArCalibrate"
-                    android:layout_width="wrap_content"
-                    android:minWidth="96dp"
-                    android:layout_height="36dp"
-                    android:layout_marginStart="6dp"
-                    android:paddingHorizontal="12dp"
-                    android:gravity="center"
-                    android:text="CALIBRATE AR"
-                    android:textColor="#38BDF8"
-                    android:textSize="10sp"
-                    android:textStyle="bold"
-                    android:fontFamily="monospace"
-                    android:background="@drawable/bg_cinema_button_inactive" />
-
-                <TextView
-                    android:id="@+id/btnArBatch"
-                    android:layout_width="wrap_content"
-                    android:minWidth="88dp"
-                    android:layout_height="36dp"
-                    android:layout_marginStart="6dp"
-                    android:paddingHorizontal="12dp"
-                    android:gravity="center"
-                    android:text="BATCH: OFF"
-                    android:textColor="#94A3B8"
-                    android:textSize="10sp"
-                    android:fontFamily="monospace"
-                    android:background="@drawable/bg_cinema_button_inactive" />
-            </LinearLayout>
-        </HorizontalScrollView>
-
-        <!-- Category 3: Picture Shooting Effects (Optical & Shutter) + Cinema Toggles -->
+        <!-- Category 2: Picture Shooting Effects (Optical & Shutter) + Cinema Toggles -->
         <HorizontalScrollView
             android:id="@+id/scrollEffectsStrip"
             android:layout_width="match_parent"

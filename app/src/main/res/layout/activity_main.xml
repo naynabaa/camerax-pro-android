@@ -604,6 +604,7 @@
             <TextView android:id="@+id/tabPortrait" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="PORTRAIT" />
             <TextView android:id="@+id/tabNight" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="NIGHT" />
             <TextView android:id="@+id/tabPanorama" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="PANORAMA" />
+            <TextView android:id="@+id/tabArLens" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="AR LENS" />
         </LinearLayout>
     </FrameLayout>
 
@@ -897,8 +898,7 @@
         </LinearLayout>
     </androidx.constraintlayout.widget.ConstraintLayout>
 
-    <!-- Creative Effects & AR Lenses Floating Dual Layer (Top bar + Bottom options, leaving central viewfinder open) -->
-    <!-- Contains strictly Filters, Lenses, and Effects only -->
+    <!-- Creative Effects Floating Dual Layer (FILTERS, EFFECTS, ART, TOON only — AR Lenses moved to AR LENS Mode) -->
     <include
         android:id="@+id/effectsStudioDrawer"
         layout="@layout/layout_effects_studio_drawer"
@@ -907,6 +907,17 @@
         android:visibility="gone"
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintBottom_toBottomOf="parent" />
+
+    <!-- Dedicated AR Lens Mode Dock (Visible only in AR LENS Camera Mode) -->
+    <include
+        android:id="@+id/arLensModeDock"
+        layout="@layout/layout_ar_lens_mode_dock"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:visibility="gone"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
 
     <!-- AR Calibration, Comic Studio & Batch Queue Drawer -->
     <LinearLayout
@@ -961,6 +972,41 @@
                 android:background="@drawable/bg_circle_icon_button"
                 app:tint="#94A3B8"
                 android:contentDescription="Close AR Calibration" />
+        </LinearLayout>
+
+        <!-- JSON Calibration Preset Import / Export Row -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginTop="6dp">
+
+            <TextView
+                android:id="@+id/btnArCalibImportJson"
+                android:layout_width="0dp"
+                android:layout_height="28dp"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:text="IMPORT JSON"
+                android:textColor="#38BDF8"
+                android:textSize="9.5sp"
+                android:textStyle="bold"
+                android:fontFamily="monospace"
+                android:background="@drawable/bg_cinema_button_inactive"
+                android:layout_marginEnd="6dp" />
+
+            <TextView
+                android:id="@+id/btnArCalibExportJson"
+                android:layout_width="0dp"
+                android:layout_height="28dp"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:text="EXPORT JSON"
+                android:textColor="#34D399"
+                android:textSize="9.5sp"
+                android:textStyle="bold"
+                android:fontFamily="monospace"
+                android:background="@drawable/bg_cinema_button_inactive" />
         </LinearLayout>
 
         <ScrollView
