@@ -26,9 +26,11 @@ import com.google.mediapipe.tasks.vision.facelandmarker.FaceLandmarkerResult
  * Supports 5 AR Modes:
  * 1. MESH_CONTOUR: 468 landmark green cyber tessellation + facial contours
  * 2. CYBERPUNK_VISOR: Glowing neon visor anchored across eye landmarks with HUD metrics
- * 3. GOLDEN_CROWN: Regal golden diadem anchored to forehead with glittering gems
+ * 3. GOLDEN_CROWN: Regal golden crown anchored to forehead with glittering gems
  * 4. SCIFI_HUD: Military-grade face-tracking targeting reticle with lock-on brackets
- * 5. COMIC_FRAME: Dynamic thick black comic-book panel borders when cartoon shader is active
+ * 5. COMIC_FRAME: Dynamic thick black comic-book panel borders with newsprint gutter & Ben-Day corners
+ * 6. CUSTOM_STYLE: Dedicated face-tracked renderers for Cat Ears, Celestial Halo, Cyber Mask, Star Catchlight, Target Reticle, Neon Visor & Horns
+ * 7. GLB_3D: Hardware-accelerated OpenGL ES 2.0 3D .glb model overlay
  */
 class ARFaceOverlayView @JvmOverloads constructor(
     context: Context,
@@ -43,8 +45,23 @@ class ARFaceOverlayView @JvmOverloads constructor(
         GOLDEN_CROWN,
         SCIFI_HUD,
         COMIC_FRAME,
+        CUSTOM_STYLE,
         GLB_3D
     }
+
+    data class CustomLensStyleConfig(
+        val style: String,
+        val anchor: String,
+        val primaryColorHex: String = "#EC4899",
+        val accentColorHex: String = "#38BDF8",
+        val telemetryText: String = ""
+    )
+
+    var activeCustomLensStyle: CustomLensStyleConfig? = null
+        set(value) {
+            field = value
+            invalidate()
+        }
 
     var currentLens: ArLensMode = ArLensMode.NONE
         set(value) {
@@ -571,6 +588,8 @@ class ARFaceOverlayView @JvmOverloads constructor(
     private var simpleFaceCenterX: Float = 0.5f
     private var simpleFaceCenterY: Float = 0.44f
     private var simpleFaceEyeDist: Float = 0.22f
+    private var simpleFaceImgW: Int = 0
+    private var simpleFaceImgH: Int = 0
     private var hasSimpleFace: Boolean = false
     private var lastSimpleFaceTime: Long = 0L
 
@@ -578,7 +597,9 @@ class ARFaceOverlayView @JvmOverloads constructor(
         normEyeBridgeX: Float,
         normEyeBridgeY: Float,
         normEyeDist: Float,
-        isFrontFacing: Boolean
+        isFrontFacing: Boolean,
+        inputWidth: Int = 0,
+        inputHeight: Int = 0
     ) {
         val now = System.currentTimeMillis()
         val isRecent = hasSimpleFace && (now - lastSimpleFaceTime < 800L)
@@ -590,6 +611,10 @@ class ARFaceOverlayView @JvmOverloads constructor(
             simpleFaceCenterX = normEyeBridgeX
             simpleFaceCenterY = normEyeBridgeY
             simpleFaceEyeDist = normEyeDist.coerceIn(0.04f, 0.55f)
+        }
+        if (inputWidth > 0 && inputHeight > 0) {
+            simpleFaceImgW = inputWidth
+            simpleFaceImgH = inputHeight
         }
         isFrontCamera = isFrontFacing
         hasSimpleFace = true
@@ -650,18 +675,8 @@ class ARFaceOverlayView @JvmOverloads constructor(
 
         var skipFaceLayer = false
         if (currentLens == ArLensMode.COMIC_FRAME) {
-            if (isCartoonShaderActive) {
-                drawComicFrameBorders(canvas, viewW, viewH)
-            } else if (showDebugReticle) {
-                val standbyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                    color = Color.parseColor("#FACC15")
-                    strokeWidth = 3f
-                    style = Paint.Style.STROKE
-                    pathEffect = DashPathEffect(floatArrayOf(16f, 12f), 0f)
-                }
-                canvas.drawRect(18f, 18f, viewW - 18f, viewH - 18f, standbyPaint)
-                canvas.drawText("COMIC FRAME // STANDBY (ENABLE TOON/COMIC SHADER)", 28f, 52f, textHudPaint)
-            }
+            // Always draw comic-book panel borders immediately when Comic Frame lens is selected
+            drawComicFrameBorders(canvas, viewW, viewH)
             if (!showDebugReticle && !enableComicOnomatopoeia && !enableComicSpeechBubble) {
                 skipFaceLayer = true
             }
@@ -814,9 +829,17 @@ class ARFaceOverlayView @JvmOverloads constructor(
         val hasReal = landmarks != null && landmarks!!.size >= 468
         val hasSimple = !hasReal && hasSimpleFace && (now - lastSimpleFaceTime < 1500L)
 
-        // Match PreviewView scaleType="fillCenter" aspect ratio crop so landmarks align on tall displays (e.g. 20:9 Moto Edge)
-        val inW = imageWidth.toFloat().coerceAtLeast(1f)
-        val inH = imageHeight.toFloat().coerceAtLeast(1f)
+        // Match PreviewView scaleType="fillCenter" aspect ratio crop so BOTH MediaPipe and FaceDetector landmarks align on tall displays (e.g. 20:9 Moto Edge)
+        val inW = when {
+            hasReal -> imageWidth.toFloat().coerceAtLeast(1f)
+            hasSimple && simpleFaceImgW > 1 -> simpleFaceImgW.toFloat()
+            else -> imageWidth.toFloat().coerceAtLeast(1f)
+        }
+        val inH = when {
+            hasReal -> imageHeight.toFloat().coerceAtLeast(1f)
+            hasSimple && simpleFaceImgH > 1 -> simpleFaceImgH.toFloat()
+            else -> imageHeight.toFloat().coerceAtLeast(1f)
+        }
         val cropScale = if (inW > 1f && inH > 1f) Math.max(viewW / inW, viewH / inH) else 1f
         val scaledImgW = if (inW > 1f && inH > 1f) inW * cropScale else viewW
         val scaledImgH = if (inW > 1f && inH > 1f) inH * cropScale else viewH
@@ -834,24 +857,22 @@ class ARFaceOverlayView @JvmOverloads constructor(
         // Gentle breathing motion animation tick when using portrait anchor fallback
         val floatOffset = if (!hasReal && !hasSimple) (Math.sin(now / 550.0) * (viewH * 0.005f)).toFloat() else 0f
 
+        val trackedEyeDistPx = if (hasSimple) {
+            (simpleFaceEyeDist * scaledImgW).coerceIn(viewW * 0.04f, viewW * 0.48f)
+        } else if (currentLens == ArLensMode.GLB_3D) {
+            viewW * 0.16f
+        } else {
+            viewW * 0.20f
+        }
         val rawCenterX = when {
             hasReal -> projectNormX(landmarks!![1].x())
-            hasSimple -> {
-                if (isFrontCamera) (1.0f - simpleFaceCenterX) * viewW else simpleFaceCenterX * viewW
-            }
+            hasSimple -> projectNormX(simpleFaceCenterX)
             else -> viewW * 0.5f
         }
         val rawCenterY = when {
             hasReal -> projectNormY(landmarks!![1].y())
-            hasSimple -> (simpleFaceCenterY * viewH) + (simpleFaceEyeDist * viewW * 0.35f)
-            else -> viewH * 0.44f + floatOffset
-        }
-        val trackedEyeDistPx = if (hasSimple) {
-            (simpleFaceEyeDist * viewW).coerceIn(viewW * 0.04f, viewW * 0.48f)
-        } else if (currentLens == ArLensMode.GLB_3D) {
-            viewW * 0.16f
-        } else {
-            viewW * 0.24f
+            hasSimple -> projectNormY(simpleFaceCenterY) + (trackedEyeDistPx * 0.35f)
+            else -> viewH * 0.49f + floatOffset
         }
         val cx = rawCenterX + (calibrationOffsetX * viewW)
         val cy = rawCenterY + (calibrationOffsetY * viewH)
@@ -870,7 +891,7 @@ class ARFaceOverlayView @JvmOverloads constructor(
                 val spacing = if (isEye) eyeSpacingFactor else 1.0f
                 return cx + (dist * calibrationScale * spacing)
             } else {
-                val refScale = if (hasSimple) trackedEyeDistPx else if (currentLens == ArLensMode.GLB_3D) viewW * 0.16f else viewW * 0.25f
+                val refScale = if (hasSimple) trackedEyeDistPx else if (currentLens == ArLensMode.GLB_3D) viewW * 0.16f else viewW * 0.20f
                 val baseDist = when (idx) {
                     33 -> -refScale * 0.62f * eyeSpacingFactor
                     133 -> -refScale * 0.28f * eyeSpacingFactor
@@ -904,7 +925,7 @@ class ARFaceOverlayView @JvmOverloads constructor(
                 if (idx == 152 || idx == 148 || idx == 176) extraY = chinOffset * viewH
                 return cy + (dist * calibrationScale) + extraY
             } else {
-                val refScale = if (hasSimple) trackedEyeDistPx else if (currentLens == ArLensMode.GLB_3D) viewW * 0.16f else viewW * 0.25f
+                val refScale = if (hasSimple) trackedEyeDistPx else if (currentLens == ArLensMode.GLB_3D) viewW * 0.16f else viewW * 0.20f
                 val baseDist = when (idx) {
                     33, 263, 133, 362, 168 -> -refScale * 0.35f
                     6 -> -refScale * 0.15f
@@ -969,13 +990,16 @@ class ARFaceOverlayView @JvmOverloads constructor(
                 drawFaceMeshContour(canvas, ::getX, ::getY)
             }
             ArLensMode.CYBERPUNK_VISOR -> {
-                drawCyberpunkVisor(canvas, ::getX, ::getY)
+                drawCyberpunkVisor(canvas, viewW, ::getX, ::getY)
             }
             ArLensMode.GOLDEN_CROWN -> {
-                drawGoldenCrown(canvas, ::getX, ::getY)
+                drawGoldenCrown(canvas, viewW, ::getX, ::getY)
             }
             ArLensMode.SCIFI_HUD -> {
-                drawSciFiHud(canvas, ::getX, ::getY)
+                drawSciFiHud(canvas, viewW, ::getX, ::getY)
+            }
+            ArLensMode.CUSTOM_STYLE -> {
+                drawCustomStyleLens(canvas, viewW, viewH, cx, cy, ::getX, ::getY, now)
             }
             ArLensMode.GLB_3D -> {
                 drawGlb3dModel(canvas, viewW, viewH, cx, cy, ::getX, ::getY, now, syncGlb, hasAnyTrackedFace)
@@ -1035,15 +1059,24 @@ class ARFaceOverlayView @JvmOverloads constructor(
 
     private fun drawCyberpunkVisor(
         canvas: Canvas,
+        viewW: Float,
         getX: (Int) -> Float,
-        getY: (Int) -> Float
+        getY: (Int) -> Float,
+        primaryHex: String = "#00F0FF",
+        accentHex: String = "#FF007F",
+        telemetry: String = "CYBER-OPTICS // ACTIVE"
     ) {
         val leftX = getX(33)
         val rightX = getX(263)
         val eyeY = (getY(33) + getY(263)) / 2f
-        val visorWidth = (Math.abs(rightX - leftX) * 1.65f).coerceIn(180f, width * 0.72f)
+        val visorWidth = (Math.abs(rightX - leftX) * 1.65f).coerceIn(viewW * 0.16f, viewW * 0.72f)
         val visorHeight = visorWidth * 0.34f
         val centerX = (leftX + rightX) / 2f
+
+        val pColor = try { Color.parseColor(primaryHex) } catch (_: Exception) { Color.parseColor("#00F0FF") }
+        val aColor = try { Color.parseColor(accentHex) } catch (_: Exception) { Color.parseColor("#FF007F") }
+        val pFill = Color.argb(135, Color.red(pColor), Color.green(pColor), Color.blue(pColor))
+        val aFill = Color.argb(135, Color.red(aColor), Color.green(aColor), Color.blue(aColor))
 
         val visorPath = Path().apply {
             moveTo(centerX - visorWidth / 2f, eyeY - visorHeight / 2f)
@@ -1056,27 +1089,40 @@ class ARFaceOverlayView @JvmOverloads constructor(
         visorGlowPaint.shader = LinearGradient(
             centerX - visorWidth / 2f, eyeY,
             centerX + visorWidth / 2f, eyeY,
-            Color.parseColor("#8000F0FF"),
-            Color.parseColor("#80FF007F"),
+            pFill,
+            aFill,
             Shader.TileMode.CLAMP
         )
+        visorBorderPaint.color = pColor
 
         canvas.drawPath(visorPath, visorGlowPaint)
         canvas.drawPath(visorPath, visorBorderPaint)
 
-        // Telemetry HUD text
-        canvas.drawText("CYBER-OPTICS // ACTIVE", centerX - (visorWidth * 0.38f), eyeY - visorHeight / 2f - 16f, textHudPaint)
+        // Subtle horizontal scanline accent inside visor
+        val scanPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb(140, 255, 255, 255)
+            strokeWidth = 2f
+        }
+        canvas.drawLine(
+            centerX - visorWidth * 0.42f, eyeY,
+            centerX + visorWidth * 0.42f, eyeY,
+            scanPaint
+        )
+
+        val hudPaint = Paint(textHudPaint).apply { color = pColor }
+        canvas.drawText(telemetry.ifBlank { "CYBER-OPTICS // ACTIVE" }, centerX - (visorWidth * 0.38f), eyeY - visorHeight / 2f - 16f, hudPaint)
     }
 
     private fun drawGoldenCrown(
         canvas: Canvas,
+        viewW: Float,
         getX: (Int) -> Float,
         getY: (Int) -> Float
     ) {
         val foreheadX = getX(10)
         val foreheadY = getY(10)
         val faceW = Math.abs(getX(454) - getX(234))
-        val crownWidth = (faceW * 0.85f).coerceIn(180f, width * 0.65f)
+        val crownWidth = (faceW * 0.85f).coerceIn(viewW * 0.16f, viewW * 0.65f)
         val crownHeight = crownWidth * 0.46f
 
         val path = Path().apply {
@@ -1092,21 +1138,37 @@ class ARFaceOverlayView @JvmOverloads constructor(
 
         canvas.drawPath(path, crownPaint)
         canvas.drawPath(path, crownStrokePaint)
+
+        // Glittering crown jewels
+        val gemRadius = (crownWidth * 0.042f).coerceIn(5f, 16f)
+        val rubyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#EF4444"); style = Paint.Style.FILL }
+        val sapphirePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#38BDF8"); style = Paint.Style.FILL }
+        val shinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; style = Paint.Style.FILL }
+        canvas.drawCircle(foreheadX, foreheadY - crownHeight * 0.46f, gemRadius * 1.15f, rubyPaint)
+        canvas.drawCircle(foreheadX - gemRadius * 0.3f, foreheadY - crownHeight * 0.46f - gemRadius * 0.3f, gemRadius * 0.32f, shinePaint)
+        canvas.drawCircle(foreheadX - crownWidth * 0.28f, foreheadY - crownHeight * 0.22f, gemRadius * 0.85f, sapphirePaint)
+        canvas.drawCircle(foreheadX + crownWidth * 0.28f, foreheadY - crownHeight * 0.22f, gemRadius * 0.85f, sapphirePaint)
     }
 
     private fun drawSciFiHud(
         canvas: Canvas,
+        viewW: Float,
         getX: (Int) -> Float,
-        getY: (Int) -> Float
+        getY: (Int) -> Float,
+        primaryHex: String = "#34D399",
+        accentHex: String = "#00F0FF",
+        telemetry: String = "LOCK: ACQUIRED [99.4%]"
     ) {
         val noseX = getX(1)
         val noseY = getY(1)
         val faceW = Math.abs(getX(454) - getX(234))
-        val radius = (faceW * 0.72f).coerceIn(130f, width * 0.38f)
+        val radius = (faceW * 0.72f).coerceIn(viewW * 0.12f, viewW * 0.38f)
 
-        // Targeting ring
+        val pColor = try { Color.parseColor(primaryHex) } catch (_: Exception) { Color.parseColor("#34D399") }
+        val aColor = try { Color.parseColor(accentHex) } catch (_: Exception) { Color.parseColor("#00F0FF") }
+
         val ringPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.parseColor("#34D399")
+            color = pColor
             style = Paint.Style.STROKE
             strokeWidth = 3f
         }
@@ -1117,7 +1179,388 @@ class ARFaceOverlayView @JvmOverloads constructor(
         canvas.drawLine(noseX, noseY - radius - 20f, noseX, noseY - radius + 20f, ringPaint)
         canvas.drawLine(noseX, noseY + radius - 20f, noseX, noseY + radius + 20f, ringPaint)
 
-        canvas.drawText("LOCK: ACQUIRED [99.4%]", noseX - (radius * 0.65f), noseY + radius + 36f, textHudPaint)
+        val hudPaint = Paint(textHudPaint).apply { color = aColor }
+        canvas.drawText(telemetry.ifBlank { "LOCK: ACQUIRED [99.4%]" }, noseX - (radius * 0.65f), noseY + radius + 36f, hudPaint)
+    }
+
+    private fun drawCustomStyleLens(
+        canvas: Canvas,
+        viewW: Float,
+        viewH: Float,
+        cx: Float,
+        cy: Float,
+        getX: (Int) -> Float,
+        getY: (Int) -> Float,
+        nowMs: Long
+    ) {
+        val cfg = activeCustomLensStyle ?: return
+        val style = cfg.style.lowercase()
+        val anchor = cfg.anchor.lowercase()
+        val primaryColor = try { Color.parseColor(cfg.primaryColorHex) } catch (_: Exception) { Color.parseColor("#EC4899") }
+        val accentColor = try { Color.parseColor(cfg.accentColorHex) } catch (_: Exception) { Color.parseColor("#38BDF8") }
+        val animSec = (nowMs % 60000L) / 1000.0
+        val pulse = (0.5 + 0.5 * Math.sin(animSec * 3.2)).toFloat()
+        val faceW = Math.abs(getX(454) - getX(234)).coerceIn(viewW * 0.16f, viewW * 0.72f)
+        val faceH = Math.abs(getY(152) - getY(10)).coerceIn(viewH * 0.14f, viewH * 0.62f)
+        val foreheadX = getX(10)
+        val foreheadY = getY(10)
+        val eyeLeftX = getX(33)
+        val eyeLeftY = getY(33)
+        val eyeRightX = getX(263)
+        val eyeRightY = getY(263)
+        val noseX = getX(1)
+        val noseY = getY(1)
+        val chinY = getY(152)
+
+        val hudLabelPaint = Paint(textHudPaint).apply {
+            color = accentColor
+            textSize = (viewW * 0.026f).coerceIn(22f, 34f)
+            textAlign = Paint.Align.CENTER
+            setShadowLayer(8f, 0f, 0f, primaryColor)
+        }
+
+        when (style) {
+            "cat_ears", "animal_ears" -> {
+                val earSpan = faceW * 0.44f
+                val earW = faceW * 0.34f
+                val earH = faceW * 0.42f
+                val baseY = foreheadY - faceH * 0.04f
+
+                val outerFill = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.argb(175, Color.red(primaryColor), Color.green(primaryColor), Color.blue(primaryColor))
+                    style = Paint.Style.FILL
+                }
+                val outerStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = primaryColor
+                    strokeWidth = (faceW * 0.022f).coerceIn(4f, 10f)
+                    style = Paint.Style.STROKE
+                    strokeJoin = Paint.Join.ROUND
+                    setShadowLayer(14f + pulse * 8f, 0f, 0f, primaryColor)
+                }
+                val innerFill = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.argb(185, Color.red(accentColor), Color.green(accentColor), Color.blue(accentColor))
+                    style = Paint.Style.FILL
+                }
+                val innerStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.WHITE
+                    strokeWidth = 2.5f
+                    style = Paint.Style.STROKE
+                }
+
+                fun drawCatEar(sign: Float) {
+                    val bx = foreheadX + sign * earSpan
+                    val twitch = (Math.sin(animSec * 2.6 + sign) * (earH * 0.04f)).toFloat()
+                    val outerPath = Path().apply {
+                        moveTo(bx - sign * earW * 0.52f, baseY + earH * 0.14f)
+                        lineTo(bx + sign * earW * 0.18f, baseY - earH + twitch)
+                        lineTo(bx + sign * earW * 0.56f, baseY + earH * 0.22f)
+                        close()
+                    }
+                    val innerPath = Path().apply {
+                        moveTo(bx - sign * earW * 0.28f, baseY + earH * 0.08f)
+                        lineTo(bx + sign * earW * 0.14f, baseY - earH * 0.68f + twitch)
+                        lineTo(bx + sign * earW * 0.34f, baseY + earH * 0.14f)
+                        close()
+                    }
+                    canvas.drawPath(outerPath, outerFill)
+                    canvas.drawPath(outerPath, outerStroke)
+                    canvas.drawPath(innerPath, innerFill)
+                    canvas.drawPath(innerPath, innerStroke)
+                }
+                drawCatEar(-1f)
+                drawCatEar(1f)
+
+                // Subtle neon cat whiskers on cheeks
+                val whiskerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = accentColor
+                    strokeWidth = 3f
+                    strokeCap = Paint.Cap.ROUND
+                    alpha = 200
+                }
+                val cheekY = noseY + faceH * 0.08f
+                for (sign in floatArrayOf(-1f, 1f)) {
+                    val wx0 = noseX + sign * faceW * 0.26f
+                    val wx1 = noseX + sign * faceW * 0.58f
+                    canvas.drawLine(wx0, cheekY - faceH * 0.04f, wx1, cheekY - faceH * 0.08f, whiskerPaint)
+                    canvas.drawLine(wx0, cheekY + faceH * 0.01f, wx1, cheekY + faceH * 0.02f, whiskerPaint)
+                    canvas.drawLine(wx0, cheekY + faceH * 0.06f, wx1 * 0.96f + noseX * 0.04f, cheekY + faceH * 0.11f, whiskerPaint)
+                }
+
+                if (cfg.telemetryText.isNotBlank()) {
+                    canvas.drawText(cfg.telemetryText, foreheadX, baseY - earH - 20f, hudLabelPaint)
+                }
+            }
+
+            "halo_tiara" -> {
+                val floatY = (Math.sin(animSec * 2.2) * (faceH * 0.028f)).toFloat()
+                val haloY = foreheadY - faceH * 0.26f + floatY
+                val rx = faceW * 0.56f
+                val ry = faceW * 0.14f
+                val haloRect = RectF(foreheadX - rx, haloY - ry, foreheadX + rx, haloY + ry)
+
+                val outerGlowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.argb(110, Color.red(primaryColor), Color.green(primaryColor), Color.blue(primaryColor))
+                    style = Paint.Style.STROKE
+                    strokeWidth = (faceW * 0.075f).coerceIn(14f, 34f)
+                }
+                val mainRingPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = primaryColor
+                    style = Paint.Style.STROKE
+                    strokeWidth = (faceW * 0.034f).coerceIn(6f, 16f)
+                    setShadowLayer(18f, 0f, 0f, primaryColor)
+                }
+                val coreRingPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = accentColor
+                    style = Paint.Style.STROKE
+                    strokeWidth = (faceW * 0.012f).coerceIn(2.5f, 6f)
+                }
+
+                canvas.drawOval(haloRect, outerGlowPaint)
+                canvas.drawOval(haloRect, mainRingPaint)
+                canvas.drawOval(haloRect, coreRingPaint)
+
+                // Orbiting celestial 4-point sparkles
+                val sparkPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = accentColor
+                    style = Paint.Style.FILL
+                    setShadowLayer(10f, 0f, 0f, primaryColor)
+                }
+                for (i in 0 until 6) {
+                    val angle = animSec * 1.4 + i * (Math.PI * 2.0 / 6.0)
+                    val sx = foreheadX + (Math.cos(angle) * rx * 1.08f).toFloat()
+                    val sy = haloY + (Math.sin(angle) * ry * 1.35f).toFloat()
+                    val sSize = (faceW * 0.036f * (0.65f + 0.35f * Math.sin(animSec * 4.0 + i).toFloat())).coerceIn(6f, 18f)
+                    drawFourPointStar(canvas, sx, sy, sSize, sparkPaint)
+                }
+
+                if (cfg.telemetryText.isNotBlank()) {
+                    canvas.drawText(cfg.telemetryText, foreheadX, haloY - ry - 22f, hudLabelPaint)
+                }
+            }
+
+            "cyber_mask" -> {
+                val maskTopY = noseY - faceH * 0.05f
+                val maskBottomY = chinY + faceH * 0.06f
+                val halfW = faceW * 0.48f
+
+                val armorPath = Path().apply {
+                    moveTo(noseX, maskTopY)
+                    lineTo(noseX + halfW, maskTopY + faceH * 0.14f)
+                    lineTo(noseX + halfW * 0.84f, maskBottomY - faceH * 0.10f)
+                    lineTo(noseX + halfW * 0.32f, maskBottomY)
+                    lineTo(noseX - halfW * 0.32f, maskBottomY)
+                    lineTo(noseX - halfW * 0.84f, maskBottomY - faceH * 0.10f)
+                    lineTo(noseX - halfW, maskTopY + faceH * 0.14f)
+                    close()
+                }
+                val armorFill = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.argb(215, 12, 18, 30)
+                    style = Paint.Style.FILL
+                }
+                val armorStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = primaryColor
+                    strokeWidth = (faceW * 0.02f).coerceIn(4f, 9f)
+                    style = Paint.Style.STROKE
+                    strokeJoin = Paint.Join.BEVEL
+                    setShadowLayer(12f, 0f, 0f, primaryColor)
+                }
+                canvas.drawPath(armorPath, armorFill)
+                canvas.drawPath(armorPath, armorStroke)
+
+                // Central nose ridge & intake grille vents
+                val ventPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = primaryColor
+                    strokeWidth = 3.5f
+                    strokeCap = Paint.Cap.ROUND
+                }
+                val grillTop = maskTopY + faceH * 0.18f
+                for (i in 0 until 4) {
+                    val vy = grillTop + i * (faceH * 0.065f)
+                    val vw = halfW * (0.34f - i * 0.04f)
+                    canvas.drawLine(noseX - vw, vy, noseX + vw, vy, ventPaint)
+                }
+
+                // Dual pulsing LED respirator filter pods on left & right cheeks
+                val podY = (maskTopY + maskBottomY) * 0.52f
+                val podR = (faceW * 0.115f).coerceIn(16f, 44f)
+                val podFill = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.argb(235, 18, 28, 46)
+                    style = Paint.Style.FILL
+                }
+                val podRing = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = accentColor
+                    strokeWidth = (faceW * 0.018f).coerceIn(3.5f, 7f)
+                    style = Paint.Style.STROKE
+                    setShadowLayer(12f + pulse * 6f, 0f, 0f, accentColor)
+                }
+                val podCore = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.argb((150 + (pulse * 105f).toInt()).coerceIn(120, 255), Color.red(accentColor), Color.green(accentColor), Color.blue(accentColor))
+                    style = Paint.Style.FILL
+                }
+                for (sign in floatArrayOf(-1f, 1f)) {
+                    val px = noseX + sign * halfW * 0.56f
+                    canvas.drawCircle(px, podY, podR, podFill)
+                    canvas.drawCircle(px, podY, podR, podRing)
+                    canvas.drawCircle(px, podY, podR * 0.42f, podCore)
+                }
+
+                if (cfg.telemetryText.isNotBlank()) {
+                    canvas.drawText(cfg.telemetryText, noseX, maskBottomY + 34f, hudLabelPaint)
+                }
+            }
+
+            "floating_prop" -> {
+                val starPrimaryPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = primaryColor
+                    style = Paint.Style.FILL
+                    setShadowLayer(14f + pulse * 8f, 0f, 0f, primaryColor)
+                }
+                val starCorePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.WHITE
+                    style = Paint.Style.FILL
+                }
+                val starAccentPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = accentColor
+                    style = Paint.Style.FILL
+                }
+                if (anchor == "eyes") {
+                    val eyeDist = Math.abs(eyeRightX - eyeLeftX).coerceAtLeast(faceW * 0.28f)
+                    val mainR = (eyeDist * 0.24f * (0.9f + 0.22f * pulse)).coerceIn(14f, 44f)
+                    val eyeCenters = arrayOf(Pair(eyeLeftX, eyeLeftY), Pair(eyeRightX, eyeRightY))
+                    for ((ex, ey) in eyeCenters) {
+                        canvas.save()
+                        canvas.translate(ex, ey)
+                        canvas.rotate((animSec * 28.0).toFloat())
+                        drawFourPointStar(canvas, 0f, 0f, mainR, starPrimaryPaint)
+                        drawFourPointStar(canvas, 0f, 0f, mainR * 0.52f, starCorePaint)
+                        canvas.restore()
+                        drawFourPointStar(canvas, ex + mainR * 0.85f, ey - mainR * 0.65f, mainR * 0.36f, starAccentPaint)
+                    }
+                    if (cfg.telemetryText.isNotBlank()) {
+                        canvas.drawText(cfg.telemetryText, (eyeLeftX + eyeRightX) * 0.5f, Math.min(eyeLeftY, eyeRightY) - mainR * 1.4f, hudLabelPaint)
+                    }
+                } else {
+                    val propY = if (anchor == "forehead") foreheadY - faceH * 0.22f else cy
+                    val mainR = (faceW * 0.20f * (0.92f + 0.16f * pulse)).coerceIn(22f, 64f)
+                    drawFourPointStar(canvas, foreheadX, propY, mainR, starPrimaryPaint)
+                    drawFourPointStar(canvas, foreheadX, propY, mainR * 0.48f, starCorePaint)
+                    if (cfg.telemetryText.isNotBlank()) {
+                        canvas.drawText(cfg.telemetryText, foreheadX, propY - mainR - 18f, hudLabelPaint)
+                    }
+                }
+            }
+
+            "target_reticle" -> {
+                val boxHalfW = faceW * 0.62f
+                val boxHalfH = faceH * 0.64f
+                val cornerLen = (faceW * 0.18f).coerceIn(22f, 64f)
+                val bracketPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = primaryColor
+                    strokeWidth = (faceW * 0.016f).coerceIn(3.5f, 7f)
+                    style = Paint.Style.STROKE
+                    strokeCap = Paint.Cap.SQUARE
+                }
+                val accentTickPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = accentColor
+                    strokeWidth = 3f
+                    style = Paint.Style.STROKE
+                }
+
+                val left = cx - boxHalfW
+                val right = cx + boxHalfW
+                val top = cy - boxHalfH
+                val bottom = cy + boxHalfH
+                // Four tactical corner brackets
+                canvas.drawLine(left, top, left + cornerLen, top, bracketPaint)
+                canvas.drawLine(left, top, left, top + cornerLen, bracketPaint)
+                canvas.drawLine(right, top, right - cornerLen, top, bracketPaint)
+                canvas.drawLine(right, top, right, top + cornerLen, bracketPaint)
+                canvas.drawLine(left, bottom, left + cornerLen, bottom, bracketPaint)
+                canvas.drawLine(left, bottom, left, bottom - cornerLen, bracketPaint)
+                canvas.drawLine(right, bottom, right - cornerLen, bottom, bracketPaint)
+                canvas.drawLine(right, bottom, right, bottom - cornerLen, bracketPaint)
+
+                // Animated inner radar arcs + center crosshair
+                val radarR = (faceW * 0.36f).coerceIn(48f, viewW * 0.28f)
+                val sweepStart = ((animSec * 70.0) % 360.0).toFloat()
+                val radarRect = RectF(cx - radarR, cy - radarR, cx + radarR, cy + radarR)
+                canvas.drawArc(radarRect, sweepStart, 55f, false, accentTickPaint)
+                canvas.drawArc(radarRect, sweepStart + 180f, 55f, false, accentTickPaint)
+                canvas.drawCircle(noseX, noseY, 6f + pulse * 4f, accentTickPaint)
+
+                if (cfg.telemetryText.isNotBlank()) {
+                    canvas.drawText(cfg.telemetryText, cx, bottom + 36f, hudLabelPaint)
+                }
+            }
+
+            "neon_visor" -> {
+                drawCyberpunkVisor(
+                    canvas = canvas,
+                    viewW = viewW,
+                    getX = getX,
+                    getY = getY,
+                    primaryHex = cfg.primaryColorHex,
+                    accentHex = cfg.accentColorHex,
+                    telemetry = cfg.telemetryText.ifBlank { "NEON VISOR // LOCKED" }
+                )
+            }
+
+            "neon_horns" -> {
+                val hornStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = primaryColor
+                    strokeWidth = (faceW * 0.022f).coerceIn(4f, 9f)
+                    style = Paint.Style.STROKE
+                    setShadowLayer(14f, 0f, 0f, primaryColor)
+                }
+                val hornFill = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.argb(180, Color.red(accentColor), Color.green(accentColor), Color.blue(accentColor))
+                    style = Paint.Style.FILL
+                }
+                for (sign in floatArrayOf(-1f, 1f)) {
+                    val hx = foreheadX + sign * faceW * 0.36f
+                    val hy = foreheadY - faceH * 0.04f
+                    val hornPath = Path().apply {
+                        moveTo(hx - sign * faceW * 0.08f, hy + faceH * 0.05f)
+                        quadTo(hx + sign * faceW * 0.16f, hy - faceH * 0.18f, hx + sign * faceW * 0.05f, hy - faceH * 0.36f)
+                        quadTo(hx + sign * faceW * 0.28f, hy - faceH * 0.14f, hx + sign * faceW * 0.12f, hy + faceH * 0.07f)
+                        close()
+                    }
+                    canvas.drawPath(hornPath, hornFill)
+                    canvas.drawPath(hornPath, hornStroke)
+                }
+                if (cfg.telemetryText.isNotBlank()) {
+                    canvas.drawText(cfg.telemetryText, foreheadX, foreheadY - faceH * 0.40f, hudLabelPaint)
+                }
+            }
+
+            else -> {
+                drawSciFiHud(
+                    canvas = canvas,
+                    viewW = viewW,
+                    getX = getX,
+                    getY = getY,
+                    primaryHex = cfg.primaryColorHex,
+                    accentHex = cfg.accentColorHex,
+                    telemetry = cfg.telemetryText.ifBlank { "AR LENS // ACTIVE" }
+                )
+            }
+        }
+    }
+
+    private fun drawFourPointStar(canvas: Canvas, x: Float, y: Float, radius: Float, paint: Paint) {
+        val inner = radius * 0.26f
+        val star = Path().apply {
+            moveTo(x, y - radius)
+            lineTo(x + inner, y - inner)
+            lineTo(x + radius, y)
+            lineTo(x + inner, y + inner)
+            lineTo(x, y + radius)
+            lineTo(x - inner, y + inner)
+            lineTo(x - radius, y)
+            lineTo(x - inner, y - inner)
+            close()
+        }
+        canvas.drawPath(star, paint)
     }
 
     fun drawComicFrameBorders(
@@ -1194,6 +1637,24 @@ class ARFaceOverlayView @JvmOverloads constructor(
         drawGusset(rightEdge, innerInset, -1f, 1f)
         drawGusset(innerInset, bottomEdge, 1f, -1f)
         drawGusset(rightEdge, bottomEdge, -1f, -1f)
+
+        // 5. Classic Ben-Day halftone dot accents near corners so the comic panel reads vividly on live camera
+        val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb(115, 6, 8, 13)
+            style = Paint.Style.FILL
+        }
+        val dotStep = Math.max(12f, minDim * 0.018f)
+        val dotR = Math.max(2.2f, dotStep * 0.22f)
+        for (row in 0 until 3) {
+            for (col in 0 until (3 - row)) {
+                val dx = cornerAccent * 0.85f + col * dotStep
+                val dy = cornerAccent * 0.85f + row * dotStep
+                canvas.drawCircle(innerInset + dx, innerInset + dy, dotR, dotPaint)
+                canvas.drawCircle(rightEdge - dx, innerInset + dy, dotR, dotPaint)
+                canvas.drawCircle(innerInset + dx, bottomEdge - dy, dotR, dotPaint)
+                canvas.drawCircle(rightEdge - dx, bottomEdge - dy, dotR, dotPaint)
+            }
+        }
     }
 
     private fun drawComicOnomatopoeiaLabels(

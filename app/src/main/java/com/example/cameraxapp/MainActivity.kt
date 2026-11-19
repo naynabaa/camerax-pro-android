@@ -161,6 +161,12 @@ class MainActivity : AppCompatActivity() {
     private var isMediaPipeSupported: Boolean = true
     @Volatile
     private var lastMediaPipeLandmarkTime: Long = 0L
+    @Volatile
+    private var lastTrackedFaceX: Float = 0.5f
+    @Volatile
+    private var lastTrackedFaceY: Float = 0.45f
+    @Volatile
+    private var lastTrackedFaceTimeMs: Long = 0L
     private var openGLProcessor: OpenGLSurfaceProcessor? = null
     private var cameraEffect: CameraEffect? = null
     @Volatile
@@ -270,12 +276,13 @@ class MainActivity : AppCompatActivity() {
         val modelOffsetY: Float = 0f,
         val modelRotationY: Float = 0f,
         val modelRotationX: Float = 0f,
-        val autoSpin: Boolean = true
+        val autoSpin: Boolean = true,
+        val telemetryText: String = ""
     )
     private val injectedCustomLenses = mutableListOf<CustomLensDef>(
-        CustomLensDef("lens_neon_cat_ears", "Neon Feline Ears", "forehead", "cat_ears", "#ec4899", "#38bdf8", "", "", 1f, 0f, 0f, 0f, true),
-        CustomLensDef("lens_celestial_halo", "Celestial Halo", "forehead", "halo_tiara", "#fbbf24", "#ffffff", "", "", 1f, 0f, 0f, 0f, true),
-        CustomLensDef("lens_cyber_respirator", "Cyber Mask 2077", "mouth", "cyber_mask", "#06b6d4", "#f43f5e", "", "", 1f, 0f, 0f, 0f, true)
+        CustomLensDef("lens_neon_cat_ears", "Neon Feline Ears", "forehead", "cat_ears", "#ec4899", "#38bdf8", "", "", 1f, 0f, 0f, 0f, true, "NEKO.SYS // V2.0"),
+        CustomLensDef("lens_celestial_halo", "Celestial Halo", "forehead", "halo_tiara", "#fbbf24", "#ffffff", "", "", 1f, 0f, 0f, 0f, true, "AURA LEVEL // 9999"),
+        CustomLensDef("lens_cyber_respirator", "Cyber Mask 2077", "mouth", "cyber_mask", "#06b6d4", "#f43f5e", "", "", 1f, 0f, 0f, 0f, true, "O2 FILTER // 100%")
     )
     private data class CustomFontDef(
         val id: String, val name: String, val family: String, val category: String,
@@ -2052,18 +2059,52 @@ class MainActivity : AppCompatActivity() {
 
                                 val faceBmp = Bitmap.createBitmap(outW, outH, Bitmap.Config.RGB_565)
                                 faceBmp.setPixels(pixels, 0, outW, 0, 0, outW, outH)
-                                val faces = arrayOfNulls<FaceDetector.Face>(1)
-                                val count = FaceDetector(outW, outH, 1).findFaces(faceBmp, faces)
-                                if (count > 0 && faces[0] != null) {
-                                    val mid = PointF()
-                                    faces[0]!!.getMidPoint(mid)
-                                    val eyeDist = faces[0]!!.eyesDistance()
-                                    viewBinding.arFaceOverlayView.updateSimpleFace(
-                                        normEyeBridgeX = (mid.x / outW.toFloat()).coerceIn(0.05f, 0.95f),
-                                        normEyeBridgeY = (mid.y / outH.toFloat()).coerceIn(0.05f, 0.95f),
-                                        normEyeDist = (eyeDist / outW.toFloat()).coerceIn(0.04f, 0.55f),
-                                        isFrontFacing = lensFacing == CameraSelector.DEFAULT_FRONT_CAMERA
-                                    )
+                                val maxFaces = 4
+                                val faces = arrayOfNulls<FaceDetector.Face>(maxFaces)
+                                val count = FaceDetector(outW, outH, maxFaces).findFaces(faceBmp, faces)
+                                if (count > 0) {
+                                    val nowFaceMs = System.currentTimeMillis()
+                                    val hasPrevFace = (nowFaceMs - lastTrackedFaceTimeMs) < 2000L
+                                    var bestFace: FaceDetector.Face? = null
+                                    var bestScore = -1f
+                                    val tmpMid = PointF()
+                                    for (fi in 0 until count) {
+                                        val candidate = faces[fi] ?: continue
+                                        candidate.getMidPoint(tmpMid)
+                                        val nx = (tmpMid.x / outW.toFloat()).coerceIn(0.05f, 0.95f)
+                                        val ny = (tmpMid.y / outH.toFloat()).coerceIn(0.05f, 0.95f)
+                                        val eyeDist = candidate.eyesDistance()
+                                        val conf = candidate.confidence().coerceAtLeast(0.25f)
+                                        val centerDist = Math.hypot((nx - 0.5f).toDouble(), (ny - 0.45f).toDouble()).toFloat()
+                                        val centralityBonus = (1f - centerDist.coerceIn(0f, 1f)) * 0.45f
+                                        val stickyBonus = if (hasPrevFace) {
+                                            val prevDist = Math.hypot((nx - lastTrackedFaceX).toDouble(), (ny - lastTrackedFaceY).toDouble()).toFloat()
+                                            (1f - (prevDist * 2.5f).coerceIn(0f, 1f)) * 0.65f
+                                        } else 0f
+                                        val score = eyeDist * conf * (1f + centralityBonus + stickyBonus)
+                                        if (score > bestScore) {
+                                            bestScore = score
+                                            bestFace = candidate
+                                        }
+                                    }
+                                    bestFace?.let { primaryFace ->
+                                        val mid = PointF()
+                                        primaryFace.getMidPoint(mid)
+                                        val normX = (mid.x / outW.toFloat()).coerceIn(0.05f, 0.95f)
+                                        val normY = (mid.y / outH.toFloat()).coerceIn(0.05f, 0.95f)
+                                        val eyeDist = primaryFace.eyesDistance()
+                                        lastTrackedFaceX = normX
+                                        lastTrackedFaceY = normY
+                                        lastTrackedFaceTimeMs = nowFaceMs
+                                        viewBinding.arFaceOverlayView.updateSimpleFace(
+                                            normEyeBridgeX = normX,
+                                            normEyeBridgeY = normY,
+                                            normEyeDist = (eyeDist / outW.toFloat()).coerceIn(0.04f, 0.55f),
+                                            isFrontFacing = lensFacing == CameraSelector.DEFAULT_FRONT_CAMERA,
+                                            inputWidth = outW,
+                                            inputHeight = outH
+                                        )
+                                    }
                                 }
                                 faceBmp.recycle()
                             } catch (e: Exception) {
@@ -4037,6 +4078,24 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun getArLensDisplayName(lens: String): String {
+        return when (lens.lowercase(Locale.ROOT)) {
+            "none" -> "OFF"
+            "mesh_contour", "mesh" -> "3D MESH"
+            "cyberpunk_visor", "visor" -> "CYBER VISOR"
+            "golden_crown", "crown" -> "GOLDEN CROWN"
+            "scifi_hud", "hud" -> "SCI-FI HUD"
+            "comic_frame", "comic", "comic_panel" -> "COMIC FRAME"
+            else -> {
+                val customName = injectedCustomLenses.find { it.id == lens }?.name
+                (customName ?: lens.replace("_", " "))
+                    .replace(Regex("\\s+"), " ")
+                    .trim()
+                    .uppercase(Locale.ROOT)
+            }
+        }
+    }
+
     private fun setArLens(lens: String, showNotice: Boolean = true) {
         if (lens != "none" && ::ecoPowerManager.isInitialized && ecoPowerManager.isArDisabled) {
             showHudNotice(
@@ -4057,6 +4116,7 @@ class MainActivity : AppCompatActivity() {
         if (lens != "none") {
             lastActiveArLensName = lens
         }
+        viewBinding.arFaceOverlayView.activeCustomLensStyle = null
         val mappedMode = when (lens.lowercase(Locale.ROOT)) {
             "mesh_contour", "mesh" -> ARFaceOverlayView.ArLensMode.MESH_CONTOUR
             "cyberpunk_visor", "visor" -> ARFaceOverlayView.ArLensMode.CYBERPUNK_VISOR
@@ -4097,12 +4157,14 @@ class MainActivity : AppCompatActivity() {
                             ARFaceOverlayView.ArLensMode.NONE
                         }
                     } else {
-                        when (customLens.anchor.lowercase(Locale.ROOT)) {
-                            "forehead" -> ARFaceOverlayView.ArLensMode.GOLDEN_CROWN
-                            "eyes" -> ARFaceOverlayView.ArLensMode.CYBERPUNK_VISOR
-                            "mouth", "nose_cheeks" -> ARFaceOverlayView.ArLensMode.SCIFI_HUD
-                            else -> ARFaceOverlayView.ArLensMode.MESH_CONTOUR
-                        }
+                        viewBinding.arFaceOverlayView.activeCustomLensStyle = ARFaceOverlayView.CustomLensStyleConfig(
+                            style = customLens.style,
+                            anchor = customLens.anchor,
+                            primaryColorHex = customLens.primaryColor,
+                            accentColorHex = customLens.accentColor,
+                            telemetryText = customLens.telemetryText
+                        )
+                        ARFaceOverlayView.ArLensMode.CUSTOM_STYLE
                     }
                 } else ARFaceOverlayView.ArLensMode.NONE
             }
@@ -4117,20 +4179,19 @@ class MainActivity : AppCompatActivity() {
         updateArDockStatusLabel()
         if (isAutoAdaptEnabled && lens != "none" && lens != prevLens) {
             val recommendedFront = lens in setOf("mesh_contour", "cyberpunk_visor", "golden_crown", "comic_frame") ||
-                mappedMode == ARFaceOverlayView.ArLensMode.GLB_3D
+                mappedMode == ARFaceOverlayView.ArLensMode.GLB_3D ||
+                mappedMode == ARFaceOverlayView.ArLensMode.CUSTOM_STYLE
             val isCurrentlyFront = (lensFacing == CameraSelector.DEFAULT_FRONT_CAMERA)
             if (recommendedFront != isCurrentlyFront && recording == null) {
                 switchCamera()
             }
         }
         if (showNotice) {
-            if (mappedMode == ARFaceOverlayView.ArLensMode.COMIC_FRAME && !isCartoonShaderActive()) {
-                showHudNotice("AR Lens: COMIC FRAME (Activate Comic Book or Toon shader)", isWarning = true)
-            } else if (mappedMode == ARFaceOverlayView.ArLensMode.GLB_3D) {
-                val displayName = injectedCustomLenses.find { it.id == lens }?.name ?: lens
-                showHudNotice("3D GLB AR Lens: ${displayName.uppercase(Locale.ROOT)}")
+            val displayName = getArLensDisplayName(lens)
+            if (mappedMode == ARFaceOverlayView.ArLensMode.GLB_3D) {
+                showHudNotice("3D GLB AR Lens: $displayName")
             } else {
-                showHudNotice("AR Lens: ${lens.replace('_', ' ').uppercase(Locale.ROOT)}")
+                showHudNotice("AR Lens: $displayName")
             }
         }
     }
@@ -4138,11 +4199,9 @@ class MainActivity : AppCompatActivity() {
     private fun updateArDockStatusLabel() {
         val total = (arLensOrder.size - 1).coerceAtLeast(1)
         val idx = arLensOrder.indexOf(currentArLensName)
-        val rawDisplay = injectedCustomLenses.find { it.id == currentArLensName }?.name ?: currentArLensName
-        val label = rawDisplay.replace("_", " ").replace(Regex("\\s+"), " ").trim().uppercase(Locale.ROOT)
+        val label = getArLensDisplayName(currentArLensName)
         viewBinding.arLensModeDock.tvArDockStatus.text = when {
-            currentArLensName == "comic_frame" && isCartoonShaderActive() -> "AR LENS: $label · PANEL ON ($idx/$total)"
-            currentArLensName == "comic_frame" -> "AR LENS: $label · NEED TOON/COMIC"
+            currentArLensName == "comic_frame" && isCartoonShaderActive() -> "AR LENS: $label · SHADER ON ($idx/$total)"
             idx > 0 -> "AR LENS: $label ($idx/$total)"
             else -> "AR LENS: OFF (0/$total)"
         }
@@ -7690,7 +7749,13 @@ class MainActivity : AppCompatActivity() {
             val label = if (cl.style.equals("glb_3d", ignoreCase = true)) "3D · ${cl.name}" else cl.name
             val chip = createStudioChipView(label)
             chip.setOnClickListener { setArLens(cl.id) }
-            viewBinding.arLensModeDock.layoutArModeLensesContainer.addView(chip)
+            val container = viewBinding.arLensModeDock.layoutArModeLensesContainer
+            val importIdx = container.indexOfChild(viewBinding.arLensModeDock.btnArImportGlb)
+            if (importIdx >= 0) {
+                container.addView(chip, importIdx)
+            } else {
+                container.addView(chip)
+            }
             dynamicLensChips.add(chip to cl.id)
         }
     }

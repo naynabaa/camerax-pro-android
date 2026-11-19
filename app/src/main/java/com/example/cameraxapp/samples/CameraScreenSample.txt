@@ -488,7 +488,7 @@ fun CameraXScreen(modifier: Modifier = Modifier) {
                     modifier = Modifier.horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    listOf("OFF", "3D MESH", "CYBER VISOR", "GOLDEN TIARA", "SCI-FI HUD", "COMIC FRAME").forEach { lensLabel ->
+                    listOf("OFF", "3D MESH", "CYBER VISOR", "GOLDEN CROWN", "SCI-FI HUD", "COMIC FRAME").forEach { lensLabel ->
                         val active = activeArLens == lensLabel
                         Text(
                             text = lensLabel,
