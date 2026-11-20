@@ -4333,6 +4333,19 @@ class ARFaceOverlayView @JvmOverloads constructor(
         postInvalidateOnAnimation()
     }
 
+    private fun parseSafeColor(hex: String, fallback: Int): Int {
+        return try {
+            Color.parseColor(hex)
+        } catch (_: Throwable) {
+            fallback
+        }
+    }
+
+    private fun withAlpha(color: Int, alpha: Int): Int {
+        val a = alpha.coerceIn(0, 255)
+        return Color.argb(a, Color.red(color), Color.green(color), Color.blue(color))
+    }
+
     private fun drawWorldArLayer(
         canvas: Canvas,
         viewW: Float,
@@ -4681,26 +4694,39 @@ class ARFaceOverlayView @JvmOverloads constructor(
                 WorldObjectType.CUSTOM_GLB -> {
                     val engine = glbEngine
                     val drawSize = (objRadius * 2.15f).coerceIn(110f, viewW * 0.65f)
-                    if (engine != null && engine.hasLoadedModel()) {
-                        val shouldRender = syncGlb || latestWorldGlbBitmap == null || (nowMs - lastWorldGlbRenderMs >= 33L)
-                        if (shouldRender) {
-                            lastWorldGlbRenderMs = nowMs
-                            val bmp = engine.renderFrame(
-                                yawDeg = (t * 36f) % 360f,
-                                pitchDeg = worldPitchDeg * 0.35f,
-                                rollDeg = worldRollDeg * 0.25f,
-                                scale = 1.0f
-                            )
-                            if (bmp != null) latestWorldGlbBitmap = bmp
+                    if (engine != null && engine.hasModelLoaded()) {
+                        val maxEdge = 720f
+                        val downScale = minOf(1f, maxEdge / maxOf(viewW, viewH).coerceAtLeast(1f))
+                        val renderW = (viewW * downScale).toInt().coerceIn(128, 720)
+                        val renderH = (viewH * downScale).toInt().coerceIn(128, 720)
+                        val anchorCenterY = (pt.y - drawSize * 0.42f).coerceIn(viewH * 0.08f, viewH * 0.92f)
+                        val pose = GlbArModelEngine.GlbPose(
+                            normAnchorX = (pt.x / viewW).coerceIn(0.05f, 0.95f),
+                            normAnchorY = (anchorCenterY / viewH).coerceIn(0.05f, 0.95f),
+                            normFaceWidth = (drawSize / viewW).coerceIn(0.10f, 1.25f),
+                            modelScale = (activeGlbModelScale * anchor.scale).coerceIn(0.4f, 2.5f),
+                            yawDeg = activeGlbRotY + ((t * 36f) % 360f),
+                            pitchDeg = activeGlbRotX + (worldPitchDeg * 0.25f),
+                            rollDeg = worldRollDeg * 0.20f,
+                            enableHeadOcclusion = false,
+                            normFaceCenterX = (pt.x / viewW).coerceIn(0.05f, 0.95f),
+                            normFaceCenterY = (anchorCenterY / viewH).coerceIn(0.05f, 0.95f),
+                            normFaceHeight = (drawSize / viewH).coerceIn(0.10f, 1.25f)
+                        )
+                        val bmp = if (syncGlb) {
+                            engine.renderSync(renderW, renderH, pose)
+                        } else {
+                            if (nowMs - lastWorldGlbRenderMs >= 33L) {
+                                lastWorldGlbRenderMs = nowMs
+                                engine.renderAsync(renderW, renderH, pose) { rendered ->
+                                    latestWorldGlbBitmap = rendered
+                                    postInvalidateOnAnimation()
+                                }
+                            }
+                            latestWorldGlbBitmap ?: engine.renderSync(renderW, renderH, pose)?.also { latestWorldGlbBitmap = it }
                         }
-                        val bmp = latestWorldGlbBitmap
-                        if (bmp != null) {
-                            worldRect.set(
-                                pt.x - drawSize * 0.5f,
-                                pt.y - drawSize * 0.92f,
-                                pt.x + drawSize * 0.5f,
-                                pt.y + drawSize * 0.08f
-                            )
+                        if (bmp != null && !bmp.isRecycled) {
+                            worldRect.set(0f, 0f, viewW, viewH)
                             canvas.drawBitmap(bmp, null, worldRect, null)
                         }
                     } else {

@@ -20,7 +20,6 @@ import android.graphics.PorterDuff
 import android.graphics.PorterDuffXfermode
 import android.graphics.RadialGradient
 import android.graphics.Rect
-import android.graphics.PointF
 import android.graphics.RectF
 import android.graphics.RenderEffect
 import android.graphics.Shader
@@ -260,7 +259,7 @@ class MainActivity : AppCompatActivity() {
     private var comicSfxHelper: ComicSoundEffectsHelper? = null
     private var cameraFontHelper: CameraFontHelper? = null
     private var selectedVideoQualityLabel: String = "HD 30FPS"
-    private var activeEffectIntensity: Float = 0.85f
+    private var activeEffectIntensity: Float = 1.00f
     private var comicHalftoneDensity: Float = 1.0f
     private var comicHalftoneDotSize: Float = 1.0f
     private var comicLabelDepth: Float = 1.0f
@@ -332,7 +331,9 @@ class MainActivity : AppCompatActivity() {
     private val injectedCustomLenses = mutableListOf<CustomLensDef>(
         CustomLensDef("lens_neon_cat_ears", "Neon Feline Ears", "forehead", "cat_ears", "#ec4899", "#38bdf8", "", "", 1f, 0f, 0f, 0f, true, "NEKO.SYS // V2.0"),
         CustomLensDef("lens_celestial_halo", "Celestial Halo", "forehead", "halo_tiara", "#fbbf24", "#ffffff", "", "", 1f, 0f, 0f, 0f, true, "AURA LEVEL // 9999"),
-        CustomLensDef("lens_cyber_respirator", "Cyber Mask 2077", "mouth", "cyber_mask", "#06b6d4", "#f43f5e", "", "", 1f, 0f, 0f, 0f, true, "O2 FILTER // 100%")
+        CustomLensDef("lens_cyber_respirator", "Cyber Mask 2077", "mouth", "cyber_mask", "#06b6d4", "#f43f5e", "", "", 1f, 0f, 0f, 0f, true, "O2 FILTER // 100%"),
+        CustomLensDef("lens_anime_stars", "Star Catchlight", "eyes", "floating_prop", "#fbbf24", "#f43f5e", "", "", 1f, 0f, 0f, 0f, true, "STAR.EYE // ACTIVE"),
+        CustomLensDef("lens_tactical_hud", "Tactical Combat Reticle", "full_face", "target_reticle", "#10b981", "#ef4444", "", "", 1f, 0f, 0f, 0f, true, "LOCK // DIST 1.8M")
     )
     private data class CustomFontDef(
         val id: String, val name: String, val family: String, val category: String,
@@ -837,9 +838,9 @@ class MainActivity : AppCompatActivity() {
 
         viewBinding.proOverlayView.sensorAspectRatio = currentAspectRatio
         viewBinding.tvVideoQualityPill.text = selectedVideoQualityLabel
-        viewBinding.proOverlayView.showWatermark = false
-        viewBinding.proStudioDrawer.switchWatermark.isChecked = false
-        viewBinding.proOverlayView.watermarkText = "CAMERAX PRO · STUDIO"
+        viewBinding.proOverlayView.showWatermark = true
+        viewBinding.proStudioDrawer.switchWatermark.isChecked = true
+        viewBinding.proOverlayView.watermarkText = "CAMERAX PRO · 4K 60FPS · RAW"
         if (false) {
             setAspectMatteMode(ProOverlayView.AspectMatte.CINE_239)
         }
