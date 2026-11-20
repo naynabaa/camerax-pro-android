@@ -403,6 +403,26 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />
 
+    <!-- AR Lens Hands-Free Video Recording Lock Indicator -->
+    <TextView
+        android:id="@+id/tvArRecLockBadge"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="▲ SLIDE UP TO LOCK"
+        android:textColor="#FACC15"
+        android:textSize="11.5sp"
+        android:textStyle="bold"
+        android:fontFamily="monospace"
+        android:paddingHorizontal="14dp"
+        android:paddingVertical="6dp"
+        android:background="@drawable/bg_recording_badge"
+        android:elevation="38dp"
+        android:visibility="gone"
+        android:layout_marginBottom="10dp"
+        app:layout_constraintBottom_toTopOf="@id/bottomControls"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
     <!-- Floating Zoom Quick Selector (0.6x, 1x, 2x, 5x) -->
     <LinearLayout
         android:id="@+id/zoomControls"
@@ -608,7 +628,7 @@
         </LinearLayout>
     </FrameLayout>
 
-    <!-- Bottom Action Deck: Pause/Resume, Shutter, Lens Flip -->
+    <!-- Bottom Action Deck: Pause/Resume, Shutter, Lens Flip (Always elevated above drawers so Shutter/Record stays 100% tappable) -->
     <androidx.constraintlayout.widget.ConstraintLayout
         android:id="@+id/bottomControls"
         android:layout_width="match_parent"
@@ -616,6 +636,7 @@
         android:paddingHorizontal="28dp"
         android:paddingBottom="16dp"
         android:background="#40000000"
+        android:elevation="36dp"
         app:layout_constraintBottom_toBottomOf="parent">
 
         <!-- Gallery Thumbnail / Open Gallery Button (Bottom Left) -->
@@ -659,7 +680,10 @@
             android:id="@+id/btnCapture"
             android:layout_width="78dp"
             android:layout_height="78dp"
-            android:background="@drawable/bg_shutter_button"
+            android:background="@android:color/transparent"
+            android:src="@drawable/bg_shutter_button"
+            android:scaleType="fitCenter"
+            android:padding="0dp"
             android:contentDescription="Shutter Button"
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintEnd_toEndOf="parent"
@@ -681,14 +705,22 @@
     </androidx.constraintlayout.widget.ConstraintLayout>
 
     <!-- Professional Cinema Bottom Sheet Menu (Blackmagic / Filmic Pro Style) -->
-    <!-- Hidden by default on start, opens strictly on demand when user taps tools button -->
+    <!-- Docked cleanly ABOVE bottomControls so Shutter / Record / Gallery / Flip always remain uncovered -->
     <include
         android:id="@+id/proStudioDrawer"
         layout="@layout/layout_pro_studio_drawer"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
+        android:layout_marginStart="8dp"
+        android:layout_marginEnd="8dp"
+        android:layout_marginBottom="8dp"
         android:visibility="gone"
-        app:layout_constraintBottom_toBottomOf="parent" />
+        app:layout_constrainedHeight="true"
+        app:layout_constraintTop_toBottomOf="@id/proModeBar"
+        app:layout_constraintBottom_toTopOf="@id/bottomControls"
+        app:layout_constraintVertical_bias="1.0"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
 
     <!-- Dedicated Framing Guide & Grid Quick Floating Bar (HUD) -->
     <androidx.constraintlayout.widget.ConstraintLayout
@@ -908,30 +940,33 @@
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintBottom_toBottomOf="parent" />
 
-    <!-- Dedicated AR Lens Mode Dock (Visible only in AR LENS Camera Mode) -->
+    <!-- Dedicated AR Lens Mode Dock (Docked cleanly ABOVE modeScrollView & bottomControls so Shutter/Record is NEVER covered) -->
     <include
         android:id="@+id/arLensModeDock"
         layout="@layout/layout_ar_lens_mode_dock"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
+        android:layout_marginStart="12dp"
+        android:layout_marginEnd="12dp"
+        android:layout_marginBottom="8dp"
         android:visibility="gone"
-        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintBottom_toTopOf="@id/modeScrollView"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />
 
-    <!-- AR Calibration, Comic Studio & Batch Queue Drawer -->
+    <!-- AR Calibration, Comic Studio & Batch Queue Drawer (Docked cleanly ABOVE modeScrollView & bottomControls) -->
     <LinearLayout
         android:id="@+id/arCalibrationDrawer"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
         android:layout_marginHorizontal="12dp"
-        android:layout_marginBottom="145dp"
+        android:layout_marginBottom="8dp"
         android:padding="12dp"
         android:background="@drawable/bg_pro_drawer"
         android:elevation="34dp"
         android:visibility="gone"
-        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintBottom_toTopOf="@id/modeScrollView"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent">
 
@@ -1020,12 +1055,256 @@
                 android:layout_height="wrap_content"
                 android:orientation="vertical">
 
-                <!-- 1. 3D Mesh Alignment Card -->
+                <!-- 0. Phase 1 Advanced Face AR Studio Card (Makeup, Skin Smoothing, Face Masks & Occlusion) -->
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="vertical"
                     android:padding="10dp"
+                    android:layout_marginBottom="6dp"
+                    android:background="@drawable/bg_card_cinema">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="ADVANCED FACE AR (MAKEUP, SKIN &amp; MASKS)"
+                        android:textColor="#F472B6"
+                        android:textSize="10sp"
+                        android:textStyle="bold"
+                        android:fontFamily="monospace" />
+
+                    <HorizontalScrollView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        android:scrollbars="none">
+
+                        <LinearLayout
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:orientation="horizontal">
+
+                            <TextView android:id="@+id/btnFaceArOff" android:layout_width="wrap_content" android:layout_height="26dp" android:gravity="center" android:paddingHorizontal="9dp" android:text="OFF" android:textColor="#0F172A" android:textSize="9sp" android:textStyle="bold" android:fontFamily="monospace" android:background="@drawable/bg_cinema_button_active" android:layout_marginEnd="5dp" />
+                            <TextView android:id="@+id/btnFaceArGlow" android:layout_width="wrap_content" android:layout_height="26dp" android:gravity="center" android:paddingHorizontal="9dp" android:text="GLOW" android:textColor="#E2E8F0" android:textSize="9sp" android:textStyle="bold" android:fontFamily="monospace" android:background="@drawable/bg_cinema_button_inactive" android:layout_marginEnd="5dp" />
+                            <TextView android:id="@+id/btnFaceArGlam" android:layout_width="wrap_content" android:layout_height="26dp" android:gravity="center" android:paddingHorizontal="9dp" android:text="GLAM" android:textColor="#E2E8F0" android:textSize="9sp" android:textStyle="bold" android:fontFamily="monospace" android:background="@drawable/bg_cinema_button_inactive" android:layout_marginEnd="5dp" />
+                            <TextView android:id="@+id/btnFaceArCyber" android:layout_width="wrap_content" android:layout_height="26dp" android:gravity="center" android:paddingHorizontal="9dp" android:text="CYBER" android:textColor="#E2E8F0" android:textSize="9sp" android:textStyle="bold" android:fontFamily="monospace" android:background="@drawable/bg_cinema_button_inactive" android:layout_marginEnd="5dp" />
+                            <TextView android:id="@+id/btnFaceArKitsune" android:layout_width="wrap_content" android:layout_height="26dp" android:gravity="center" android:paddingHorizontal="9dp" android:text="KITSUNE" android:textColor="#E2E8F0" android:textSize="9sp" android:textStyle="bold" android:fontFamily="monospace" android:background="@drawable/bg_cinema_button_inactive" android:layout_marginEnd="5dp" />
+                            <TextView android:id="@+id/btnFaceArGold" android:layout_width="wrap_content" android:layout_height="26dp" android:gravity="center" android:paddingHorizontal="9dp" android:text="GOLD" android:textColor="#E2E8F0" android:textSize="9sp" android:textStyle="bold" android:fontFamily="monospace" android:background="@drawable/bg_cinema_button_inactive" />
+                        </LinearLayout>
+                    </HorizontalScrollView>
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:layout_marginTop="6dp">
+                        <TextView android:layout_width="76dp" android:layout_height="wrap_content" android:text="SKIN SMOOTH" android:textColor="#CBD5E1" android:textSize="9sp" android:fontFamily="monospace" />
+                        <SeekBar android:id="@+id/sbFaceBeautySmooth" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:max="100" android:progress="35" android:progressTint="#F472B6" android:thumbTint="#F472B6" />
+                    </LinearLayout>
+
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical">
+                        <TextView android:layout_width="76dp" android:layout_height="wrap_content" android:text="LIPSTICK" android:textColor="#CBD5E1" android:textSize="9sp" android:fontFamily="monospace" />
+                        <SeekBar android:id="@+id/sbFaceLipOpacity" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:max="100" android:progress="0" android:progressTint="#FB7185" android:thumbTint="#FB7185" />
+                    </LinearLayout>
+
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical">
+                        <TextView android:layout_width="76dp" android:layout_height="wrap_content" android:text="EYE &amp; LINER" android:textColor="#CBD5E1" android:textSize="9sp" android:fontFamily="monospace" />
+                        <SeekBar android:id="@+id/sbFaceEyeOpacity" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:max="100" android:progress="0" android:progressTint="#A78BFA" android:thumbTint="#A78BFA" />
+                    </LinearLayout>
+
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical">
+                        <TextView android:layout_width="76dp" android:layout_height="wrap_content" android:text="IRIS LENS" android:textColor="#CBD5E1" android:textSize="9sp" android:fontFamily="monospace" />
+                        <SeekBar android:id="@+id/sbFaceIrisOpacity" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:max="100" android:progress="0" android:progressTint="#22D3EE" android:thumbTint="#22D3EE" />
+                    </LinearLayout>
+
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical">
+                        <TextView android:layout_width="76dp" android:layout_height="wrap_content" android:text="MASK BLEND" android:textColor="#CBD5E1" android:textSize="9sp" android:fontFamily="monospace" />
+                        <SeekBar android:id="@+id/sbFaceMaskOpacity" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:max="100" android:progress="78" android:progressTint="#FACC15" android:thumbTint="#FACC15" />
+                    </LinearLayout>
+
+                    <!-- Quick Swatch Colors, Custom PNG Mask Picker & Hold-to-Compare Row -->
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:layout_marginTop="5dp">
+                        <TextView android:id="@+id/btnFaceLipColor" android:layout_width="0dp" android:layout_height="26dp" android:layout_weight="1" android:gravity="center" android:text="LIP SHADE" android:textColor="#FDA4AF" android:textSize="8.5sp" android:textStyle="bold" android:fontFamily="monospace" android:background="@drawable/bg_cinema_button_inactive" android:layout_marginEnd="4dp" />
+                        <TextView android:id="@+id/btnFaceIrisColor" android:layout_width="0dp" android:layout_height="26dp" android:layout_weight="1" android:gravity="center" android:text="IRIS TINT" android:textColor="#67E8F9" android:textSize="8.5sp" android:textStyle="bold" android:fontFamily="monospace" android:background="@drawable/bg_cinema_button_inactive" android:layout_marginEnd="4dp" />
+                        <TextView android:id="@+id/btnFaceImportMask" android:layout_width="0dp" android:layout_height="26dp" android:layout_weight="1" android:gravity="center" android:text="PNG MASK" android:textColor="#FDE047" android:textSize="8.5sp" android:textStyle="bold" android:fontFamily="monospace" android:background="@drawable/bg_cinema_button_inactive" android:layout_marginEnd="4dp" />
+                        <TextView android:id="@+id/btnFaceCompare" android:layout_width="0dp" android:layout_height="26dp" android:layout_weight="1" android:gravity="center" android:text="COMPARE" android:textColor="#E2E8F0" android:textSize="8.5sp" android:textStyle="bold" android:fontFamily="monospace" android:background="@drawable/bg_cinema_button_inactive" />
+                    </LinearLayout>
+
+                    <!-- On-Device Saved AR Looks Manager Row -->
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:layout_marginTop="5dp">
+                        <TextView android:id="@+id/btnArSaveEffect" android:layout_width="0dp" android:layout_height="26dp" android:layout_weight="1" android:gravity="center" android:text="SAVE LOOK" android:textColor="#34D399" android:textSize="9sp" android:textStyle="bold" android:fontFamily="monospace" android:background="@drawable/bg_cinema_button_inactive" android:layout_marginEnd="6dp" />
+                        <TextView android:id="@+id/btnArLoadEffect" android:layout_width="0dp" android:layout_height="26dp" android:layout_weight="1" android:gravity="center" android:text="LOAD SAVED LOOKS" android:textColor="#38BDF8" android:textSize="9sp" android:textStyle="bold" android:fontFamily="monospace" android:background="@drawable/bg_cinema_button_inactive" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:layout_marginTop="4dp">
+                        <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="3D Head Depth Occlusion" android:textColor="#CBD5E1" android:textSize="9.5sp" android:fontFamily="monospace" />
+                        <androidx.appcompat.widget.SwitchCompat android:id="@+id/switchFaceOcclusion" android:layout_width="wrap_content" android:layout_height="wrap_content" android:checked="true" app:thumbTint="#38BDF8" app:trackTint="#475569" />
+                    </LinearLayout>
+                </LinearLayout>
+
+                <!-- 0B. Phase 2: Hand AR Studio (21-Point Landmarks, Rings, Bracelets & 3D Hand Props) -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="10dp"
+                    android:layout_marginBottom="8dp"
+                    android:background="@drawable/bg_card_cinema">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="HAND AR · 21-PT RINGS, CUFFS &amp; 3D PROPS"
+                        android:textColor="#34D399"
+                        android:textSize="10sp"
+                        android:textStyle="bold"
+                        android:fontFamily="monospace" />
+
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical" android:layout_marginTop="4dp">
+                        <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="Enable Hand AR Overlay" android:textColor="#E2E8F0" android:textSize="9.5sp" android:fontFamily="monospace" />
+                        <androidx.appcompat.widget.SwitchCompat android:id="@+id/switchHandAr" android:layout_width="wrap_content" android:layout_height="wrap_content" android:checked="false" app:thumbTint="#34D399" app:trackTint="#475569" />
+                    </LinearLayout>
+
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical">
+                        <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="21-Pt Skeleton Telemetry" android:textColor="#CBD5E1" android:textSize="9.5sp" android:fontFamily="monospace" />
+                        <androidx.appcompat.widget.SwitchCompat android:id="@+id/switchHandSkeleton" android:layout_width="wrap_content" android:layout_height="wrap_content" android:checked="false" app:thumbTint="#22D3EE" app:trackTint="#475569" />
+                    </LinearLayout>
+
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical">
+                        <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="Gesture Triggers (Peace=Snap)" android:textColor="#CBD5E1" android:textSize="9.5sp" android:fontFamily="monospace" />
+                        <androidx.appcompat.widget.SwitchCompat android:id="@+id/switchHandGestureTrigger" android:layout_width="wrap_content" android:layout_height="wrap_content" android:checked="true" app:thumbTint="#FACC15" app:trackTint="#475569" />
+                    </LinearLayout>
+
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:layout_marginTop="5dp">
+                        <TextView android:id="@+id/btnHandArOff" android:layout_width="0dp" android:layout_height="26dp" android:layout_weight="1" android:gravity="center" android:text="OFF" android:textColor="#0F172A" android:textSize="8.5sp" android:textStyle="bold" android:fontFamily="monospace" android:background="@drawable/bg_cinema_button_active" android:layout_marginEnd="3dp" />
+                        <TextView android:id="@+id/btnHandArJewelry" android:layout_width="0dp" android:layout_height="26dp" android:layout_weight="1" android:gravity="center" android:text="JEWEL" android:textColor="#CBD5E1" android:textSize="8.5sp" android:textStyle="bold" android:fontFamily="monospace" android:background="@drawable/bg_cinema_button_inactive" android:layout_marginEnd="3dp" />
+                        <TextView android:id="@+id/btnHandArGauntlet" android:layout_width="0dp" android:layout_height="26dp" android:layout_weight="1" android:gravity="center" android:text="CYBER" android:textColor="#CBD5E1" android:textSize="8.5sp" android:textStyle="bold" android:fontFamily="monospace" android:background="@drawable/bg_cinema_button_inactive" android:layout_marginEnd="3dp" />
+                        <TextView android:id="@+id/btnHandArOrb" android:layout_width="0dp" android:layout_height="26dp" android:layout_weight="1" android:gravity="center" android:text="ORB" android:textColor="#CBD5E1" android:textSize="8.5sp" android:textStyle="bold" android:fontFamily="monospace" android:background="@drawable/bg_cinema_button_inactive" android:layout_marginEnd="3dp" />
+                        <TextView android:id="@+id/btnHandArFlame" android:layout_width="0dp" android:layout_height="26dp" android:layout_weight="1" android:gravity="center" android:text="FLAME" android:textColor="#CBD5E1" android:textSize="8.5sp" android:textStyle="bold" android:fontFamily="monospace" android:background="@drawable/bg_cinema_button_inactive" />
+                    </LinearLayout>
+
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:layout_marginTop="5dp">
+                        <TextView android:id="@+id/btnHandRingCycle" android:layout_width="0dp" android:layout_height="26dp" android:layout_weight="1" android:gravity="center" android:text="RING: NONE" android:textColor="#FDE047" android:textSize="8sp" android:textStyle="bold" android:fontFamily="monospace" android:background="@drawable/bg_cinema_button_inactive" android:layout_marginEnd="3dp" />
+                        <TextView android:id="@+id/btnHandBraceletCycle" android:layout_width="0dp" android:layout_height="26dp" android:layout_weight="1" android:gravity="center" android:text="CUFF: NONE" android:textColor="#38BDF8" android:textSize="8sp" android:textStyle="bold" android:fontFamily="monospace" android:background="@drawable/bg_cinema_button_inactive" android:layout_marginEnd="3dp" />
+                        <TextView android:id="@+id/btnHandPropCycle" android:layout_width="0dp" android:layout_height="26dp" android:layout_weight="1" android:gravity="center" android:text="3D: NONE" android:textColor="#F472B6" android:textSize="8sp" android:textStyle="bold" android:fontFamily="monospace" android:background="@drawable/bg_cinema_button_inactive" android:layout_marginEnd="3dp" />
+                        <TextView android:id="@+id/btnHandAnchorCycle" android:layout_width="0dp" android:layout_height="26dp" android:layout_weight="1" android:gravity="center" android:text="PT: PALM" android:textColor="#CBD5E1" android:textSize="8sp" android:textStyle="bold" android:fontFamily="monospace" android:background="@drawable/bg_cinema_button_inactive" />
+                    </LinearLayout>
+                </LinearLayout>
+
+                <!-- Phase 3: Body AR (33-Point Full-Body Pose, Virtual Wings/Cape/Armor, Kinetic FX & Segmentation) -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="10dp"
+                    android:layout_marginBottom="8dp"
+                    android:background="@drawable/bg_card_cinema">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="BODY AR · 33-PT WINGS, FX &amp; SEGMENTATION"
+                        android:textColor="#38BDF8"
+                        android:textSize="10sp"
+                        android:textStyle="bold"
+                        android:fontFamily="monospace" />
+
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical" android:layout_marginTop="4dp">
+                        <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="Enable Body AR Overlay" android:textColor="#E2E8F0" android:textSize="9.5sp" android:fontFamily="monospace" />
+                        <androidx.appcompat.widget.SwitchCompat android:id="@+id/switchBodyAr" android:layout_width="wrap_content" android:layout_height="wrap_content" android:checked="false" app:thumbTint="#38BDF8" app:trackTint="#475569" />
+                    </LinearLayout>
+
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical">
+                        <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="33-Pt Body Skeleton &amp; Stance" android:textColor="#CBD5E1" android:textSize="9.5sp" android:fontFamily="monospace" />
+                        <androidx.appcompat.widget.SwitchCompat android:id="@+id/switchBodySkeleton" android:layout_width="wrap_content" android:layout_height="wrap_content" android:checked="false" app:thumbTint="#F472B6" app:trackTint="#475569" />
+                    </LinearLayout>
+
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical">
+                        <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="Pose Triggers (Arms Up=Snap)" android:textColor="#CBD5E1" android:textSize="9.5sp" android:fontFamily="monospace" />
+                        <androidx.appcompat.widget.SwitchCompat android:id="@+id/switchBodyPoseTrigger" android:layout_width="wrap_content" android:layout_height="wrap_content" android:checked="true" app:thumbTint="#FACC15" app:trackTint="#475569" />
+                    </LinearLayout>
+
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:layout_marginTop="5dp">
+                        <TextView android:id="@+id/btnBodyArOff" android:layout_width="0dp" android:layout_height="26dp" android:layout_weight="1" android:gravity="center" android:text="OFF" android:textColor="#0F172A" android:textSize="8.5sp" android:textStyle="bold" android:fontFamily="monospace" android:background="@drawable/bg_cinema_button_active" android:layout_marginEnd="3dp" />
+                        <TextView android:id="@+id/btnBodyArWings" android:layout_width="0dp" android:layout_height="26dp" android:layout_weight="1" android:gravity="center" android:text="WINGS" android:textColor="#CBD5E1" android:textSize="8.5sp" android:textStyle="bold" android:fontFamily="monospace" android:background="@drawable/bg_cinema_button_inactive" android:layout_marginEnd="3dp" />
+                        <TextView android:id="@+id/btnBodyArCape" android:layout_width="0dp" android:layout_height="26dp" android:layout_weight="1" android:gravity="center" android:text="CAPE" android:textColor="#CBD5E1" android:textSize="8.5sp" android:textStyle="bold" android:fontFamily="monospace" android:background="@drawable/bg_cinema_button_inactive" android:layout_marginEnd="3dp" />
+                        <TextView android:id="@+id/btnBodyArMecha" android:layout_width="0dp" android:layout_height="26dp" android:layout_weight="1" android:gravity="center" android:text="MECHA" android:textColor="#CBD5E1" android:textSize="8.5sp" android:textStyle="bold" android:fontFamily="monospace" android:background="@drawable/bg_cinema_button_inactive" android:layout_marginEnd="3dp" />
+                        <TextView android:id="@+id/btnBodyArChroma" android:layout_width="0dp" android:layout_height="26dp" android:layout_weight="1" android:gravity="center" android:text="CHROMA" android:textColor="#CBD5E1" android:textSize="8sp" android:textStyle="bold" android:fontFamily="monospace" android:background="@drawable/bg_cinema_button_inactive" />
+                    </LinearLayout>
+
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:layout_marginTop="5dp">
+                        <TextView android:id="@+id/btnBodyGearCycle" android:layout_width="0dp" android:layout_height="26dp" android:layout_weight="1" android:gravity="center" android:text="GEAR: NONE" android:textColor="#38BDF8" android:textSize="8sp" android:textStyle="bold" android:fontFamily="monospace" android:background="@drawable/bg_cinema_button_inactive" android:layout_marginEnd="3dp" />
+                        <TextView android:id="@+id/btnBodyFxCycle" android:layout_width="0dp" android:layout_height="26dp" android:layout_weight="1" android:gravity="center" android:text="FX: NONE" android:textColor="#C084FC" android:textSize="8sp" android:textStyle="bold" android:fontFamily="monospace" android:background="@drawable/bg_cinema_button_inactive" android:layout_marginEnd="3dp" />
+                        <TextView android:id="@+id/btnBodySegCycle" android:layout_width="0dp" android:layout_height="26dp" android:layout_weight="1" android:gravity="center" android:text="BG: NONE" android:textColor="#34D399" android:textSize="8sp" android:textStyle="bold" android:fontFamily="monospace" android:background="@drawable/bg_cinema_button_inactive" />
+                    </LinearLayout>
+                </LinearLayout>
+
+                <!-- 0E. Phase 4 World AR Card (6-DoF Sensor-Fused Planes, Tap-to-Place 3D Objects & Surface Ruler) -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="10dp"
+                    android:layout_marginBottom="8dp"
+                    android:background="@drawable/bg_card_cinema">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="WORLD AR (6-DOF PLANES &amp; RULER)"
+                        android:textColor="#22D3EE"
+                        android:textSize="10sp"
+                        android:textStyle="bold"
+                        android:fontFamily="monospace" />
+
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical" android:layout_marginTop="4dp">
+                        <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="Enable World AR (Tap to Place)" android:textColor="#E2E8F0" android:textSize="9.5sp" android:fontFamily="monospace" />
+                        <androidx.appcompat.widget.SwitchCompat android:id="@+id/switchWorldAr" android:layout_width="wrap_content" android:layout_height="wrap_content" android:checked="false" app:thumbTint="#22D3EE" app:trackTint="#475569" />
+                    </LinearLayout>
+
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical">
+                        <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="Floor / Wall Plane Grid" android:textColor="#CBD5E1" android:textSize="9.5sp" android:fontFamily="monospace" />
+                        <androidx.appcompat.widget.SwitchCompat android:id="@+id/switchWorldGrid" android:layout_width="wrap_content" android:layout_height="wrap_content" android:checked="true" app:thumbTint="#38BDF8" app:trackTint="#475569" />
+                    </LinearLayout>
+
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical">
+                        <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="AR Surface Metric Ruler" android:textColor="#CBD5E1" android:textSize="9.5sp" android:fontFamily="monospace" />
+                        <androidx.appcompat.widget.SwitchCompat android:id="@+id/switchWorldRuler" android:layout_width="wrap_content" android:layout_height="wrap_content" android:checked="true" app:thumbTint="#34D399" app:trackTint="#475569" />
+                    </LinearLayout>
+
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:layout_marginTop="5dp">
+                        <TextView android:id="@+id/btnWorldArOff" android:layout_width="0dp" android:layout_height="26dp" android:layout_weight="1" android:gravity="center" android:text="OFF" android:textColor="#0F172A" android:textSize="8.5sp" android:textStyle="bold" android:fontFamily="monospace" android:background="@drawable/bg_cinema_button_active" android:layout_marginEnd="3dp" />
+                        <TextView android:id="@+id/btnWorldArCube" android:layout_width="0dp" android:layout_height="26dp" android:layout_weight="1" android:gravity="center" android:text="CUBE" android:textColor="#CBD5E1" android:textSize="8.5sp" android:textStyle="bold" android:fontFamily="monospace" android:background="@drawable/bg_cinema_button_inactive" android:layout_marginEnd="3dp" />
+                        <TextView android:id="@+id/btnWorldArPortal" android:layout_width="0dp" android:layout_height="26dp" android:layout_weight="1" android:gravity="center" android:text="PORTAL" android:textColor="#CBD5E1" android:textSize="8.5sp" android:textStyle="bold" android:fontFamily="monospace" android:background="@drawable/bg_cinema_button_inactive" android:layout_marginEnd="3dp" />
+                        <TextView android:id="@+id/btnWorldArMeasure" android:layout_width="0dp" android:layout_height="26dp" android:layout_weight="1" android:gravity="center" android:text="RULER" android:textColor="#CBD5E1" android:textSize="8.5sp" android:textStyle="bold" android:fontFamily="monospace" android:background="@drawable/bg_cinema_button_inactive" />
+                    </LinearLayout>
+
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:layout_marginTop="5dp">
+                        <TextView android:id="@+id/btnWorldObjCycle" android:layout_width="0dp" android:layout_height="26dp" android:layout_weight="1" android:gravity="center" android:text="OBJ: HOLO" android:textColor="#22D3EE" android:textSize="8sp" android:textStyle="bold" android:fontFamily="monospace" android:background="@drawable/bg_cinema_button_inactive" android:layout_marginEnd="3dp" />
+                        <TextView android:id="@+id/btnWorldDropAnchor" android:layout_width="0dp" android:layout_height="26dp" android:layout_weight="1" android:gravity="center" android:text="+ DROP" android:textColor="#FACC15" android:textSize="8sp" android:textStyle="bold" android:fontFamily="monospace" android:background="@drawable/bg_cinema_button_inactive" android:layout_marginEnd="3dp" />
+                        <TextView android:id="@+id/btnWorldClearAnchors" android:layout_width="0dp" android:layout_height="26dp" android:layout_weight="1" android:gravity="center" android:text="CLR (0)" android:textColor="#FB7185" android:textSize="8sp" android:textStyle="bold" android:fontFamily="monospace" android:background="@drawable/bg_cinema_button_inactive" />
+                    </LinearLayout>
+                </LinearLayout>
+
+                <!-- 1. 3D Mesh Alignment Card (Replaced by direct two-finger AR viewfinder gestures; kept hidden for JSON preset compatibility) -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="10dp"
+                    android:visibility="gone"
                     android:background="@drawable/bg_card_cinema">
 
                     <TextView

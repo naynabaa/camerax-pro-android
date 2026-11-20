@@ -6,7 +6,7 @@
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:layout_marginHorizontal="12dp"
-    android:layout_marginBottom="146dp"
+    android:layout_marginBottom="8dp"
     android:background="@drawable/bg_pro_drawer"
     android:orientation="vertical"
     android:paddingHorizontal="10dp"
@@ -49,19 +49,6 @@
                     android:background="@drawable/bg_cinema_button_active" />
 
                 <TextView
-                    android:id="@+id/tabArDockAdjust"
-                    android:layout_width="wrap_content"
-                    android:layout_height="26dp"
-                    android:layout_marginStart="2dp"
-                    android:paddingHorizontal="8dp"
-                    android:gravity="center"
-                    android:text="ADJUST"
-                    android:textColor="#94A3B8"
-                    android:textSize="9sp"
-                    android:fontFamily="monospace"
-                    android:background="@drawable/bg_cinema_button_inactive" />
-
-                <TextView
                     android:id="@+id/tabArDockComicText"
                     android:layout_width="wrap_content"
                     android:layout_height="26dp"
@@ -83,7 +70,7 @@
             android:layout_marginStart="6dp"
             android:paddingHorizontal="8dp"
             android:gravity="center"
-            android:text="CALIB"
+            android:text="STUDIO"
             android:textColor="#38BDF8"
             android:textSize="9sp"
             android:textStyle="bold"
@@ -129,11 +116,26 @@
             android:id="@+id/tvArShutterHint"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginStart="8dp"
-            android:text="TAP PHOTO · HOLD 1S VID"
+            android:layout_marginStart="6dp"
+            android:text="2-FINGER: PLACE · SIZE · TILT"
             android:textColor="#94A3B8"
-            android:textSize="8.5sp"
+            android:textSize="8sp"
             android:fontFamily="monospace" />
+
+        <TextView
+            android:id="@+id/btnArGestureReset"
+            android:layout_width="wrap_content"
+            android:layout_height="22dp"
+            android:layout_marginStart="6dp"
+            android:paddingHorizontal="7dp"
+            android:gravity="center"
+            android:text="RESET"
+            android:textColor="#FDA4AF"
+            android:textSize="8.5sp"
+            android:textStyle="bold"
+            android:fontFamily="monospace"
+            android:visibility="gone"
+            android:background="@drawable/bg_cinema_button_inactive" />
     </LinearLayout>
 
     <!-- Collapsible Content Body -->
@@ -272,206 +274,6 @@
             </LinearLayout>
         </HorizontalScrollView>
 
-        <!-- Panel 2: Live AR Parameter Adjustment Sliders -->
-        <LinearLayout
-            android:id="@+id/layoutArModeAdjustPanel"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:visibility="gone">
-
-            <!-- Scale -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:gravity="center_vertical">
-
-                <TextView
-                    android:layout_width="54dp"
-                    android:layout_height="wrap_content"
-                    android:text="SCALE"
-                    android:textColor="#CBD5E1"
-                    android:textSize="9sp"
-                    android:fontFamily="monospace"
-                    android:textStyle="bold" />
-
-                <SeekBar
-                    android:id="@+id/sbArDockScale"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:max="100"
-                    android:progress="50"
-                    android:progressTint="#E879F9"
-                    android:thumbTint="#E879F9" />
-
-                <TextView
-                    android:id="@+id/tvArDockScaleVal"
-                    android:layout_width="42dp"
-                    android:layout_height="wrap_content"
-                    android:gravity="end"
-                    android:text="1.00x"
-                    android:textColor="#F0ABFC"
-                    android:textSize="9sp"
-                    android:fontFamily="monospace" />
-            </LinearLayout>
-
-            <!-- Offset X -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:gravity="center_vertical">
-
-                <TextView
-                    android:layout_width="54dp"
-                    android:layout_height="wrap_content"
-                    android:text="OFFSET X"
-                    android:textColor="#CBD5E1"
-                    android:textSize="9sp"
-                    android:fontFamily="monospace"
-                    android:textStyle="bold" />
-
-                <SeekBar
-                    android:id="@+id/sbArDockOffsetX"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:max="100"
-                    android:progress="50"
-                    android:progressTint="#38BDF8"
-                    android:thumbTint="#38BDF8" />
-
-                <TextView
-                    android:id="@+id/tvArDockOffsetXVal"
-                    android:layout_width="42dp"
-                    android:layout_height="wrap_content"
-                    android:gravity="end"
-                    android:text="0"
-                    android:textColor="#7DD3FC"
-                    android:textSize="9sp"
-                    android:fontFamily="monospace" />
-            </LinearLayout>
-
-            <!-- Offset Y -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:gravity="center_vertical">
-
-                <TextView
-                    android:layout_width="54dp"
-                    android:layout_height="wrap_content"
-                    android:text="OFFSET Y"
-                    android:textColor="#CBD5E1"
-                    android:textSize="9sp"
-                    android:fontFamily="monospace"
-                    android:textStyle="bold" />
-
-                <SeekBar
-                    android:id="@+id/sbArDockOffsetY"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:max="100"
-                    android:progress="50"
-                    android:progressTint="#38BDF8"
-                    android:thumbTint="#38BDF8" />
-
-                <TextView
-                    android:id="@+id/tvArDockOffsetYVal"
-                    android:layout_width="42dp"
-                    android:layout_height="wrap_content"
-                    android:gravity="end"
-                    android:text="0"
-                    android:textColor="#7DD3FC"
-                    android:textSize="9sp"
-                    android:fontFamily="monospace" />
-            </LinearLayout>
-
-            <!-- Tilt / Rotation -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:gravity="center_vertical">
-
-                <TextView
-                    android:layout_width="54dp"
-                    android:layout_height="wrap_content"
-                    android:text="TILT"
-                    android:textColor="#CBD5E1"
-                    android:textSize="9sp"
-                    android:fontFamily="monospace"
-                    android:textStyle="bold" />
-
-                <SeekBar
-                    android:id="@+id/sbArDockRotation"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:max="90"
-                    android:progress="45"
-                    android:progressTint="#34D399"
-                    android:thumbTint="#34D399" />
-
-                <TextView
-                    android:id="@+id/tvArDockRotationVal"
-                    android:layout_width="42dp"
-                    android:layout_height="wrap_content"
-                    android:gravity="end"
-                    android:text="0°"
-                    android:textColor="#6EE7B7"
-                    android:textSize="9sp"
-                    android:fontFamily="monospace" />
-            </LinearLayout>
-
-            <!-- Mesh Debug + Reset Row -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
-                android:orientation="horizontal"
-                android:gravity="center_vertical">
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="468 MESH"
-                    android:textColor="#94A3B8"
-                    android:textSize="9sp"
-                    android:fontFamily="monospace"
-                    android:textStyle="bold" />
-
-                <androidx.appcompat.widget.SwitchCompat
-                    android:id="@+id/switchArDockMeshDebug"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="6dp"
-                    app:thumbTint="#E879F9"
-                    app:trackTint="#475569" />
-
-                <View
-                    android:layout_width="0dp"
-                    android:layout_height="1dp"
-                    android:layout_weight="1" />
-
-                <TextView
-                    android:id="@+id/btnArDockReset"
-                    android:layout_width="wrap_content"
-                    android:layout_height="26dp"
-                    android:paddingHorizontal="10dp"
-                    android:gravity="center"
-                    android:text="RESET AR"
-                    android:textColor="#FDA4AF"
-                    android:textSize="9sp"
-                    android:textStyle="bold"
-                    android:fontFamily="monospace"
-                    android:background="@drawable/bg_cinema_button_inactive" />
-            </LinearLayout>
-        </LinearLayout>
 
         <!-- Panel 3: AR Text Studio & Comic SFX Controls -->
         <LinearLayout

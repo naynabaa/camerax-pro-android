@@ -41,6 +41,12 @@ jobs:
           if [ ! -f "app/src/main/assets/face_landmarker.task" ]; then
             curl -fSL --retry 2 "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task" -o app/src/main/assets/face_landmarker.task || rm -f app/src/main/assets/face_landmarker.task
           fi
+          if [ ! -f "app/src/main/assets/hand_landmarker.task" ]; then
+            curl -fSL --retry 2 "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task" -o app/src/main/assets/hand_landmarker.task || rm -f app/src/main/assets/hand_landmarker.task
+          fi
+          if [ ! -f "app/src/main/assets/pose_landmarker_lite.task" ]; then
+            curl -fSL --retry 2 "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task" -o app/src/main/assets/pose_landmarker_lite.task || rm -f app/src/main/assets/pose_landmarker_lite.task
+          fi
 
       - name: Build Debug APK with Gradle
         run: |

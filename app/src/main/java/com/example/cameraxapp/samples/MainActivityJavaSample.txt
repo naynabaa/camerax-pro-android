@@ -92,7 +92,7 @@ public class MainActivity extends AppCompatActivity {
     private ImageButton btnCapture, btnSwitchCamera, btnPauseResume, btnProStudio, btnTimer;
     private TextView tabSlowMo, tabVideo, tabPhoto, tabPortrait, tabNight, tabPanorama, tabArLens;
     private TextView tabSlotFarLeft, tabSlotLeft, tabSlotCenter, tabSlotRight, tabSlotFarRight;
-    private TextView tvExposureValue, tvCountdown, tvBurstBadge, tvRecordingStatus;
+    private TextView tvExposureValue, tvCountdown, tvBurstBadge, tvArRecLockBadge, tvRecordingStatus;
     private View recordingTimer, proModeBar, gridOverlay, exposureLayout, layoutBtnTimer, recordingDot, arLensModeDock;
     private ProOverlayView proOverlayView;
     private Chronometer chronometer;
@@ -115,8 +115,11 @@ public class MainActivity extends AppCompatActivity {
     private final Handler burstHandler = new Handler(Looper.getMainLooper());
     private Runnable burstRunnable;
 
-    // AR Lens Mode Hold (>=1s) Video Recording State
+    // AR Lens Mode Hold (>=0.5s) Video Recording & Slide-Up Lock State
     private boolean isArHoldRecording = false;
+    private boolean isArRecordingLocked = false;
+    private boolean arStopOnShutterUp = false;
+    private float arTouchDownRawY = 0f;
     private final Handler arHoldHandler = new Handler(Looper.getMainLooper());
     private Runnable arHoldRunnable;
 
@@ -304,6 +307,7 @@ public class MainActivity extends AppCompatActivity {
         tvExposureValue = findViewById(R.id.tvExposureValue);
         tvCountdown = findViewById(R.id.tvCountdown);
         tvBurstBadge = findViewById(R.id.tvBurstBadge);
+        tvArRecLockBadge = findViewById(R.id.tvArRecLockBadge);
         tvRecordingStatus = findViewById(R.id.tvRecordingStatus);
         recordingTimer = findViewById(R.id.recordingTimer);
         recordingDot = findViewById(R.id.recordingDot);
@@ -452,29 +456,77 @@ public class MainActivity extends AppCompatActivity {
 
     private void setupBurstMode() {
         btnCapture.setOnTouchListener((v, event) -> {
+            if (event.getAction() == MotionEvent.ACTION_DOWN) {
+                v.animate().scaleX(0.92f).scaleY(0.92f).setDuration(75L).start();
+            } else if (event.getAction() == MotionEvent.ACTION_UP || event.getAction() == MotionEvent.ACTION_CANCEL) {
+                v.animate().scaleX(1f).scaleY(1f).setDuration(90L).start();
+            }
             if (cameraMode == CameraMode.AR_LENS) {
-                // AR LENS Mode: Tap (< 1000ms) -> Capture AR Photo; Hold (>= 1000ms) -> Record AR Video until release
+                // AR LENS Mode: Tap (< 500ms) -> Photo; Hold (>= 500ms) -> AR Video; Slide UP -> Hands-Free Lock
                 if (event.getAction() == MotionEvent.ACTION_DOWN) {
+                    if (recording != null && isArRecordingLocked) {
+                        arStopOnShutterUp = true;
+                        return true;
+                    }
+                    arStopOnShutterUp = false;
                     isArHoldRecording = false;
+                    isArRecordingLocked = false;
+                    arTouchDownRawY = event.getRawY();
                     if (arHoldRunnable != null) arHoldHandler.removeCallbacks(arHoldRunnable);
                     arHoldRunnable = () -> {
                         if (cameraMode == CameraMode.AR_LENS && recording == null && !isCountingDown) {
                             isArHoldRecording = true;
                             if (arLensModeDock != null) arLensModeDock.setVisibility(View.GONE);
+                            if (tvArRecLockBadge != null) {
+                                tvArRecLockBadge.setTranslationY(0f);
+                                tvArRecLockBadge.setText("▲ SLIDE UP TO LOCK");
+                                tvArRecLockBadge.setTextColor(Color.parseColor("#FACC15"));
+                                tvArRecLockBadge.setVisibility(View.VISIBLE);
+                            }
                             captureVideo();
                         }
                     };
-                    arHoldHandler.postDelayed(arHoldRunnable, 1000L);
+                    arHoldHandler.postDelayed(arHoldRunnable, 500L);
+                    return true;
+                } else if (event.getAction() == MotionEvent.ACTION_MOVE) {
+                    if (isArHoldRecording && !isArRecordingLocked) {
+                        float slideUpPx = arTouchDownRawY - event.getRawY();
+                        float lockThresholdPx = 56f * getResources().getDisplayMetrics().density;
+                        if (tvArRecLockBadge != null) {
+                            float clamped = Math.max(0f, Math.min(slideUpPx, lockThresholdPx));
+                            tvArRecLockBadge.setTranslationY(-clamped * 0.45f);
+                        }
+                        if (slideUpPx >= lockThresholdPx) {
+                            isArRecordingLocked = true;
+                            if (tvArRecLockBadge != null) {
+                                tvArRecLockBadge.setTranslationY(0f);
+                                tvArRecLockBadge.setText("LOCKED · TAP SHUTTER TO STOP");
+                                tvArRecLockBadge.setTextColor(Color.parseColor("#34D399"));
+                            }
+                            if (tvRecordingStatus != null) tvRecordingStatus.setText("AR REC · LOCK");
+                            btnPauseResume.setVisibility(View.VISIBLE);
+                        }
+                    }
                     return true;
                 } else if (event.getAction() == MotionEvent.ACTION_UP || event.getAction() == MotionEvent.ACTION_CANCEL) {
                     if (arHoldRunnable != null) {
                         arHoldHandler.removeCallbacks(arHoldRunnable);
                         arHoldRunnable = null;
                     }
-                    if (isArHoldRecording) {
+                    if (tvArRecLockBadge != null) tvArRecLockBadge.setTranslationY(0f);
+                    if (arStopOnShutterUp) {
+                        arStopOnShutterUp = false;
+                        isArRecordingLocked = false;
                         isArHoldRecording = false;
+                        if (tvArRecLockBadge != null) tvArRecLockBadge.setVisibility(View.GONE);
                         if (recording != null) captureVideo();
-                    } else if (event.getAction() == MotionEvent.ACTION_UP && recording == null) {
+                    } else if (isArRecordingLocked) {
+                        // Keep recording hands-free after thumb lifts
+                    } else if (isArHoldRecording || recording != null) {
+                        isArHoldRecording = false;
+                        if (tvArRecLockBadge != null) tvArRecLockBadge.setVisibility(View.GONE);
+                        if (recording != null) captureVideo();
+                    } else if (event.getAction() == MotionEvent.ACTION_UP) {
                         onShutterClick();
                     }
                     return true;
@@ -502,13 +554,13 @@ public class MainActivity extends AppCompatActivity {
                 };
                 burstHandler.postDelayed(burstRunnable, 400);
                 return true;
-            } else if (event.getAction() == MotionEvent.ACTION_UP) {
-                burstHandler.removeCallbacks(burstRunnable);
+            } else if (event.getAction() == MotionEvent.ACTION_UP || event.getAction() == MotionEvent.ACTION_CANCEL) {
+                if (burstRunnable != null) burstHandler.removeCallbacks(burstRunnable);
                 if (isBurstCapturing) {
                     isBurstCapturing = false;
                     tvBurstBadge.setVisibility(View.GONE);
                     Toast.makeText(this, "Captured " + burstCount + " burst photos", Toast.LENGTH_SHORT).show();
-                } else {
+                } else if (event.getAction() == MotionEvent.ACTION_UP) {
                     onShutterClick();
                 }
                 return true;
@@ -871,6 +923,12 @@ public class MainActivity extends AppCompatActivity {
                 chronometer.stop();
                 timeWhenStopped = 0L;
                 isArHoldRecording = false;
+                isArRecordingLocked = false;
+                arStopOnShutterUp = false;
+                if (tvArRecLockBadge != null) {
+                    tvArRecLockBadge.setVisibility(View.GONE);
+                    tvArRecLockBadge.setTranslationY(0f);
+                }
                 btnPauseResume.setVisibility(View.GONE);
                 if (cameraMode == CameraMode.AR_LENS) {
                     if (recordingTimer != null) recordingTimer.setVisibility(View.VISIBLE);
@@ -878,7 +936,7 @@ public class MainActivity extends AppCompatActivity {
                         tvRecordingStatus.setText("AR LENS");
                         tvRecordingStatus.setTextColor(Color.parseColor("#E879F9"));
                     }
-                    if (chronometer != null) chronometer.setText("TAP PHOTO · HOLD 1S VID");
+                    if (chronometer != null) chronometer.setText("TAP PHOTO · HOLD 0.5S VID");
                     btnCapture.setImageResource(R.drawable.bg_shutter_button);
                     if (arLensModeDock != null) arLensModeDock.setVisibility(View.VISIBLE);
                 } else {
@@ -1050,6 +1108,12 @@ public class MainActivity extends AppCompatActivity {
                 arHoldRunnable = null;
             }
             isArHoldRecording = false;
+            isArRecordingLocked = false;
+            arStopOnShutterUp = false;
+            if (tvArRecLockBadge != null) {
+                tvArRecLockBadge.setVisibility(View.GONE);
+                tvArRecLockBadge.setTranslationY(0f);
+            }
             if (arLensModeDock != null) arLensModeDock.setVisibility(View.GONE);
         }
         cameraMode = mode;
@@ -1059,6 +1123,9 @@ public class MainActivity extends AppCompatActivity {
             proOverlayView.setPanoramaModeActive(mode == CameraMode.PANORAMA);
             proOverlayView.setNightModeHudActive(mode == CameraMode.NIGHT);
         }
+
+        View zoomBar = findViewById(R.id.zoomControls);
+        if (zoomBar != null) zoomBar.setVisibility(mode == CameraMode.AR_LENS ? View.GONE : View.VISIBLE);
 
         if (mode == CameraMode.AR_LENS) {
             btnCapture.setImageResource(R.drawable.bg_shutter_button);
@@ -1070,7 +1137,7 @@ public class MainActivity extends AppCompatActivity {
             if (tvRecordingStatus != null) {
                 tvRecordingStatus.setText("AR LENS");
                 tvRecordingStatus.setTextColor(Color.parseColor("#E879F9"));
-                if (chronometer != null) chronometer.setText("TAP PHOTO · HOLD 1S VID");
+                if (chronometer != null) chronometer.setText("TAP PHOTO · HOLD 0.5S VID");
             }
         } else if (isPhotoStyleMode(mode)) {
             btnCapture.setImageResource(R.drawable.bg_shutter_button);

@@ -61,6 +61,38 @@ tasks.register("downloadFaceLandmarkerTask") {
                 println("Notice: Offline/skipped face_landmarker.task download — runtime will use built-in FaceDetector fallback.")
             }
         }
+        val handModelFile = file("src/main/assets/hand_landmarker.task")
+        if (!handModelFile.exists() || handModelFile.length() < 100_000L) {
+            try {
+                assetDir.mkdirs()
+                val handUrl = URI.create("https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task").toURL()
+                handUrl.openStream().use { input: InputStream ->
+                    handModelFile.outputStream().use { output: OutputStream ->
+                        input.copyTo(output)
+                    }
+                }
+                println("Downloaded MediaPipe hand_landmarker.task (${handModelFile.length()} bytes)")
+            } catch (t: Throwable) {
+                if (handModelFile.exists()) handModelFile.delete()
+                println("Notice: Offline/skipped hand_landmarker.task download — Hand AR tracking disabled until online build.")
+            }
+        }
+        val poseModelFile = file("src/main/assets/pose_landmarker_lite.task")
+        if (!poseModelFile.exists() || poseModelFile.length() < 100_000L) {
+            try {
+                assetDir.mkdirs()
+                val poseUrl = URI.create("https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task").toURL()
+                poseUrl.openStream().use { input: InputStream ->
+                    poseModelFile.outputStream().use { output: OutputStream ->
+                        input.copyTo(output)
+                    }
+                }
+                println("Downloaded MediaPipe pose_landmarker_lite.task (${poseModelFile.length()} bytes)")
+            } catch (t: Throwable) {
+                if (poseModelFile.exists()) poseModelFile.delete()
+                println("Notice: Offline/skipped pose_landmarker_lite.task download — Body AR tracking disabled until online build.")
+            }
+        }
     }
 }
 
@@ -78,20 +110,6 @@ dependencies {
     implementation("androidx.camera:camera-video:$cameraxVersion")
     implementation("androidx.camera:camera-view:$cameraxVersion")
     implementation("androidx.camera:camera-extensions:$cameraxVersion")
-
-    // Jetpack Compose Dependencies
-    implementation(platform("androidx.compose:compose-bom:2024.06.00"))
-    implementation("androidx.compose.ui:ui")
-    implementation("androidx.compose.ui:ui-graphics")
-    implementation("androidx.compose.ui:ui-tooling-preview")
-    implementation("androidx.compose.foundation:foundation")
-    implementation("androidx.compose.foundation:foundation-layout")
-    implementation("androidx.compose.material:material-icons-extended")
-    implementation("androidx.compose.material3:material3")
-    implementation("androidx.compose.runtime:runtime")
-    implementation("androidx.activity:activity-compose:1.8.2")
-    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.7.0")
-    debugImplementation("androidx.compose.ui:ui-tooling")
 
     // GPUImage & OpenGL Shader Pipeline
     implementation("jp.co.cyberagent.android:gpuimage:2.1.0")

@@ -43,8 +43,56 @@ class GlbArModelEngine(private val appContext: Context) {
         val modelScale: Float,
         val yawDeg: Float,
         val pitchDeg: Float,
-        val rollDeg: Float
+        val rollDeg: Float,
+        val enableHeadOcclusion: Boolean = false,
+        val normFaceCenterX: Float = 0.5f,
+        val normFaceCenterY: Float = 0.5f,
+        val normFaceHeight: Float = 0.35f
     )
+
+    // Reusable depth-only unit sphere occluder buffers (allocated once on GL thread)
+    private var occPosBuffer: FloatBuffer? = null
+    private var occNormBuffer: FloatBuffer? = null
+    private var occUvBuffer: FloatBuffer? = null
+    private var occVertexCount: Int = 0
+
+    private fun ensureHeadOccluderBuffers() {
+        if (occPosBuffer != null && occVertexCount > 0) return
+        val stacks = 12
+        val slices = 16
+        val triCount = stacks * slices * 2
+        val pos = FloatArray(triCount * 3 * 3)
+        val norm = FloatArray(triCount * 3 * 3)
+        val uv = FloatArray(triCount * 3 * 2)
+        var pi = 0
+        var ui = 0
+        fun putV(x: Float, y: Float, z: Float) {
+            pos[pi] = x; norm[pi] = x; pi++
+            pos[pi] = y; norm[pi] = y; pi++
+            pos[pi] = z; norm[pi] = z; pi++
+            uv[ui++] = 0f; uv[ui++] = 0f
+        }
+        for (i in 0 until stacks) {
+            val phi0 = Math.PI * i / stacks
+            val phi1 = Math.PI * (i + 1) / stacks
+            val y0 = cos(phi0).toFloat(); val r0 = sin(phi0).toFloat()
+            val y1 = cos(phi1).toFloat(); val r1 = sin(phi1).toFloat()
+            for (j in 0 until slices) {
+                val th0 = 2.0 * Math.PI * j / slices
+                val th1 = 2.0 * Math.PI * (j + 1) / slices
+                val x00 = (r0 * cos(th0)).toFloat(); val z00 = (r0 * sin(th0)).toFloat()
+                val x01 = (r0 * cos(th1)).toFloat(); val z01 = (r0 * sin(th1)).toFloat()
+                val x10 = (r1 * cos(th0)).toFloat(); val z10 = (r1 * sin(th0)).toFloat()
+                val x11 = (r1 * cos(th1)).toFloat(); val z11 = (r1 * sin(th1)).toFloat()
+                putV(x00, y0, z00); putV(x10, y1, z10); putV(x11, y1, z11)
+                putV(x00, y0, z00); putV(x11, y1, z11); putV(x01, y0, z01)
+            }
+        }
+        occPosBuffer = ByteBuffer.allocateDirect(pos.size * 4).order(ByteOrder.nativeOrder()).asFloatBuffer().apply { put(pos); position(0) }
+        occNormBuffer = ByteBuffer.allocateDirect(norm.size * 4).order(ByteOrder.nativeOrder()).asFloatBuffer().apply { put(norm); position(0) }
+        occUvBuffer = ByteBuffer.allocateDirect(uv.size * 4).order(ByteOrder.nativeOrder()).asFloatBuffer().apply { put(uv); position(0) }
+        occVertexCount = triCount * 3
+    }
 
     private data class ParsedPrimitive(
         val positions: FloatArray,
@@ -340,6 +388,45 @@ class GlbArModelEngine(private val appContext: Context) {
         val locPos = GLES20.glGetAttribLocation(programId, "aPosition")
         val locNorm = GLES20.glGetAttribLocation(programId, "aNormal")
         val locUv = GLES20.glGetAttribLocation(programId, "aTexCoord")
+
+        // Depth-only 3D head ellipsoid occlusion pass (masks rear geometry of crowns/glasses behind head)
+        if (pose.enableHeadOcclusion) {
+            ensureHeadOccluderBuffers()
+            val oPos = occPosBuffer
+            val oNorm = occNormBuffer
+            val oUv = occUvBuffer
+            if (oPos != null && oNorm != null && oUv != null && occVertexCount > 0) {
+                val faceWorldW = (pose.normFaceWidth * visW).coerceAtLeast(0.05f)
+                val faceWorldH = (pose.normFaceHeight * visH).coerceAtLeast(0.05f)
+                val faceCenterWorldX = (pose.normFaceCenterX - 0.5f) * visW
+                val faceCenterWorldY = (0.5f - pose.normFaceCenterY) * visH
+                val occModel = FloatArray(16)
+                val occMv = FloatArray(16)
+                val occMvp = FloatArray(16)
+                Matrix.setIdentityM(occModel, 0)
+                Matrix.translateM(occModel, 0, faceCenterWorldX, faceCenterWorldY, -faceWorldW * 0.34f)
+                Matrix.rotateM(occModel, 0, pose.rollDeg, 0f, 0f, 1f)
+                Matrix.scaleM(occModel, 0, faceWorldW * 0.45f, faceWorldH * 0.56f, faceWorldW * 0.42f)
+                Matrix.multiplyMM(occMv, 0, view, 0, occModel, 0)
+                Matrix.multiplyMM(occMvp, 0, proj, 0, occMv, 0)
+
+                GLES20.glColorMask(false, false, false, false)
+                GLES20.glUniformMatrix4fv(locMvp, 1, false, occMvp, 0)
+                GLES20.glUniformMatrix4fv(locMv, 1, false, occMv, 0)
+                GLES20.glUniform1i(locHasTex, 0)
+                GLES20.glEnableVertexAttribArray(locPos)
+                GLES20.glVertexAttribPointer(locPos, 3, GLES20.GL_FLOAT, false, 0, oPos)
+                GLES20.glEnableVertexAttribArray(locNorm)
+                GLES20.glVertexAttribPointer(locNorm, 3, GLES20.GL_FLOAT, false, 0, oNorm)
+                GLES20.glEnableVertexAttribArray(locUv)
+                GLES20.glVertexAttribPointer(locUv, 2, GLES20.GL_FLOAT, false, 0, oUv)
+                GLES20.glDrawArrays(GLES20.GL_TRIANGLES, 0, occVertexCount)
+                GLES20.glDisableVertexAttribArray(locPos)
+                GLES20.glDisableVertexAttribArray(locNorm)
+                GLES20.glDisableVertexAttribArray(locUv)
+                GLES20.glColorMask(true, true, true, true)
+            }
+        }
 
         GLES20.glUniformMatrix4fv(locMvp, 1, false, mvp, 0)
         GLES20.glUniformMatrix4fv(locMv, 1, false, mv, 0)

@@ -20,6 +20,7 @@ import android.graphics.PorterDuff
 import android.graphics.PorterDuffXfermode
 import android.graphics.RadialGradient
 import android.graphics.Rect
+import android.graphics.PointF
 import android.graphics.RectF
 import android.graphics.RenderEffect
 import android.graphics.Shader
@@ -99,6 +100,9 @@ import com.example.cameraxapp.power.EcoPowerManager
 import com.example.cameraxapp.power.ThermalGuardManager
 import com.example.cameraxapp.stabilization.GyroStabilizer
 import com.example.cameraxapp.ar.FaceMeshHelper
+import com.example.cameraxapp.ar.HandLandmarkerHelper
+import com.example.cameraxapp.ar.PoseLandmarkerHelper
+import com.example.cameraxapp.ar.WorldArTracker
 import com.example.cameraxapp.ar.ARFaceOverlayView
 import com.example.cameraxapp.audio.ComicSoundEffectsHelper
 import com.example.cameraxapp.font.CameraFontHelper
@@ -157,6 +161,29 @@ class MainActivity : AppCompatActivity() {
     // Real-Time Filter, MediaPipe 468-Mesh & Concurrent Multi-Cam PiP Engine
     private lateinit var filterManager: FilterManager
     private var faceMeshHelper: FaceMeshHelper? = null
+    private var handLandmarkerHelper: HandLandmarkerHelper? = null
+    private var poseLandmarkerHelper: PoseLandmarkerHelper? = null
+    private var worldArTracker: WorldArTracker? = null
+    @Volatile
+    private var isBodyPoseTriggerEnabled: Boolean = true
+    @Volatile
+    private var lastBodyPoseTriggerMs: Long = 0L
+    @Volatile
+    private var lastStableBodyStance: String = ""
+    @Volatile
+    private var stableBodyStanceStartMs: Long = 0L
+    @Volatile
+    private var stableBodyStanceFired: Boolean = false
+    @Volatile
+    private var isHandGestureTriggerEnabled: Boolean = true
+    @Volatile
+    private var lastHandGestureTriggerMs: Long = 0L
+    @Volatile
+    private var lastStableHandGesture: String = ""
+    @Volatile
+    private var stableHandGestureStartMs: Long = 0L
+    @Volatile
+    private var stableHandGestureFired: Boolean = false
     @Volatile
     private var isMediaPipeSupported: Boolean = true
     @Volatile
@@ -196,14 +223,37 @@ class MainActivity : AppCompatActivity() {
     private var isGridVisible = true
 
     // AR Lens Mode Dedicated Dock & Tap-Photo / Hold (>=1s) Video Recording State
-    private enum class ArDockTab { LENSES, ADJUST, COMIC_TEXT }
+    private enum class ArDockTab { LENSES, COMIC_TEXT }
     private var currentArDockTab = ArDockTab.LENSES
     private var isArDockCollapsed: Boolean = false
     private var isSyncingArDockSliders: Boolean = false
     private var lastActiveArLensName: String = "cyberpunk_visor"
     private var isArHoldRecording: Boolean = false
+    private var isArRecordingLocked: Boolean = false
+    private var arStopOnShutterUp: Boolean = false
+    private var arTouchDownRawY: Float = 0f
     private val arHoldHandler = Handler(Looper.getMainLooper())
     private var arHoldRunnable: Runnable? = null
+
+    // Two-Finger AR Viewfinder Gesture State (Place, Size, Tilt)
+    private var isTwoFingerArAdjusting: Boolean = false
+    private var arGesturePointerId1: Int = MotionEvent.INVALID_POINTER_ID
+    private var arGesturePointerId2: Int = MotionEvent.INVALID_POINTER_ID
+    private var arGestureStartMidX: Float = 0f
+    private var arGestureStartMidY: Float = 0f
+    private var arGestureStartDist: Float = 1f
+    private var arGestureStartAngle: Double = 0.0
+    private var arGestureOrigOffsetX: Float = 0f
+    private var arGestureOrigOffsetY: Float = 0f
+    private var arGestureOrigScale: Float = 1.0f
+    private var arGestureOrigRotDeg: Float = 0f
+    private var twoFingerPinchEnabled: Boolean = true
+    private var twoFingerPinchSensitivity: Float = 1.0f
+    private var twoFingerRotateEnabled: Boolean = true
+    private var twoFingerRotateSensitivity: Float = 1.0f
+    private var twoFingerDragEnabled: Boolean = true
+    private var twoFingerDragSensitivity: Float = 1.0f
+    private var invertTwoFingerRotate: Boolean = false
 
     // Audio Cue, Comic SFX & Typography Engines
     private var toneGenerator: ToneGenerator? = null
@@ -545,6 +595,13 @@ class MainActivity : AppCompatActivity() {
             importGlbLensFromUri(uri)
         }
 
+    // Phase 1: On-device Custom PNG/WebP Face Mask Texture Picker (Storage Access Framework)
+    private val importFaceMaskLauncher =
+        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+            if (uri == null) return@registerForActivityResult
+            loadCustomFaceMaskFromUri(uri)
+        }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         viewBinding = ActivityMainBinding.inflate(layoutInflater)
@@ -609,6 +666,163 @@ class MainActivity : AppCompatActivity() {
             }
         })
         faceMeshHelper?.setFrontFacing(lensFacing == CameraSelector.DEFAULT_FRONT_CAMERA)
+        handLandmarkerHelper = HandLandmarkerHelper(this, object : HandLandmarkerHelper.HandLandmarkerListener {
+            override fun onHandsDetected(
+                hands: List<HandLandmarkerHelper.TrackedHand>,
+                inputWidth: Int,
+                inputHeight: Int
+            ) {
+                val isFront = (lensFacing == CameraSelector.DEFAULT_FRONT_CAMERA)
+                val mapped = hands.map {
+                    ARFaceOverlayView.OverlayHandData(it.landmarks, it.gesture, it.handedness)
+                }
+                viewBinding.arFaceOverlayView.updateHandResults(mapped, inputWidth, inputHeight, isFront)
+
+                val primaryGesture = hands.firstOrNull()?.gesture
+                val isActionableGesture = primaryGesture == "PEACE_SIGN" || primaryGesture == "THUMBS_UP" || primaryGesture == "OPEN_PALM"
+                val nowMs = System.currentTimeMillis()
+                if (isHandGestureTriggerEnabled && isActionableGesture && primaryGesture != null) {
+                    if (primaryGesture != lastStableHandGesture) {
+                        lastStableHandGesture = primaryGesture
+                        stableHandGestureStartMs = nowMs
+                        stableHandGestureFired = false
+                    }
+                    val dwellDurationMs = 350L
+                    val elapsedMs = (nowMs - stableHandGestureStartMs).coerceAtLeast(0L)
+                    val inCooldown = (nowMs - lastHandGestureTriggerMs) <= 2400L
+                    if (!stableHandGestureFired && !inCooldown) {
+                        val progress = (elapsedMs.toFloat() / dwellDurationMs.toFloat()).coerceIn(0f, 1f)
+                        viewBinding.arFaceOverlayView.updateHandGestureDwell(progress, "HOLD ${primaryGesture.replace("_", " ")}")
+                        if (elapsedMs >= dwellDurationMs) {
+                            stableHandGestureFired = true
+                            lastHandGestureTriggerMs = nowMs
+                            viewBinding.arFaceOverlayView.updateHandGestureDwell(0f, "")
+                            runOnUiThread {
+                                val hapticConst = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                                    HapticFeedbackConstants.CONFIRM
+                                } else {
+                                    HapticFeedbackConstants.LONG_PRESS
+                                }
+                                viewBinding.arFaceOverlayView.performHapticFeedback(hapticConst)
+                                when (primaryGesture) {
+                                    "PEACE_SIGN" -> {
+                                        showHudNotice("Peace Gesture -> Capturing Photo")
+                                        takePhoto()
+                                    }
+                                    "THUMBS_UP" -> {
+                                        showHudNotice("Thumbs Up -> Comic SFX Burst")
+                                        if (!isAudioMuted) {
+                                            comicSfxHelper?.playComicBurst(comicSfxPow, comicSfxBam, comicSfxZap, 0.75f, isAudioMuted)
+                                        }
+                                    }
+                                    "OPEN_PALM" -> {
+                                        showHudNotice("Open Palm -> Hand AR Aura Boost")
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        viewBinding.arFaceOverlayView.updateHandGestureDwell(0f, "")
+                    }
+                } else {
+                    lastStableHandGesture = ""
+                    stableHandGestureStartMs = 0L
+                    stableHandGestureFired = false
+                    viewBinding.arFaceOverlayView.updateHandGestureDwell(0f, "")
+                }
+            }
+
+            override fun onHandTrackingNotice(message: String) {
+                Log.w(TAG, "HandLandmarker notice: $message")
+            }
+        })
+        poseLandmarkerHelper = PoseLandmarkerHelper(this, object : PoseLandmarkerHelper.PoseLandmarkerListener {
+            override fun onPoseDetected(
+                landmarks: List<PointF>,
+                stance: String,
+                segmentationMask: Bitmap?,
+                inputWidth: Int,
+                inputHeight: Int
+            ) {
+                val isFront = (lensFacing == CameraSelector.DEFAULT_FRONT_CAMERA)
+                viewBinding.arFaceOverlayView.updateBodyPoseResults(
+                    landmarks = landmarks,
+                    stance = stance,
+                    segMask = segmentationMask,
+                    imgW = inputWidth,
+                    imgH = inputHeight,
+                    isFront = isFront
+                )
+
+                // Tweak 4: Hands-Free Full-Body Pose Triggers (0.55s anti-accidental dwell + haptic confirm)
+                val isActionableStance = landmarks.size >= 33 && (stance == "ARMS_RAISED" || stance == "T_POSE")
+                val nowMs = System.currentTimeMillis()
+                if (isBodyPoseTriggerEnabled && isActionableStance) {
+                    if (stance != lastStableBodyStance) {
+                        lastStableBodyStance = stance
+                        stableBodyStanceStartMs = nowMs
+                        stableBodyStanceFired = false
+                    }
+                    val dwellDurationMs = 550L
+                    val elapsedMs = (nowMs - stableBodyStanceStartMs).coerceAtLeast(0L)
+                    val inCooldown = (nowMs - lastBodyPoseTriggerMs) <= 3200L
+                    if (!stableBodyStanceFired && !inCooldown) {
+                        val progress = (elapsedMs.toFloat() / dwellDurationMs.toFloat()).coerceIn(0f, 1f)
+                        val prompt = if (stance == "ARMS_RAISED") "HOLD ARMS UP · PHOTO" else "HOLD T-POSE · NEXT"
+                        viewBinding.arFaceOverlayView.updateBodyPoseDwell(progress, prompt)
+                        if (elapsedMs >= dwellDurationMs) {
+                            stableBodyStanceFired = true
+                            lastBodyPoseTriggerMs = nowMs
+                            viewBinding.arFaceOverlayView.updateBodyPoseDwell(0f, "")
+                            runOnUiThread {
+                                val hapticConst = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                                    HapticFeedbackConstants.CONFIRM
+                                } else {
+                                    HapticFeedbackConstants.LONG_PRESS
+                                }
+                                viewBinding.arFaceOverlayView.performHapticFeedback(hapticConst)
+                                if (stance == "ARMS_RAISED") {
+                                    showHudNotice("Arms Raised -> Hands-Free Photo!")
+                                    takePhoto()
+                                } else if (stance == "T_POSE") {
+                                    val cycle = listOf("cyber_angel", "hero_cape", "mecha_armor", "celestial_stardust", "chroma_studio")
+                                    val curIdx = cycle.indexOf(viewBinding.arFaceOverlayView.bodyPresetId)
+                                    val nextId = cycle[(curIdx + 1) % cycle.size]
+                                    viewBinding.arFaceOverlayView.applyBodyArPreset(nextId)
+                                    showHudNotice("T-Pose -> Body AR: ${nextId.replace("_", " ").uppercase()}")
+                                }
+                            }
+                        }
+                    } else {
+                        viewBinding.arFaceOverlayView.updateBodyPoseDwell(0f, "")
+                    }
+                } else {
+                    lastStableBodyStance = ""
+                    stableBodyStanceStartMs = 0L
+                    stableBodyStanceFired = false
+                    viewBinding.arFaceOverlayView.updateBodyPoseDwell(0f, "")
+                }
+            }
+
+            override fun onPoseTrackingNotice(message: String) {
+                Log.w(TAG, "PoseLandmarker notice: $message")
+            }
+        })
+        worldArTracker = WorldArTracker(this, object : WorldArTracker.WorldOrientationListener {
+            override fun onOrientationUpdated(
+                pitchDeg: Float,
+                yawDeltaDeg: Float,
+                rollDeg: Float,
+                detectedSurface: String
+            ) {
+                viewBinding.arFaceOverlayView.updateWorldOrientation(
+                    pitchDeg = pitchDeg,
+                    yawDeltaDeg = yawDeltaDeg,
+                    rollDeg = rollDeg,
+                    detectedSurface = detectedSurface
+                )
+            }
+        })
         viewBinding.arFaceOverlayView.onComicFaceAcquired = {
             if (!isAudioMuted) {
                 comicSfxHelper?.playComicBurst(comicSfxPow, comicSfxBam, comicSfxZap, 0.55f, isAudioMuted)
@@ -668,6 +882,7 @@ class MainActivity : AppCompatActivity() {
         rotationSensor?.let {
             sensorManager.registerListener(sensorEventListener, it, SensorManager.SENSOR_DELAY_UI)
         }
+        syncWorldArLifecycleAndPower()
         syncStylizeLoopState()
     }
 
@@ -684,7 +899,22 @@ class MainActivity : AppCompatActivity() {
         if (::gyroStabilizer.isInitialized) {
             gyroStabilizer.unregister()
         }
+        worldArTracker?.stop()
         sensorManager.unregisterListener(sensorEventListener)
+    }
+
+    private fun syncWorldArLifecycleAndPower() {
+        val ecoLowPower = ::ecoPowerManager.isInitialized && ecoPowerManager.isEcoActive
+        val thermalLowPower = ::thermalGuardManager.isInitialized && thermalGuardManager.isThrottled
+        worldArTracker?.setLowPowerMode(ecoLowPower || thermalLowPower)
+
+        val arHardBlocked = (::ecoPowerManager.isInitialized && ecoPowerManager.isArDisabled) ||
+            (::thermalGuardManager.isInitialized && thermalGuardManager.isArDisabled)
+        if (viewBinding.arFaceOverlayView.worldArEnabled && !arHardBlocked) {
+            worldArTracker?.start()
+        } else {
+            worldArTracker?.stop()
+        }
     }
 
     private fun applyEcoPolicy(policy: EcoPowerManager.EcoPolicy) {
@@ -746,6 +976,7 @@ class MainActivity : AppCompatActivity() {
             }
             showHudNotice("POWER RESTORED (${policy.batteryPercent}%): Full ImageAnalysis & AR Active")
         }
+        syncWorldArLifecycleAndPower()
         syncStylizeLoopState()
     }
 
@@ -810,6 +1041,7 @@ class MainActivity : AppCompatActivity() {
             }
             showHudNotice("THERMAL NOMINAL: Full CameraX Analysis & Capture Resolution Restored")
         }
+        syncWorldArLifecycleAndPower()
         syncStylizeLoopState()
     }
 
@@ -1985,8 +2217,57 @@ class MainActivity : AppCompatActivity() {
                     val thermalBlocksAr = ::thermalGuardManager.isInitialized && thermalGuardManager.isArDisabled
                     val needsFaceTracking = !ecoBlocksAr && !thermalBlocksAr && ((viewBinding.arFaceOverlayView.currentLens != ARFaceOverlayView.ArLensMode.NONE &&
                         viewBinding.arFaceOverlayView.currentLens != ARFaceOverlayView.ArLensMode.COMIC_FRAME) ||
+                        viewBinding.arFaceOverlayView.faceBeautyEnabled ||
                         viewBinding.arFaceOverlayView.enableComicOnomatopoeia ||
                         viewBinding.arFaceOverlayView.enableComicSpeechBubble)
+
+                    // 4B. Phase 2: MediaPipe 21-Point Hand AR Tracking (alternating frames to preserve 60fps & thermals)
+                    val needsHandTracking = !ecoBlocksAr && !thermalBlocksAr &&
+                        (viewBinding.arFaceOverlayView.handArEnabled || (cameraMode == CameraMode.AR_LENS && isHandGestureTriggerEnabled))
+                    if (needsHandTracking && analysisFrameCounter % 2 == 1) {
+                        val hm = handLandmarkerHelper
+                        if (hm != null && hm.isReady && !hm.isFailed) {
+                            try {
+                                val rawHandBmp = imageProxy.toBitmap()
+                                val rot = imageProxy.imageInfo.rotationDegrees
+                                val maxDim = Math.max(rawHandBmp.width, rawHandBmp.height).coerceAtLeast(1)
+                                val downScale = if (maxDim > 384) (384f / maxDim.toFloat()) else 1f
+                                val m = Matrix().apply {
+                                    if (downScale < 1f) postScale(downScale, downScale)
+                                    if (rot != 0) postRotate(rot.toFloat())
+                                }
+                                val handInputBmp = Bitmap.createBitmap(rawHandBmp, 0, 0, rawHandBmp.width, rawHandBmp.height, m, true)
+                                if (handInputBmp != rawHandBmp) rawHandBmp.recycle()
+                                hm.analyzeRotatedBitmap(handInputBmp, 0)
+                            } catch (handErr: Throwable) {
+                                Log.w(TAG, "HandLandmarker frame skipped", handErr)
+                            }
+                        }
+                    }
+
+                    // 4C. Phase 3: MediaPipe 33-Point Body Pose & Segmentation Tracking (round-robin frame scheduling for 60fps & Moto Edge 60 Pro thermals)
+                    val needsBodyTracking = !ecoBlocksAr && !thermalBlocksAr && viewBinding.arFaceOverlayView.bodyArEnabled
+                    val bodyFrameSlot = if (needsHandTracking) (analysisFrameCounter % 3 == 2) else (analysisFrameCounter % 2 == 1)
+                    if (needsBodyTracking && bodyFrameSlot) {
+                        val pm = poseLandmarkerHelper
+                        if (pm != null && pm.isReady && !pm.isFailed) {
+                            try {
+                                val rawBodyBmp = imageProxy.toBitmap()
+                                val rot = imageProxy.imageInfo.rotationDegrees
+                                val maxDim = Math.max(rawBodyBmp.width, rawBodyBmp.height).coerceAtLeast(1)
+                                val downScale = if (maxDim > 384) (384f / maxDim.toFloat()) else 1f
+                                val m = Matrix().apply {
+                                    if (downScale < 1f) postScale(downScale, downScale)
+                                    if (rot != 0) postRotate(rot.toFloat())
+                                }
+                                val bodyInputBmp = Bitmap.createBitmap(rawBodyBmp, 0, 0, rawBodyBmp.width, rawBodyBmp.height, m, true)
+                                if (bodyInputBmp != rawBodyBmp) rawBodyBmp.recycle()
+                                pm.analyzeRotatedBitmap(bodyInputBmp, 0)
+                            } catch (bodyErr: Throwable) {
+                                Log.w(TAG, "PoseLandmarker frame skipped", bodyErr)
+                            }
+                        }
+                    }
 
                     if (needsFaceTracking) {
                         val fm = faceMeshHelper
@@ -2401,7 +2682,11 @@ class MainActivity : AppCompatActivity() {
      * 2. Photo Pro Mode: Long-press Shutter for Burst Mode
      */
     private fun setupBurstMode() {
-        viewBinding.btnCapture.setOnTouchListener { _, event ->
+        viewBinding.btnCapture.setOnTouchListener { v, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> v.animate().scaleX(0.92f).scaleY(0.92f).setDuration(75L).start()
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> v.animate().scaleX(1f).scaleY(1f).setDuration(90L).start()
+            }
             if (cameraMode == CameraMode.PANORAMA) {
                 if (event.action == MotionEvent.ACTION_UP) {
                     togglePanoramaCapture()
@@ -2409,10 +2694,17 @@ class MainActivity : AppCompatActivity() {
                 return@setOnTouchListener true
             }
             if (cameraMode == CameraMode.AR_LENS) {
-                // AR LENS Mode: Tap (< 1000ms) captures AR Photo; Hold (>= 1000ms) records AR Video until release
+                // AR LENS Mode: Tap (< 500ms) -> Photo; Hold (>= 500ms) -> AR Video; Slide UP while holding -> Lock Hands-Free!
                 when (event.action) {
                     MotionEvent.ACTION_DOWN -> {
+                        if (recording != null && isArRecordingLocked) {
+                            arStopOnShutterUp = true
+                            return@setOnTouchListener true
+                        }
+                        arStopOnShutterUp = false
                         isArHoldRecording = false
+                        isArRecordingLocked = false
+                        arTouchDownRawY = event.rawY
                         arHoldRunnable?.let { arHoldHandler.removeCallbacks(it) }
                         arHoldRunnable = Runnable {
                             if (cameraMode == CameraMode.AR_LENS && recording == null && !isCountingDown) {
@@ -2420,21 +2712,55 @@ class MainActivity : AppCompatActivity() {
                                 window.decorView.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
                                 viewBinding.arLensModeDock.root.visibility = View.GONE
                                 viewBinding.arCalibrationDrawer.visibility = View.GONE
+                                viewBinding.tvArRecLockBadge.translationY = 0f
+                                viewBinding.tvArRecLockBadge.text = "▲ SLIDE UP TO LOCK"
+                                viewBinding.tvArRecLockBadge.setTextColor(Color.parseColor("#FACC15"))
+                                viewBinding.tvArRecLockBadge.visibility = View.VISIBLE
                                 captureVideo()
                             }
                         }
-                        arHoldHandler.postDelayed(arHoldRunnable!!, 1000L)
+                        arHoldHandler.postDelayed(arHoldRunnable!!, 500L)
+                        return@setOnTouchListener true
+                    }
+                    MotionEvent.ACTION_MOVE -> {
+                        if (isArHoldRecording && !isArRecordingLocked) {
+                            val slideUpPx = arTouchDownRawY - event.rawY
+                            val lockThresholdPx = 56f * resources.displayMetrics.density
+                            viewBinding.tvArRecLockBadge.translationY = -slideUpPx.coerceIn(0f, lockThresholdPx) * 0.45f
+                            if (slideUpPx >= lockThresholdPx) {
+                                isArRecordingLocked = true
+                                window.decorView.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                                viewBinding.tvArRecLockBadge.translationY = 0f
+                                viewBinding.tvArRecLockBadge.text = "LOCKED · TAP SHUTTER TO STOP"
+                                viewBinding.tvArRecLockBadge.setTextColor(Color.parseColor("#34D399"))
+                                viewBinding.tvRecordingStatus.text = "AR REC · LOCK"
+                                viewBinding.btnPauseResume.visibility = View.VISIBLE
+                                showHudNotice("AR Video Locked · Hands-Free")
+                            }
+                        }
                         return@setOnTouchListener true
                     }
                     MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                         arHoldRunnable?.let { arHoldHandler.removeCallbacks(it) }
                         arHoldRunnable = null
-                        if (isArHoldRecording) {
+                        viewBinding.tvArRecLockBadge.translationY = 0f
+                        if (arStopOnShutterUp) {
+                            arStopOnShutterUp = false
+                            isArRecordingLocked = false
                             isArHoldRecording = false
+                            viewBinding.tvArRecLockBadge.visibility = View.GONE
                             if (recording != null) {
                                 captureVideo()
                             }
-                        } else if (event.action == MotionEvent.ACTION_UP && recording == null) {
+                        } else if (isArRecordingLocked) {
+                            // Keep recording hands-free after thumb lifts
+                        } else if (isArHoldRecording || recording != null) {
+                            isArHoldRecording = false
+                            viewBinding.tvArRecLockBadge.visibility = View.GONE
+                            if (recording != null) {
+                                captureVideo()
+                            }
+                        } else if (event.action == MotionEvent.ACTION_UP) {
                             onShutterClicked()
                         }
                         return@setOnTouchListener true
@@ -2467,14 +2793,14 @@ class MainActivity : AppCompatActivity() {
                     return@setOnTouchListener true
                 }
 
-                MotionEvent.ACTION_UP -> {
-                    burstHandler.removeCallbacks(burstRunnable!!)
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    burstRunnable?.let { burstHandler.removeCallbacks(it) }
                     if (isBurstCapturing) {
                         // Conclude burst capture
                         isBurstCapturing = false
                         viewBinding.tvBurstBadge.visibility = View.GONE
                         Toast.makeText(this, "Captured $burstCount burst photos!", Toast.LENGTH_SHORT).show()
-                    } else {
+                    } else if (event.action == MotionEvent.ACTION_UP) {
                         // Standard single photo tap (with countdown if enabled)
                         onShutterClicked()
                     }
@@ -5825,15 +6151,18 @@ class MainActivity : AppCompatActivity() {
                         isRecordingPaused = false
                         viewBinding.btnCapture.setImageResource(R.drawable.bg_record_button_active)
                         viewBinding.recordingTimer.visibility = View.VISIBLE
-                        viewBinding.tvRecordingStatus.text = if (cameraMode == CameraMode.AR_LENS) "AR REC" else "REC"
+                        viewBinding.tvRecordingStatus.text = if (cameraMode == CameraMode.AR_LENS) {
+                            if (isArRecordingLocked) "AR REC · LOCK" else "AR REC"
+                        } else "REC"
                         viewBinding.tvRecordingStatus.setTextColor(Color.parseColor("#EF4444"))
                         viewBinding.recordingDot.visibility = View.VISIBLE
-                        viewBinding.btnPauseResume.visibility = if (cameraMode == CameraMode.AR_LENS) View.GONE else View.VISIBLE
+                        viewBinding.btnPauseResume.visibility = if (cameraMode == CameraMode.AR_LENS && !isArRecordingLocked) View.GONE else View.VISIBLE
                         viewBinding.btnGallery.visibility = View.VISIBLE
                         viewBinding.btnPauseResume.setImageResource(R.drawable.ic_pause)
                         if (cameraMode == CameraMode.AR_LENS) {
                             viewBinding.arLensModeDock.root.visibility = View.GONE
                             viewBinding.arCalibrationDrawer.visibility = View.GONE
+                            viewBinding.tvArRecLockBadge.visibility = View.VISIBLE
                         }
 
                         // Reset stopped offset and start chronometer from 00:00
@@ -5880,6 +6209,10 @@ class MainActivity : AppCompatActivity() {
                         playCameraCue(ToneGenerator.TONE_PROP_BEEP, 110)
                         stopAutoLoopTicker()
                         isArHoldRecording = false
+                        isArRecordingLocked = false
+                        arStopOnShutterUp = false
+                        viewBinding.tvArRecLockBadge.visibility = View.GONE
+                        viewBinding.tvArRecLockBadge.translationY = 0f
                         openGLProcessor?.updateOverlayBitmap(null)
                         viewBinding.chronometer.stop()
                         timeWhenStopped = 0L
@@ -5890,7 +6223,7 @@ class MainActivity : AppCompatActivity() {
                             viewBinding.tvRecordingStatus.setTextColor(Color.parseColor("#E879F9"))
                             viewBinding.recordingDot.setBackgroundResource(R.drawable.bg_green_dot)
                             viewBinding.recordingDot.visibility = View.VISIBLE
-                            viewBinding.chronometer.text = "TAP PHOTO · HOLD 1S VID"
+                            viewBinding.chronometer.text = "TAP PHOTO · HOLD 0.5S VID"
                             viewBinding.chronometer.setTextColor(Color.parseColor("#F0ABFC"))
                             viewBinding.btnCapture.setImageResource(R.drawable.bg_shutter_button)
                             viewBinding.arLensModeDock.root.visibility = View.VISIBLE
@@ -7010,6 +7343,10 @@ class MainActivity : AppCompatActivity() {
             arHoldRunnable?.let { arHoldHandler.removeCallbacks(it) }
             arHoldRunnable = null
             isArHoldRecording = false
+            isArRecordingLocked = false
+            arStopOnShutterUp = false
+            viewBinding.tvArRecLockBadge.visibility = View.GONE
+            viewBinding.tvArRecLockBadge.translationY = 0f
             if (currentArLensName != "none") {
                 lastActiveArLensName = currentArLensName
             }
@@ -7026,13 +7363,14 @@ class MainActivity : AppCompatActivity() {
         nightExposureStacker.clearDarkEpisodeLock()
         viewBinding.proOverlayView.isNightModeHudActive = (mode == CameraMode.NIGHT || currentShootingEffect == "night_sight")
         isLastActionCreative = false
-        showHudNotice(if (mode == CameraMode.AR_LENS) "AR LENS · Tap Photo · Hold 1s Video" else "Mode: ${getModeLabel(mode)}")
+        showHudNotice(if (mode == CameraMode.AR_LENS) "AR LENS · Tap Photo · Hold 0.5s Video" else "Mode: ${getModeLabel(mode)}")
         viewBinding.proOverlayView.isPanoramaModeActive = (mode == CameraMode.PANORAMA)
 
         updateModeCarouselSlots(animated = true, slideDirection = slideDirection)
 
         val isVideoType = mode == CameraMode.VIDEO || mode == CameraMode.SLOW_MO
         viewBinding.recordingTimer.visibility = View.VISIBLE
+        viewBinding.zoomControls.visibility = if (mode == CameraMode.AR_LENS) View.GONE else View.VISIBLE
         if (mode == CameraMode.AR_LENS) {
             viewBinding.effectsStudioDrawer.root.visibility = View.GONE
             viewBinding.proStudioDrawer.root.visibility = View.GONE
@@ -7046,7 +7384,7 @@ class MainActivity : AppCompatActivity() {
             viewBinding.recordingDot.visibility = View.VISIBLE
             viewBinding.tvRecordingStatus.text = "AR LENS"
             viewBinding.tvRecordingStatus.setTextColor(Color.parseColor("#E879F9"))
-            viewBinding.chronometer.text = "TAP PHOTO · HOLD 1S VID"
+            viewBinding.chronometer.text = "TAP PHOTO · HOLD 0.5S VID"
             viewBinding.chronometer.setTextColor(Color.parseColor("#F0ABFC"))
             val restoreLens = if (lastActiveArLensName == "none") "cyberpunk_visor" else lastActiveArLensName
             setArLens(restoreLens, showNotice = false)
@@ -7270,16 +7608,34 @@ class MainActivity : AppCompatActivity() {
     private fun navigateNextArLens() {
         val currentIdx = arLensOrder.indexOf(currentArLensName)
         val safeIdx = if (currentIdx >= 0) currentIdx else 0
-        val nextIdx = (safeIdx + 1) % arLensOrder.size
-        setArLens(arLensOrder[nextIdx])
+        // At 'none' (index 0): swiping left exits AR Lens mode to the next camera mode
+        if (safeIdx == 0) {
+            navigateNextCameraMode()
+            return
+        }
+        val nextIdx = if (safeIdx + 1 >= arLensOrder.size) 0 else safeIdx + 1
+        val targetLens = arLensOrder[nextIdx]
+        setArLens(targetLens, showNotice = targetLens != "none")
+        if (targetLens == "none") {
+            showHudNotice("AR LENS: NONE · Swipe left to exit AR mode")
+        }
         window.decorView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
     }
 
     private fun navigatePreviousArLens() {
         val currentIdx = arLensOrder.indexOf(currentArLensName)
         val safeIdx = if (currentIdx >= 0) currentIdx else 0
-        val prevIdx = if (safeIdx <= 0) arLensOrder.size - 1 else safeIdx - 1
-        setArLens(arLensOrder[prevIdx])
+        // Right swipe steps backward toward 'none'; once already at 'none', exits AR mode to previous camera mode
+        if (safeIdx == 0) {
+            navigatePreviousCameraMode()
+            return
+        }
+        val prevIdx = (safeIdx - 1).coerceAtLeast(0)
+        val targetLens = arLensOrder[prevIdx]
+        setArLens(targetLens, showNotice = targetLens != "none")
+        if (targetLens == "none") {
+            showHudNotice("AR LENS: NONE · Swipe left to exit AR mode")
+        }
         window.decorView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
     }
 
@@ -7364,6 +7720,14 @@ class MainActivity : AppCompatActivity() {
         } else {
             CameraSelector.DEFAULT_BACK_CAMERA
         }
+        viewBinding.arFaceOverlayView.clearHandLandmarks()
+        viewBinding.arFaceOverlayView.clearBodyPose()
+        lastStableBodyStance = ""
+        stableBodyStanceStartMs = 0L
+        stableBodyStanceFired = false
+        lastStableHandGesture = ""
+        stableHandGestureStartMs = 0L
+        stableHandGestureFired = false
         bindCameraUseCases()
     }
 
@@ -7376,9 +7740,134 @@ class MainActivity : AppCompatActivity() {
         imageCapture?.flashMode = flashMode
     }
 
+    private fun handleTwoFingerArGesture(event: MotionEvent, view: View): Boolean {
+        val anyTwoFingerEnabled = twoFingerPinchEnabled || twoFingerRotateEnabled || twoFingerDragEnabled
+        if (cameraMode != CameraMode.AR_LENS || currentArLensName == "none" || !anyTwoFingerEnabled) {
+            if (isTwoFingerArAdjusting) {
+                isTwoFingerArAdjusting = false
+                arGesturePointerId1 = MotionEvent.INVALID_POINTER_ID
+                arGesturePointerId2 = MotionEvent.INVALID_POINTER_ID
+            }
+            return false
+        }
+
+        when (event.actionMasked) {
+            MotionEvent.ACTION_POINTER_DOWN -> {
+                if (event.pointerCount == 2) {
+                    arGesturePointerId1 = event.getPointerId(0)
+                    arGesturePointerId2 = event.getPointerId(1)
+                    val x1 = event.getX(0)
+                    val y1 = event.getY(0)
+                    val x2 = event.getX(1)
+                    val y2 = event.getY(1)
+                    arGestureStartMidX = (x1 + x2) * 0.5f
+                    arGestureStartMidY = (y1 + y2) * 0.5f
+                    arGestureStartDist = Math.hypot((x2 - x1).toDouble(), (y2 - y1).toDouble()).toFloat().coerceAtLeast(24f)
+                    arGestureStartAngle = Math.atan2((y2 - y1).toDouble(), (x2 - x1).toDouble())
+                    arGestureOrigOffsetX = calibOffsetX
+                    arGestureOrigOffsetY = calibOffsetY
+                    arGestureOrigScale = calibScale
+                    arGestureOrigRotDeg = calibRotDeg
+                    isTwoFingerArAdjusting = true
+                    isMultiTouchGesture = true
+                    suppressNextTapFocus = true
+                    showHudNotice(
+                        String.format(
+                            Locale.US,
+                            "2-FINGER AR · %.2fx · %+d,%+dpx · %+d°",
+                            calibScale,
+                            (calibOffsetX * 600f).roundToInt(),
+                            (calibOffsetY * 600f).roundToInt(),
+                            calibRotDeg.roundToInt()
+                        )
+                    )
+                    return true
+                }
+            }
+            MotionEvent.ACTION_MOVE -> {
+                if (isTwoFingerArAdjusting && event.pointerCount >= 2) {
+                    val idx1 = event.findPointerIndex(arGesturePointerId1)
+                    val idx2 = event.findPointerIndex(arGesturePointerId2)
+                    if (idx1 >= 0 && idx2 >= 0) {
+                        val x1 = event.getX(idx1)
+                        val y1 = event.getY(idx1)
+                        val x2 = event.getX(idx2)
+                        val y2 = event.getY(idx2)
+                        val midX = (x1 + x2) * 0.5f
+                        val midY = (y1 + y2) * 0.5f
+                        val dist = Math.hypot((x2 - x1).toDouble(), (y2 - y1).toDouble()).toFloat().coerceAtLeast(16f)
+                        val angle = Math.atan2((y2 - y1).toDouble(), (x2 - x1).toDouble())
+
+                        val vw = view.width.coerceAtLeast(1).toFloat()
+                        val vh = view.height.coerceAtLeast(1).toFloat()
+
+                        // 1. Place adjust (two-finger drag)
+                        if (twoFingerDragEnabled) {
+                            val deltaNormX = ((midX - arGestureStartMidX) / vw) * twoFingerDragSensitivity
+                            val deltaNormY = ((midY - arGestureStartMidY) / vh) * twoFingerDragSensitivity
+                            calibOffsetX = (arGestureOrigOffsetX + deltaNormX).coerceIn(-0.25f, 0.25f)
+                            calibOffsetY = (arGestureOrigOffsetY + deltaNormY).coerceIn(-0.25f, 0.25f)
+                        }
+
+                        // 2. Size adjust (two-finger pinch)
+                        if (twoFingerPinchEnabled) {
+                            val rawRatio = dist / arGestureStartDist
+                            val weightedRatio = (1.0f + (rawRatio - 1.0f) * twoFingerPinchSensitivity).coerceIn(0.25f, 4.0f)
+                            calibScale = (arGestureOrigScale * weightedRatio).coerceIn(0.5f, 2.0f)
+                        }
+
+                        // 3. 3D Orientation / Tilt adjust (two-finger rotate)
+                        if (twoFingerRotateEnabled) {
+                            var dRad = angle - arGestureStartAngle
+                            while (dRad > Math.PI) dRad -= (2.0 * Math.PI)
+                            while (dRad < -Math.PI) dRad += (2.0 * Math.PI)
+                            val dirSign = if (invertTwoFingerRotate) -1f else 1f
+                            val dDeg = Math.toDegrees(dRad).toFloat() * twoFingerRotateSensitivity * dirSign
+                            calibRotDeg = (arGestureOrigRotDeg + dDeg).coerceIn(-45f, 45f)
+                        }
+
+                        pushArCalibrationToOverlay()
+                        syncArDockFromCalibration()
+                        showHudNotice(
+                            String.format(
+                                Locale.US,
+                                "2-FINGER AR · %.2fx · %+d,%+dpx · %+d°",
+                                calibScale,
+                                (calibOffsetX * 600f).roundToInt(),
+                                (calibOffsetY * 600f).roundToInt(),
+                                calibRotDeg.roundToInt()
+                            )
+                        )
+                        return true
+                    }
+                }
+            }
+            MotionEvent.ACTION_POINTER_UP, MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                if (isTwoFingerArAdjusting) {
+                    val remaining = if (event.actionMasked == MotionEvent.ACTION_POINTER_UP) event.pointerCount - 1 else 0
+                    if (remaining < 2) {
+                        isTwoFingerArAdjusting = false
+                        arGesturePointerId1 = MotionEvent.INVALID_POINTER_ID
+                        arGesturePointerId2 = MotionEvent.INVALID_POINTER_ID
+                        viewBinding.sbCalibOffsetX.progress = ((calibOffsetX * 600f).roundToInt() + 150).coerceIn(0, 300)
+                        viewBinding.sbCalibOffsetY.progress = ((calibOffsetY * 600f).roundToInt() + 150).coerceIn(0, 300)
+                        viewBinding.sbCalibScale.progress = (((calibScale - 0.5f) / 1.5f) * 100f).roundToInt().coerceIn(0, 100)
+                        viewBinding.sbCalibRotation.progress = (calibRotDeg.roundToInt() + 45).coerceIn(0, 90)
+                        syncArDockFromCalibration()
+                    }
+                    return true
+                }
+            }
+        }
+        return isTwoFingerArAdjusting
+    }
+
     private fun setupViewfinderGestures() {
         val scaleGestureDetector = ScaleGestureDetector(this, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
             override fun onScale(detector: ScaleGestureDetector): Boolean {
+                if (cameraMode == CameraMode.AR_LENS && currentArLensName != "none") {
+                    return true
+                }
                 val currentZoomRatio = camera?.cameraInfo?.zoomState?.value?.zoomRatio ?: 1f
                 cameraControl?.setZoomRatio(currentZoomRatio * detector.scaleFactor)
                 return true
@@ -7395,6 +7884,17 @@ class MainActivity : AppCompatActivity() {
                     val nextRot = (viewBinding.proOverlayView.spiralOrientation + 1) % 4
                     setSpiralOrientation(nextRot)
                     window.decorView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                }
+
+                // Phase 4 World AR: Tap-to-Place 3D world anchor onto detected floor/wall surface
+                if (viewBinding.arFaceOverlayView.worldArEnabled) {
+                    val placed = viewBinding.arFaceOverlayView.placeWorldAnchorAtScreenPoint(e.x, e.y)
+                    if (placed != null) {
+                        window.decorView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                        playCameraCue(ToneGenerator.TONE_PROP_ACK, 40)
+                        showHudNotice("World Anchor: ${placed.objectType.name.replace("_", " ")} (${String.format(Locale.US, "%.2fm", placed.distanceM)})")
+                        return true
+                    }
                 }
 
                 
@@ -7426,6 +7926,9 @@ class MainActivity : AppCompatActivity() {
         })
 
         viewBinding.proOverlayView.setOnTouchListener { view, event ->
+            if (handleTwoFingerArGesture(event, view)) {
+                return@setOnTouchListener true
+            }
             if (viewBinding.arFaceOverlayView.handleArTextTouch(event)) {
                 return@setOnTouchListener true
             }
@@ -7625,8 +8128,10 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
 
-                // Clean tap outside open drawers -> dismiss drawer without leaking tap
-                if (!isMultiTouchGesture && Math.abs(diffX) < 22 && Math.abs(diffY) < 22) {
+                // Clean tap outside open drawers -> dismiss drawer without blocking shutter/record bar
+                if (!isMultiTouchGesture && Math.abs(diffX) < 22 && Math.abs(diffY) < 22 &&
+                    !isPointInView(viewBinding.bottomControls, ev.rawX, ev.rawY)
+                ) {
                     var closedDrawer = false
                     if (viewBinding.proStudioDrawer.root.visibility == View.VISIBLE &&
                         !isPointInView(viewBinding.proStudioDrawer.root, ev.rawX, ev.rawY) &&
@@ -8066,6 +8571,128 @@ class MainActivity : AppCompatActivity() {
         window.decorView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
     }
 
+    private val faceLipSwatches = listOf("#DC264B", "#C84B66", "#B91C1C", "#7C3AED", "#B45309", "#EC4899")
+    private val faceIrisSwatches = listOf("#00F0FF", "#10B981", "#F59E0B", "#8B5CF6", "#38BDF8", "#F43F5E")
+    private var faceLipSwatchIdx = 0
+    private var faceIrisSwatchIdx = 0
+
+    private fun loadCustomFaceMaskFromUri(uri: Uri) {
+        try {
+            val rawBmp = contentResolver.openInputStream(uri)?.use { stream ->
+                BitmapFactory.decodeStream(stream)
+            } ?: run {
+                showHudNotice("Could not decode mask image", isWarning = true)
+                return
+            }
+            val maxDim = 768
+            val scaled = if (rawBmp.width > maxDim || rawBmp.height > maxDim) {
+                val ratio = minOf(maxDim.toFloat() / rawBmp.width, maxDim.toFloat() / rawBmp.height)
+                val out = Bitmap.createScaledBitmap(
+                    rawBmp,
+                    (rawBmp.width * ratio).toInt().coerceAtLeast(64),
+                    (rawBmp.height * ratio).toInt().coerceAtLeast(64),
+                    true
+                )
+                if (out != rawBmp) rawBmp.recycle()
+                out
+            } else {
+                rawBmp
+            }
+            viewBinding.arFaceOverlayView.setCustomFaceMaskBitmap(scaled)
+            updateFaceBeautyPresetUi()
+            showHudNotice("Loaded Custom PNG Face Mask")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to load custom PNG face mask", e)
+            showHudNotice("Mask load error: ${e.localizedMessage ?: "I/O"}", isWarning = true)
+        }
+    }
+
+    private fun showSaveArLookDialog() {
+        val input = android.widget.EditText(this).apply {
+            hint = "Look name (e.g. Cyber Glam)"
+            setTextColor(Color.WHITE)
+            setHintTextColor(Color.parseColor("#94A3B8"))
+            setPadding(36, 24, 36, 24)
+        }
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Save Custom AR Look")
+            .setMessage("Saves current AR lens, Face AR makeup, mask & calibration to this device.")
+            .setView(input)
+            .setPositiveButton("Save") { _, _ ->
+                val name = input.text?.toString()?.trim().orEmpty().ifEmpty {
+                    "AR Look ${System.currentTimeMillis() % 1000}"
+                }
+                val prefs = getSharedPreferences("camerax_saved_ar_effects_v1", Context.MODE_PRIVATE)
+                val existing = try { org.json.JSONArray(prefs.getString("looks", "[]") ?: "[]") } catch (_: Exception) { org.json.JSONArray() }
+                val entry = JSONObject().apply {
+                    put("name", name)
+                    put("savedAt", System.currentTimeMillis())
+                    put("payload", buildArCalibrationJsonString())
+                }
+                val updated = org.json.JSONArray()
+                updated.put(entry)
+                for (i in 0 until minOf(existing.length(), 24)) {
+                    val prevObj = existing.optJSONObject(i)
+                    if (prevObj != null && prevObj.optString("name") != name) {
+                        updated.put(prevObj)
+                    }
+                }
+                prefs.edit().putString("looks", updated.toString()).apply()
+                showHudNotice("Saved AR Look: $name")
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun showLoadArLookDialog() {
+        val prefs = getSharedPreferences("camerax_saved_ar_effects_v1", Context.MODE_PRIVATE)
+        val arr = try { org.json.JSONArray(prefs.getString("looks", "[]") ?: "[]") } catch (_: Exception) { org.json.JSONArray() }
+        if (arr.length() == 0) {
+            showHudNotice("No saved looks yet — tap SAVE LOOK first")
+            return
+        }
+        val names = Array(arr.length()) { idx -> arr.optJSONObject(idx)?.optString("name", "Look #${idx + 1}") ?: "Look" }
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Saved On-Device AR Looks (${arr.length()})")
+            .setItems(names) { _, which ->
+                val item = arr.optJSONObject(which) ?: return@setItems
+                val payload = item.optString("payload", "")
+                if (payload.isNotEmpty() && applyArCalibrationJsonString(payload)) {
+                    showHudNotice("Applied: ${names[which]}")
+                }
+            }
+            .setNeutralButton("Clear All") { _, _ ->
+                prefs.edit().remove("looks").apply()
+                showHudNotice("Cleared Saved AR Looks")
+            }
+            .setNegativeButton("Close", null)
+            .show()
+    }
+
+    private fun updateFaceBeautyPresetUi() {
+        val ov = viewBinding.arFaceOverlayView
+        val activeId = if (ov.faceBeautyEnabled) ov.faceBeautyPresetId else "off"
+        val pairs = listOf(
+            viewBinding.btnFaceArOff to "off",
+            viewBinding.btnFaceArGlow to "natural_glow",
+            viewBinding.btnFaceArGlam to "red_carpet",
+            viewBinding.btnFaceArCyber to "cyber_neon",
+            viewBinding.btnFaceArKitsune to "kitsune_spirit",
+            viewBinding.btnFaceArGold to "golden_circuit"
+        )
+        for ((btn, id) in pairs) {
+            val active = activeId == id
+            btn.setBackgroundResource(if (active) R.drawable.bg_cinema_button_active else R.drawable.bg_cinema_button_inactive)
+            btn.setTextColor(Color.parseColor(if (active) "#0F172A" else "#E2E8F0"))
+        }
+        viewBinding.sbFaceBeautySmooth.progress = (ov.skinSmoothing * 100f).roundToInt().coerceIn(0, 100)
+        viewBinding.sbFaceLipOpacity.progress = (ov.lipOpacity * 100f).roundToInt().coerceIn(0, 100)
+        viewBinding.sbFaceEyeOpacity.progress = (maxOf(ov.eyeShadowOpacity, ov.eyelinerOpacity) * 100f).roundToInt().coerceIn(0, 100)
+        viewBinding.sbFaceIrisOpacity.progress = (ov.irisOpacity * 100f).roundToInt().coerceIn(0, 100)
+        viewBinding.sbFaceMaskOpacity.progress = (ov.faceMaskOpacity * 100f).roundToInt().coerceIn(0, 100)
+        viewBinding.switchFaceOcclusion.isChecked = ov.faceOcclusionEnabled
+    }
+
     private fun updateBubbleStyleButtons(activeStyle: ARFaceOverlayView.ComicSpeechBubbleStyle) {
         val btns = listOf(
             viewBinding.btnBubbleSpeech to ARFaceOverlayView.ComicSpeechBubbleStyle.SPEECH,
@@ -8138,6 +8765,37 @@ class MainActivity : AppCompatActivity() {
                 put("eyeSpacingFactor", calibEyeSpace.toDouble())
                 put("depthZ", 1.0)
             })
+            put("interactionSettings", JSONObject().apply {
+                put("twoFingerPinchEnabled", twoFingerPinchEnabled)
+                put("twoFingerPinchSensitivity", twoFingerPinchSensitivity.toDouble())
+                put("twoFingerRotateEnabled", twoFingerRotateEnabled)
+                put("twoFingerRotateSensitivity", twoFingerRotateSensitivity.toDouble())
+                put("twoFingerDragEnabled", twoFingerDragEnabled)
+                put("twoFingerDragSensitivity", twoFingerDragSensitivity.toDouble())
+                put("invertRotateDirection", invertTwoFingerRotate)
+            })
+            put("faceBeauty", JSONObject().apply {
+                put("enabled", overlay.faceBeautyEnabled)
+                put("presetId", overlay.faceBeautyPresetId)
+                put("skinSmoothing", overlay.skinSmoothing.toDouble())
+                put("faceOcclusionEnabled", overlay.faceOcclusionEnabled)
+                put("lipColor", overlay.lipColorHex)
+                put("lipOpacity", overlay.lipOpacity.toDouble())
+                put("lipGloss", overlay.lipGloss.toDouble())
+                put("eyeShadowColor", overlay.eyeShadowColorHex)
+                put("eyeShadowOpacity", overlay.eyeShadowOpacity.toDouble())
+                put("eyelinerOpacity", overlay.eyelinerOpacity.toDouble())
+                put("eyebrowColor", overlay.eyebrowColorHex)
+                put("eyebrowOpacity", overlay.eyebrowOpacity.toDouble())
+                put("blushColor", overlay.blushColorHex)
+                put("blushOpacity", overlay.blushOpacity.toDouble())
+                put("irisColor", overlay.irisColorHex)
+                put("irisOpacity", overlay.irisOpacity.toDouble())
+                put("maskPattern", overlay.faceMaskPattern)
+                put("maskOpacity", overlay.faceMaskOpacity.toDouble())
+                put("maskPrimaryColor", overlay.faceMaskPrimaryHex)
+                put("maskAccentColor", overlay.faceMaskAccentHex)
+            })
             put("debugMeshActive", calibDebug)
             put("comicOnomatopoeia", overlay.enableComicOnomatopoeia)
             put("comicSpeechBubble", JSONObject().apply {
@@ -8191,9 +8849,14 @@ class MainActivity : AppCompatActivity() {
         val paletteObj = data.optJSONObject("comicOnomatopoeiaPalette")
         val soundsObj = data.optJSONObject("comicOnomatopoeiaSounds")
 
+        val interactionObj = data.optJSONObject("interactionSettings")
+        val faceBeautyObj = data.optJSONObject("faceBeauty")
+
         val hasKnownFields = pixelOffsets != null ||
             normalizedOffsets != null ||
             transform != null ||
+            interactionObj != null ||
+            faceBeautyObj != null ||
             halftoneObj != null ||
             paletteObj != null ||
             data.has("offsetX") ||
@@ -8206,6 +8869,50 @@ class MainActivity : AppCompatActivity() {
             data.has("debugMeshActive") ||
             data.has("showMeshDebug")
         if (!hasKnownFields) return false
+
+        if (faceBeautyObj != null) {
+            val ov = viewBinding.arFaceOverlayView
+            ov.faceBeautyEnabled = faceBeautyObj.optBoolean("enabled", ov.faceBeautyEnabled)
+            ov.faceBeautyPresetId = faceBeautyObj.optString("presetId", ov.faceBeautyPresetId)
+            ov.skinSmoothing = faceBeautyObj.optDouble("skinSmoothing", ov.skinSmoothing.toDouble()).toFloat().coerceIn(0f, 1f)
+            ov.faceOcclusionEnabled = faceBeautyObj.optBoolean("faceOcclusionEnabled", ov.faceOcclusionEnabled)
+            ov.lipColorHex = parseValidHexOrFallback(faceBeautyObj.optString("lipColor"), ov.lipColorHex)
+            ov.lipOpacity = faceBeautyObj.optDouble("lipOpacity", ov.lipOpacity.toDouble()).toFloat().coerceIn(0f, 1f)
+            ov.lipGloss = faceBeautyObj.optDouble("lipGloss", ov.lipGloss.toDouble()).toFloat().coerceIn(0f, 1f)
+            ov.eyeShadowColorHex = parseValidHexOrFallback(faceBeautyObj.optString("eyeShadowColor"), ov.eyeShadowColorHex)
+            ov.eyeShadowOpacity = faceBeautyObj.optDouble("eyeShadowOpacity", ov.eyeShadowOpacity.toDouble()).toFloat().coerceIn(0f, 1f)
+            ov.eyelinerOpacity = faceBeautyObj.optDouble("eyelinerOpacity", ov.eyelinerOpacity.toDouble()).toFloat().coerceIn(0f, 1f)
+            ov.eyebrowColorHex = parseValidHexOrFallback(faceBeautyObj.optString("eyebrowColor"), ov.eyebrowColorHex)
+            ov.eyebrowOpacity = faceBeautyObj.optDouble("eyebrowOpacity", ov.eyebrowOpacity.toDouble()).toFloat().coerceIn(0f, 1f)
+            ov.blushColorHex = parseValidHexOrFallback(faceBeautyObj.optString("blushColor"), ov.blushColorHex)
+            ov.blushOpacity = faceBeautyObj.optDouble("blushOpacity", ov.blushOpacity.toDouble()).toFloat().coerceIn(0f, 1f)
+            ov.irisColorHex = parseValidHexOrFallback(faceBeautyObj.optString("irisColor"), ov.irisColorHex)
+            ov.irisOpacity = faceBeautyObj.optDouble("irisOpacity", ov.irisOpacity.toDouble()).toFloat().coerceIn(0f, 1f)
+            ov.faceMaskPattern = faceBeautyObj.optString("maskPattern", ov.faceMaskPattern)
+            ov.faceMaskOpacity = faceBeautyObj.optDouble("maskOpacity", ov.faceMaskOpacity.toDouble()).toFloat().coerceIn(0f, 1f)
+            ov.faceMaskPrimaryHex = parseValidHexOrFallback(faceBeautyObj.optString("maskPrimaryColor"), ov.faceMaskPrimaryHex)
+            ov.faceMaskAccentHex = parseValidHexOrFallback(faceBeautyObj.optString("maskAccentColor"), ov.faceMaskAccentHex)
+            updateFaceBeautyPresetUi()
+        }
+
+        if (interactionObj != null) {
+            twoFingerPinchEnabled = interactionObj.optBoolean("twoFingerPinchEnabled", twoFingerPinchEnabled)
+            twoFingerPinchSensitivity = interactionObj
+                .optDouble("twoFingerPinchSensitivity", twoFingerPinchSensitivity.toDouble())
+                .toFloat()
+                .coerceIn(0.25f, 2.5f)
+            twoFingerRotateEnabled = interactionObj.optBoolean("twoFingerRotateEnabled", twoFingerRotateEnabled)
+            twoFingerRotateSensitivity = interactionObj
+                .optDouble("twoFingerRotateSensitivity", twoFingerRotateSensitivity.toDouble())
+                .toFloat()
+                .coerceIn(0.25f, 2.5f)
+            twoFingerDragEnabled = interactionObj.optBoolean("twoFingerDragEnabled", twoFingerDragEnabled)
+            twoFingerDragSensitivity = interactionObj
+                .optDouble("twoFingerDragSensitivity", twoFingerDragSensitivity.toDouble())
+                .toFloat()
+                .coerceIn(0.25f, 2.5f)
+            invertTwoFingerRotate = interactionObj.optBoolean("invertRotateDirection", invertTwoFingerRotate)
+        }
 
         fun readOffsetPx(
             pxKey: String,
@@ -8379,6 +9086,402 @@ class MainActivity : AppCompatActivity() {
         viewBinding.btnArCalibImportJson.setOnClickListener {
             importArCalibrationJsonLauncher.launch(arrayOf("application/json", "text/plain"))
         }
+
+        // Phase 1: Advanced Face AR Quick Preset Bar, Skin Smoothing & 3D Occlusion
+        val faceBeautyButtons = listOf(
+            viewBinding.btnFaceArOff to "off",
+            viewBinding.btnFaceArGlow to "natural_glow",
+            viewBinding.btnFaceArGlam to "red_carpet",
+            viewBinding.btnFaceArCyber to "cyber_neon",
+            viewBinding.btnFaceArKitsune to "kitsune_spirit",
+            viewBinding.btnFaceArGold to "golden_circuit"
+        )
+        for ((btn, presetId) in faceBeautyButtons) {
+            btn.setOnClickListener {
+                viewBinding.arFaceOverlayView.applyFaceBeautyPreset(presetId)
+                updateFaceBeautyPresetUi()
+                if (viewBinding.arFaceOverlayView.faceBeautyEnabled) {
+                    showHudNotice("Face AR: ${presetId.replace('_', ' ').uppercase(Locale.US)}")
+                } else {
+                    showHudNotice("Face AR: OFF")
+                }
+            }
+        }
+        viewBinding.sbFaceBeautySmooth.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
+                val pct = progress.coerceIn(0, 100)
+                if (fromUser) {
+                    viewBinding.arFaceOverlayView.skinSmoothing = pct / 100f
+                    if (pct > 0 && !viewBinding.arFaceOverlayView.faceBeautyEnabled) {
+                        viewBinding.arFaceOverlayView.faceBeautyEnabled = true
+                        updateFaceBeautyPresetUi()
+                    }
+                }
+            }
+            override fun onStartTrackingTouch(sb: SeekBar?) {}
+            override fun onStopTrackingTouch(sb: SeekBar?) {}
+        })
+        viewBinding.sbFaceLipOpacity.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
+                if (!fromUser) return
+                val v = progress.coerceIn(0, 100) / 100f
+                val ov = viewBinding.arFaceOverlayView
+                ov.lipOpacity = v
+                if (v > 0.02f) { ov.faceBeautyEnabled = true; ov.faceBeautyPresetId = "custom" }
+                ov.invalidate()
+            }
+            override fun onStartTrackingTouch(sb: SeekBar?) {}
+            override fun onStopTrackingTouch(sb: SeekBar?) {}
+        })
+        viewBinding.sbFaceEyeOpacity.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
+                if (!fromUser) return
+                val v = progress.coerceIn(0, 100) / 100f
+                val ov = viewBinding.arFaceOverlayView
+                ov.eyeShadowOpacity = v * 0.85f
+                ov.eyelinerOpacity = v
+                if (v > 0.02f) { ov.faceBeautyEnabled = true; ov.faceBeautyPresetId = "custom" }
+                ov.invalidate()
+            }
+            override fun onStartTrackingTouch(sb: SeekBar?) {}
+            override fun onStopTrackingTouch(sb: SeekBar?) {}
+        })
+        viewBinding.sbFaceIrisOpacity.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
+                if (!fromUser) return
+                val v = progress.coerceIn(0, 100) / 100f
+                val ov = viewBinding.arFaceOverlayView
+                ov.irisOpacity = v
+                if (v > 0.02f) { ov.faceBeautyEnabled = true; ov.faceBeautyPresetId = "custom" }
+                ov.invalidate()
+            }
+            override fun onStartTrackingTouch(sb: SeekBar?) {}
+            override fun onStopTrackingTouch(sb: SeekBar?) {}
+        })
+        viewBinding.sbFaceMaskOpacity.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
+                if (!fromUser) return
+                val v = progress.coerceIn(0, 100) / 100f
+                val ov = viewBinding.arFaceOverlayView
+                ov.faceMaskOpacity = v
+                if (v > 0.02f && ov.faceMaskPattern == "none") {
+                    ov.faceMaskPattern = "cyber_circuit"
+                    ov.faceBeautyEnabled = true
+                }
+                ov.invalidate()
+            }
+            override fun onStartTrackingTouch(sb: SeekBar?) {}
+            override fun onStopTrackingTouch(sb: SeekBar?) {}
+        })
+        viewBinding.btnFaceLipColor.setOnClickListener {
+            faceLipSwatchIdx = (faceLipSwatchIdx + 1) % faceLipSwatches.size
+            val hex = faceLipSwatches[faceLipSwatchIdx]
+            val ov = viewBinding.arFaceOverlayView
+            ov.lipColorHex = hex
+            if (ov.lipOpacity < 0.35f) ov.lipOpacity = 0.62f
+            ov.faceBeautyEnabled = true
+            ov.faceBeautyPresetId = "custom"
+            ov.invalidate()
+            updateFaceBeautyPresetUi()
+            showHudNotice("Lip Shade: $hex")
+        }
+        viewBinding.btnFaceIrisColor.setOnClickListener {
+            faceIrisSwatchIdx = (faceIrisSwatchIdx + 1) % faceIrisSwatches.size
+            val hex = faceIrisSwatches[faceIrisSwatchIdx]
+            val ov = viewBinding.arFaceOverlayView
+            ov.irisColorHex = hex
+            if (ov.irisOpacity < 0.45f) ov.irisOpacity = 0.72f
+            ov.faceBeautyEnabled = true
+            ov.faceBeautyPresetId = "custom"
+            ov.invalidate()
+            updateFaceBeautyPresetUi()
+            showHudNotice("Iris Lens: $hex")
+        }
+        viewBinding.btnFaceImportMask.setOnClickListener {
+            importFaceMaskLauncher.launch(arrayOf("image/png", "image/webp", "image/*"))
+        }
+        viewBinding.btnFaceCompare.setOnTouchListener { v, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    viewBinding.arFaceOverlayView.isComparingBeforeAfter = true
+                    v.isPressed = true
+                    true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    viewBinding.arFaceOverlayView.isComparingBeforeAfter = false
+                    v.isPressed = false
+                    true
+                }
+                else -> false
+            }
+        }
+        viewBinding.btnArSaveEffect.setOnClickListener { showSaveArLookDialog() }
+        viewBinding.btnArLoadEffect.setOnClickListener { showLoadArLookDialog() }
+        viewBinding.switchFaceOcclusion.setOnCheckedChangeListener { _, isChecked ->
+            viewBinding.arFaceOverlayView.faceOcclusionEnabled = isChecked
+        }
+        updateFaceBeautyPresetUi()
+
+        // Phase 2: Hand AR Controls (21-Point Landmarks, Rings, Bracelets/Holo Watch, 3D Props & Gestures)
+        val updateHandArControlsUi = {
+            val ov = viewBinding.arFaceOverlayView
+            viewBinding.switchHandAr.isChecked = ov.handArEnabled
+            viewBinding.switchHandSkeleton.isChecked = ov.handShowSkeleton
+            viewBinding.switchHandGestureTrigger.isChecked = isHandGestureTriggerEnabled
+            val handBtns = listOf(
+                viewBinding.btnHandArOff to "off",
+                viewBinding.btnHandArJewelry to "luxury_jewelry",
+                viewBinding.btnHandArGauntlet to "cyber_gauntlet",
+                viewBinding.btnHandArOrb to "arcane_orb",
+                viewBinding.btnHandArFlame to "pyro_wand"
+            )
+            for ((btn, pid) in handBtns) {
+                val active = (pid == "off" && !ov.handArEnabled) || (ov.handArEnabled && ov.handPresetId == pid)
+                btn.setBackgroundResource(if (active) R.drawable.bg_cinema_button_active else R.drawable.bg_cinema_button_inactive)
+                btn.setTextColor(Color.parseColor(if (active) "#0F172A" else "#CBD5E1"))
+            }
+            viewBinding.btnHandRingCycle.text = "RING: ${ov.handRingStyle.name.take(5)}"
+            viewBinding.btnHandBraceletCycle.text = "CUFF: ${ov.handBraceletStyle.name.take(5)}"
+            viewBinding.btnHandPropCycle.text = "3D: ${ov.handPropType.name.take(6)}"
+            viewBinding.btnHandAnchorCycle.text = "PT: ${ov.handPropAnchor.name.take(5)}"
+        }
+
+        viewBinding.switchHandAr.setOnCheckedChangeListener { _, isChecked ->
+            val ov = viewBinding.arFaceOverlayView
+            if (isChecked && ov.handRingStyle == ARFaceOverlayView.HandRingStyle.NONE &&
+                ov.handBraceletStyle == ARFaceOverlayView.HandBraceletStyle.NONE &&
+                ov.handPropType == ARFaceOverlayView.HandPropType.NONE
+            ) {
+                ov.applyHandArPreset("luxury_jewelry")
+            } else {
+                ov.handArEnabled = isChecked
+                if (!isChecked) {
+                    ov.clearHandLandmarks()
+                }
+            }
+            updateHandArControlsUi()
+        }
+        viewBinding.switchHandSkeleton.setOnCheckedChangeListener { _, isChecked ->
+            viewBinding.arFaceOverlayView.handShowSkeleton = isChecked
+            if (isChecked) viewBinding.arFaceOverlayView.handArEnabled = true
+            updateHandArControlsUi()
+        }
+        viewBinding.switchHandGestureTrigger.setOnCheckedChangeListener { _, isChecked ->
+            isHandGestureTriggerEnabled = isChecked
+            showHudNotice(if (isChecked) "Hand Gesture Triggers: ON" else "Hand Gesture Triggers: OFF")
+        }
+        val handPresetMap = listOf(
+            viewBinding.btnHandArOff to "off",
+            viewBinding.btnHandArJewelry to "luxury_jewelry",
+            viewBinding.btnHandArGauntlet to "cyber_gauntlet",
+            viewBinding.btnHandArOrb to "arcane_orb",
+            viewBinding.btnHandArFlame to "pyro_wand"
+        )
+        for ((btn, pid) in handPresetMap) {
+            btn.setOnClickListener {
+                viewBinding.arFaceOverlayView.applyHandArPreset(pid)
+                updateHandArControlsUi()
+                showHudNotice("Hand AR: ${pid.replace("_", " ").uppercase()}")
+            }
+        }
+        viewBinding.btnHandRingCycle.setOnClickListener {
+            val vals = ARFaceOverlayView.HandRingStyle.values()
+            val ov = viewBinding.arFaceOverlayView
+            ov.handRingStyle = vals[(ov.handRingStyle.ordinal + 1) % vals.size]
+            ov.handArEnabled = true
+            ov.handPresetId = "custom"
+            updateHandArControlsUi()
+        }
+        viewBinding.btnHandBraceletCycle.setOnClickListener {
+            val vals = ARFaceOverlayView.HandBraceletStyle.values()
+            val ov = viewBinding.arFaceOverlayView
+            ov.handBraceletStyle = vals[(ov.handBraceletStyle.ordinal + 1) % vals.size]
+            ov.handArEnabled = true
+            ov.handPresetId = "custom"
+            updateHandArControlsUi()
+        }
+        viewBinding.btnHandPropCycle.setOnClickListener {
+            val vals = ARFaceOverlayView.HandPropType.values()
+            val ov = viewBinding.arFaceOverlayView
+            ov.handPropType = vals[(ov.handPropType.ordinal + 1) % vals.size]
+            ov.handArEnabled = true
+            ov.handPresetId = "custom"
+            updateHandArControlsUi()
+        }
+        viewBinding.btnHandAnchorCycle.setOnClickListener {
+            val vals = ARFaceOverlayView.HandAnchorPoint.values()
+            val ov = viewBinding.arFaceOverlayView
+            ov.handPropAnchor = vals[(ov.handPropAnchor.ordinal + 1) % vals.size]
+            ov.handArEnabled = true
+            updateHandArControlsUi()
+        }
+        updateHandArControlsUi()
+
+        // Phase 3: Body AR Controls (33-Point Full-Body Pose, Virtual Wings/Cape/Armor, Kinetic Aura & Segmentation Backdrops)
+        val updateBodyArControlsUi = {
+            val ov = viewBinding.arFaceOverlayView
+            viewBinding.switchBodyAr.isChecked = ov.bodyArEnabled
+            viewBinding.switchBodySkeleton.isChecked = ov.bodyShowSkeleton
+            viewBinding.switchBodyPoseTrigger.isChecked = isBodyPoseTriggerEnabled
+            val bodyBtns = listOf(
+                viewBinding.btnBodyArOff to "off",
+                viewBinding.btnBodyArWings to "cyber_angel",
+                viewBinding.btnBodyArCape to "hero_cape",
+                viewBinding.btnBodyArMecha to "mecha_armor",
+                viewBinding.btnBodyArChroma to "chroma_studio"
+            )
+            for ((btn, pid) in bodyBtns) {
+                val active = (pid == "off" && !ov.bodyArEnabled) || (ov.bodyArEnabled && ov.bodyPresetId == pid)
+                btn.setBackgroundResource(if (active) R.drawable.bg_cinema_button_active else R.drawable.bg_cinema_button_inactive)
+                btn.setTextColor(Color.parseColor(if (active) "#0F172A" else "#CBD5E1"))
+            }
+            viewBinding.btnBodyGearCycle.text = "GEAR: ${ov.bodyAccessoryStyle.name.take(6)}"
+            viewBinding.btnBodyFxCycle.text = "FX: ${ov.bodyEffectType.name.take(5)}"
+            viewBinding.btnBodySegCycle.text = "BG: ${ov.bodySegmentationMode.name.take(6)}"
+        }
+
+        viewBinding.switchBodyAr.setOnCheckedChangeListener { _, isChecked ->
+            val ov = viewBinding.arFaceOverlayView
+            if (isChecked && ov.bodyAccessoryStyle == ARFaceOverlayView.BodyAccessoryStyle.NONE &&
+                ov.bodyEffectType == ARFaceOverlayView.BodyEffectType.NONE &&
+                ov.bodySegmentationMode == ARFaceOverlayView.BodySegmentationMode.NONE
+            ) {
+                ov.applyBodyArPreset("cyber_angel")
+            } else {
+                ov.bodyArEnabled = isChecked
+                if (!isChecked) {
+                    ov.clearBodyPose()
+                }
+            }
+            updateBodyArControlsUi()
+        }
+        viewBinding.switchBodySkeleton.setOnCheckedChangeListener { _, isChecked ->
+            viewBinding.arFaceOverlayView.bodyShowSkeleton = isChecked
+            if (isChecked) viewBinding.arFaceOverlayView.bodyArEnabled = true
+            updateBodyArControlsUi()
+        }
+        viewBinding.switchBodyPoseTrigger.setOnCheckedChangeListener { _, isChecked ->
+            isBodyPoseTriggerEnabled = isChecked
+            if (!isChecked) viewBinding.arFaceOverlayView.updateBodyPoseDwell(0f, "")
+            showHudNotice(if (isChecked) "Body Pose Triggers: ON (Arms Up=Snap)" else "Body Pose Triggers: OFF")
+        }
+        val bodyPresetMap = listOf(
+            viewBinding.btnBodyArOff to "off",
+            viewBinding.btnBodyArWings to "cyber_angel",
+            viewBinding.btnBodyArCape to "hero_cape",
+            viewBinding.btnBodyArMecha to "mecha_armor",
+            viewBinding.btnBodyArChroma to "chroma_studio"
+        )
+        for ((btn, pid) in bodyPresetMap) {
+            btn.setOnClickListener {
+                viewBinding.arFaceOverlayView.applyBodyArPreset(pid)
+                updateBodyArControlsUi()
+                showHudNotice("Body AR: ${pid.replace("_", " ").uppercase()}")
+            }
+        }
+        viewBinding.btnBodyGearCycle.setOnClickListener {
+            val vals = ARFaceOverlayView.BodyAccessoryStyle.values()
+            val ov = viewBinding.arFaceOverlayView
+            ov.bodyAccessoryStyle = vals[(ov.bodyAccessoryStyle.ordinal + 1) % vals.size]
+            ov.bodyArEnabled = true
+            ov.bodyPresetId = "custom"
+            updateBodyArControlsUi()
+        }
+        viewBinding.btnBodyFxCycle.setOnClickListener {
+            val vals = ARFaceOverlayView.BodyEffectType.values()
+            val ov = viewBinding.arFaceOverlayView
+            ov.bodyEffectType = vals[(ov.bodyEffectType.ordinal + 1) % vals.size]
+            ov.bodyArEnabled = true
+            ov.bodyPresetId = "custom"
+            updateBodyArControlsUi()
+        }
+        viewBinding.btnBodySegCycle.setOnClickListener {
+            val vals = ARFaceOverlayView.BodySegmentationMode.values()
+            val ov = viewBinding.arFaceOverlayView
+            ov.bodySegmentationMode = vals[(ov.bodySegmentationMode.ordinal + 1) % vals.size]
+            ov.bodyArEnabled = true
+            ov.bodyPresetId = "custom"
+            updateBodyArControlsUi()
+        }
+        updateBodyArControlsUi()
+
+        // Phase 4: World AR Controls (Zero-Conflict 6-DoF IMU Planes, Tap-to-Place Objects & Surface Ruler)
+        val syncWorldArTrackerState = {
+            syncWorldArLifecycleAndPower()
+        }
+        val updateWorldArControlsUi = {
+            val ov = viewBinding.arFaceOverlayView
+            viewBinding.switchWorldAr.isChecked = ov.worldArEnabled
+            viewBinding.switchWorldGrid.isChecked = ov.worldShowPlaneGrid
+            viewBinding.switchWorldRuler.isChecked = ov.worldShowRuler
+            val worldBtns = listOf(
+                viewBinding.btnWorldArOff to "off",
+                viewBinding.btnWorldArCube to "holo_showcase",
+                viewBinding.btnWorldArPortal to "cyber_portal",
+                viewBinding.btnWorldArMeasure to "ar_measure"
+            )
+            for ((btn, pid) in worldBtns) {
+                val active = (pid == "off" && !ov.worldArEnabled) || (ov.worldArEnabled && ov.worldPresetId == pid)
+                btn.setBackgroundResource(if (active) R.drawable.bg_cinema_button_active else R.drawable.bg_cinema_button_inactive)
+                btn.setTextColor(Color.parseColor(if (active) "#0F172A" else "#CBD5E1"))
+            }
+            viewBinding.btnWorldObjCycle.text = "OBJ: ${ov.worldActiveObject.name.take(6)}"
+            viewBinding.btnWorldClearAnchors.text = "CLR (${ov.getWorldAnchorCount()})"
+            syncWorldArTrackerState()
+        }
+
+        viewBinding.switchWorldAr.setOnCheckedChangeListener { _, isChecked ->
+            val ov = viewBinding.arFaceOverlayView
+            if (isChecked && ov.getWorldAnchorCount() == 0) {
+                worldArTracker?.resetReferenceYaw()
+                ov.applyWorldArPreset("holo_showcase")
+            } else {
+                ov.worldArEnabled = isChecked
+            }
+            updateWorldArControlsUi()
+        }
+        viewBinding.switchWorldGrid.setOnCheckedChangeListener { _, isChecked ->
+            viewBinding.arFaceOverlayView.worldShowPlaneGrid = isChecked
+            if (isChecked) viewBinding.arFaceOverlayView.worldArEnabled = true
+            updateWorldArControlsUi()
+        }
+        viewBinding.switchWorldRuler.setOnCheckedChangeListener { _, isChecked ->
+            viewBinding.arFaceOverlayView.worldShowRuler = isChecked
+            if (isChecked) viewBinding.arFaceOverlayView.worldArEnabled = true
+            updateWorldArControlsUi()
+        }
+        val worldPresetMap = listOf(
+            viewBinding.btnWorldArOff to "off",
+            viewBinding.btnWorldArCube to "holo_showcase",
+            viewBinding.btnWorldArPortal to "cyber_portal",
+            viewBinding.btnWorldArMeasure to "ar_measure"
+        )
+        for ((btn, pid) in worldPresetMap) {
+            btn.setOnClickListener {
+                if (pid != "off") worldArTracker?.resetReferenceYaw()
+                viewBinding.arFaceOverlayView.applyWorldArPreset(pid)
+                updateWorldArControlsUi()
+                showHudNotice("World AR: ${pid.replace("_", " ").uppercase()}")
+            }
+        }
+        viewBinding.btnWorldObjCycle.setOnClickListener {
+            val nextObj = viewBinding.arFaceOverlayView.cycleWorldActiveObject()
+            viewBinding.arFaceOverlayView.worldArEnabled = true
+            updateWorldArControlsUi()
+            showHudNotice("World Object: ${nextObj.name.replace("_", " ")}")
+        }
+        viewBinding.btnWorldDropAnchor.setOnClickListener {
+            viewBinding.arFaceOverlayView.worldArEnabled = true
+            val placed = viewBinding.arFaceOverlayView.dropDefaultWorldAnchor()
+            updateWorldArControlsUi()
+            showHudNotice("Dropped ${placed.objectType.name.replace("_", " ")} (${String.format(Locale.US, "%.2fm", placed.distanceM)})")
+        }
+        viewBinding.btnWorldClearAnchors.setOnClickListener {
+            viewBinding.arFaceOverlayView.clearWorldAnchors()
+            updateWorldArControlsUi()
+            showHudNotice("World AR Anchors Cleared")
+        }
+        updateWorldArControlsUi()
 
         viewBinding.sbCalibOffsetX.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
@@ -8582,18 +9685,14 @@ class MainActivity : AppCompatActivity() {
     private fun selectArDockTab(tab: ArDockTab) {
         currentArDockTab = tab
         val isLenses = tab == ArDockTab.LENSES
-        val isAdjust = tab == ArDockTab.ADJUST
         val isComicText = tab == ArDockTab.COMIC_TEXT
 
         viewBinding.arLensModeDock.tabArDockLenses.setBackgroundResource(if (isLenses) R.drawable.bg_cinema_button_active else R.drawable.bg_cinema_button_inactive)
         viewBinding.arLensModeDock.tabArDockLenses.setTextColor(Color.parseColor(if (isLenses) "#0F172A" else "#94A3B8"))
-        viewBinding.arLensModeDock.tabArDockAdjust.setBackgroundResource(if (isAdjust) R.drawable.bg_cinema_button_active else R.drawable.bg_cinema_button_inactive)
-        viewBinding.arLensModeDock.tabArDockAdjust.setTextColor(Color.parseColor(if (isAdjust) "#0F172A" else "#94A3B8"))
         viewBinding.arLensModeDock.tabArDockComicText.setBackgroundResource(if (isComicText) R.drawable.bg_cinema_button_active else R.drawable.bg_cinema_button_inactive)
         viewBinding.arLensModeDock.tabArDockComicText.setTextColor(Color.parseColor(if (isComicText) "#0F172A" else "#94A3B8"))
 
         viewBinding.arLensModeDock.scrollArModeLensesStrip.visibility = if (isLenses) View.VISIBLE else View.GONE
-        viewBinding.arLensModeDock.layoutArModeAdjustPanel.visibility = if (isAdjust) View.VISIBLE else View.GONE
         viewBinding.arLensModeDock.layoutArModeComicTextPanel.visibility = if (isComicText) View.VISIBLE else View.GONE
 
         if (isArDockCollapsed) {
@@ -8601,25 +9700,17 @@ class MainActivity : AppCompatActivity() {
             viewBinding.arLensModeDock.layoutArDockBody.visibility = View.VISIBLE
             viewBinding.arLensModeDock.btnArDockToggle.text = "v"
         }
-        if (isAdjust) syncArDockFromCalibration()
+        syncArDockFromCalibration()
     }
 
     private fun syncArDockFromCalibration() {
         isSyncingArDockSliders = true
         val dock = viewBinding.arLensModeDock
-        val scaleProg = (((calibScale - 0.5f) / 1.5f) * 100f).roundToInt().coerceIn(0, 100)
-        val offXProg = (((calibOffsetX * 600f) + 150f) / 3f).roundToInt().coerceIn(0, 100)
-        val offYProg = (((calibOffsetY * 600f) + 150f) / 3f).roundToInt().coerceIn(0, 100)
-        val rotProg = (calibRotDeg.roundToInt() + 45).coerceIn(0, 90)
-        dock.sbArDockScale.progress = scaleProg
-        dock.tvArDockScaleVal.text = String.format(Locale.US, "%.2fx", calibScale)
-        dock.sbArDockOffsetX.progress = offXProg
-        dock.tvArDockOffsetXVal.text = "${(calibOffsetX * 600f).roundToInt()}px"
-        dock.sbArDockOffsetY.progress = offYProg
-        dock.tvArDockOffsetYVal.text = "${(calibOffsetY * 600f).roundToInt()}px"
-        dock.sbArDockRotation.progress = rotProg
-        dock.tvArDockRotationVal.text = "${calibRotDeg.roundToInt()}°"
-        dock.switchArDockMeshDebug.isChecked = calibDebug
+        val isModified = Math.abs(calibOffsetX) > 0.002f ||
+            Math.abs(calibOffsetY) > 0.002f ||
+            Math.abs(calibScale - 1.0f) > 0.01f ||
+            Math.abs(calibRotDeg) > 0.5f
+        dock.btnArGestureReset.visibility = if (isModified) View.VISIBLE else View.GONE
         dock.switchArDockBubble.isChecked = viewBinding.arFaceOverlayView.enableComicSpeechBubble
         dock.switchArDockAutoAdapt.isChecked = isAutoAdaptEnabled
         isSyncingArDockSliders = false
@@ -8628,69 +9719,13 @@ class MainActivity : AppCompatActivity() {
     private fun setupArLensModeDock() {
         val dock = viewBinding.arLensModeDock
         dock.tabArDockLenses.setOnClickListener { selectArDockTab(ArDockTab.LENSES) }
-        dock.tabArDockAdjust.setOnClickListener { selectArDockTab(ArDockTab.ADJUST) }
         dock.tabArDockComicText.setOnClickListener { selectArDockTab(ArDockTab.COMIC_TEXT) }
         dock.btnArDockToggle.setOnClickListener {
             isArDockCollapsed = !isArDockCollapsed
             dock.layoutArDockBody.visibility = if (isArDockCollapsed) View.GONE else View.VISIBLE
             dock.btnArDockToggle.text = if (isArDockCollapsed) "^" else "v"
         }
-        dock.btnArDockReset.setOnClickListener { resetArCalibrationValues() }
-
-        dock.sbArDockScale.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
-                if (isSyncingArDockSliders || !fromUser) return
-                val s = 0.5f + (progress / 100f) * 1.5f
-                calibScale = s
-                dock.tvArDockScaleVal.text = String.format(Locale.US, "%.2fx", s)
-                viewBinding.sbCalibScale.progress = progress
-                pushArCalibrationToOverlay()
-            }
-            override fun onStartTrackingTouch(sb: SeekBar?) {}
-            override fun onStopTrackingTouch(sb: SeekBar?) {}
-        })
-        dock.sbArDockOffsetX.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
-                if (isSyncingArDockSliders || !fromUser) return
-                val px = (progress - 50) * 3
-                calibOffsetX = px / 600f
-                dock.tvArDockOffsetXVal.text = "${px}px"
-                viewBinding.sbCalibOffsetX.progress = (px + 150).coerceIn(0, 300)
-                pushArCalibrationToOverlay()
-            }
-            override fun onStartTrackingTouch(sb: SeekBar?) {}
-            override fun onStopTrackingTouch(sb: SeekBar?) {}
-        })
-        dock.sbArDockOffsetY.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
-                if (isSyncingArDockSliders || !fromUser) return
-                val px = (progress - 50) * 3
-                calibOffsetY = px / 600f
-                dock.tvArDockOffsetYVal.text = "${px}px"
-                viewBinding.sbCalibOffsetY.progress = (px + 150).coerceIn(0, 300)
-                pushArCalibrationToOverlay()
-            }
-            override fun onStartTrackingTouch(sb: SeekBar?) {}
-            override fun onStopTrackingTouch(sb: SeekBar?) {}
-        })
-        dock.sbArDockRotation.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
-                if (isSyncingArDockSliders || !fromUser) return
-                val deg = (progress - 45).toFloat()
-                calibRotDeg = deg
-                dock.tvArDockRotationVal.text = "${deg.toInt()}°"
-                viewBinding.sbCalibRotation.progress = progress
-                pushArCalibrationToOverlay()
-            }
-            override fun onStartTrackingTouch(sb: SeekBar?) {}
-            override fun onStopTrackingTouch(sb: SeekBar?) {}
-        })
-        dock.switchArDockMeshDebug.setOnCheckedChangeListener { _, isChecked ->
-            if (isSyncingArDockSliders) return@setOnCheckedChangeListener
-            calibDebug = isChecked
-            viewBinding.switchArMeshDebug.isChecked = isChecked
-            pushArCalibrationToOverlay()
-        }
+        dock.btnArGestureReset.setOnClickListener { resetArCalibrationValues() }
         dock.switchArDockBubble.setOnCheckedChangeListener { _, isChecked ->
             if (isSyncingArDockSliders) return@setOnCheckedChangeListener
             viewBinding.arFaceOverlayView.enableComicSpeechBubble = isChecked
@@ -8895,6 +9930,9 @@ class MainActivity : AppCompatActivity() {
         try { toneGenerator?.release() } catch (_: Throwable) {}
         sensorManager.unregisterListener(sensorEventListener)
         faceMeshHelper?.clear()
+        handLandmarkerHelper?.clear()
+        poseLandmarkerHelper?.clear()
+        worldArTracker?.stop()
         viewBinding.arFaceOverlayView.releaseGlbEngine()
         cameraExecutor.shutdown()
         burstHandler.removeCallbacksAndMessages(null)
