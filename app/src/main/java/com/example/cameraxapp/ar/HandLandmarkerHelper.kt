@@ -54,6 +54,9 @@ class HandLandmarkerHelper(
         setupHandLandmarker()
     }
 
+    private var lastSnapPinchTimeMs: Long = 0L
+    private var lastSnapEmittedTimeMs: Long = 0L
+
     private fun hasModelAsset(): Boolean {
         return try {
             context.assets.open("hand_landmarker.task").use { it.available() > 0 }
@@ -88,12 +91,32 @@ class HandLandmarkerHelper(
                         val hands = mutableListOf<TrackedHand>()
                         val allLm = result.landmarks()
                         val allHanded = result.handednesses()
+                        val nowMs = SystemClock.uptimeMillis()
                         for (hIdx in allLm.indices) {
                             val lmList = allLm[hIdx]
                             if (lmList.size < 21) continue
                             val pts = lmList.map { PointF(it.x(), it.y()) }
                             val handedLabel = allHanded.getOrNull(hIdx)?.firstOrNull()?.categoryName() ?: "Right"
-                            val gesture = classifyGesture(pts)
+                            var gesture = classifyGesture(pts)
+
+                            // Real 21-Point Avengers Finger-Snap Detector (Thumb Tip #4 + Middle Tip #12 pinch -> rapid snap release)
+                            val wrist = pts[0]
+                            val palmSize = hypot((pts[9].x - wrist.x).toDouble(), (pts[9].y - wrist.y).toDouble()).toFloat().coerceAtLeast(0.04f)
+                            val thumbMiddleDist = hypot((pts[4].x - pts[12].x).toDouble(), (pts[4].y - pts[12].y).toDouble()).toFloat() / palmSize
+                            val middleToWrist = hypot((pts[12].x - wrist.x).toDouble(), (pts[12].y - wrist.y).toDouble()).toFloat() / palmSize
+                            if (thumbMiddleDist < 0.36f) {
+                                lastSnapPinchTimeMs = nowMs
+                            } else if (
+                                lastSnapPinchTimeMs > 0L &&
+                                (nowMs - lastSnapPinchTimeMs) in 30L..700L &&
+                                (nowMs - lastSnapEmittedTimeMs) > 1200L &&
+                                (thumbMiddleDist > 0.48f || middleToWrist < 1.15f)
+                            ) {
+                                gesture = "FINGER_SNAP"
+                                lastSnapPinchTimeMs = 0L
+                                lastSnapEmittedTimeMs = nowMs
+                            }
+
                             hands.add(TrackedHand(pts, gesture, handedLabel))
                         }
                         listener.onHandsDetected(hands, input.width, input.height)

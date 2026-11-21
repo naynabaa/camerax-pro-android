@@ -186,7 +186,61 @@ class ARFaceOverlayView @JvmOverloads constructor(
     // Phase 3: Body AR (33-Point Full-Body Pose, Virtual Wings/Cape/Armor/3D GLB, Kinetic Aura FX & Segmentation Backdrops)
     enum class BodyAccessoryStyle { NONE, CYBER_WINGS, ANGEL_WINGS, NEON_CAPE, SHOULDER_PAULDRON, HOLO_BACKPACK, CUSTOM_GLB }
     enum class BodyEffectType { NONE, NEON_AURA, ELECTRIC_TRAILS, FIRE_AURA, CYBER_GRID_SUIT, STARDUST_HALO }
-    enum class BodySegmentationMode { NONE, NEON_OUTLINE, STUDIO_BLUR, CYBER_GRID_BG, COSMIC_VOID, CHROMA_GREEN }
+    enum class BodySegmentationMode { NONE, NEON_OUTLINE, STUDIO_BLUR, CYBER_GRID_BG, COSMIC_VOID, CHROMA_GREEN, SNAP_WIPEOUT }
+    enum class SnapWipeoutPhase { ARMED, DISINTEGRATING, VANISHED, REFORMING }
+
+    private class SnapDustParticle(
+        var originX: Float,
+        var originY: Float,
+        var x: Float,
+        var y: Float,
+        var vx: Float,
+        var vy: Float,
+        var size: Float,
+        var rotation: Float,
+        var rotSpeed: Float,
+        var triggerAt: Float,
+        var seed: Float,
+        var r: Int,
+        var g: Int,
+        var b: Int,
+        var isEmber: Boolean,
+        var life: Float,
+        var detached: Boolean
+    )
+
+    @Volatile
+    var snapPhase: SnapWipeoutPhase = SnapWipeoutPhase.ARMED
+        private set
+    private var snapPhaseStartMs: Long = 0L
+    private var snapLastFrameMs: Long = 0L
+    private var snapShockwaveStartMs: Long = 0L
+    private var snapShockwaveIsReform: Boolean = false
+    private var snapOriginNormX: Float = 0.70f
+    private var snapOriginNormY: Float = 0.42f
+    private var snapWindDir: Float = 1f // +1f = drifting right, -1f = drifting left
+    private var snapCleanPlateBmp: Bitmap? = null
+    private var snapAutoInpaintBmp: Bitmap? = null
+    private var snapFrozenSegMask: Bitmap? = null
+    private var snapFrozenFrontCamera: Boolean = true
+    private var snapFrozenOffsetX: Float = 0f
+    private var snapFrozenOffsetY: Float = 0f
+    private var snapFrozenScaledW: Float = 0f
+    private var snapFrozenScaledH: Float = 0f
+    private val snapFrozenBodyPath = Path()
+    private val snapErodeClipPath = Path()
+    private val snapDustParticles = ArrayList<SnapDustParticle>(420)
+    private val snapMaskInPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_IN)
+    }
+    private val snapParticlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+    }
+    private val snapEdgePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+    }
 
     var bodyArEnabled: Boolean = false
         set(value) { field = value; invalidate() }
@@ -383,6 +437,15 @@ class ARFaceOverlayView @JvmOverloads constructor(
                 bodySegmentationMode = BodySegmentationMode.CHROMA_GREEN
                 bodySegColorHex = "#22C55E"
             }
+            "snap_wipeout" -> {
+                bodyArEnabled = true
+                bodyShowSkeleton = false
+                bodyAccessoryStyle = BodyAccessoryStyle.NONE
+                bodyEffectType = BodyEffectType.NONE
+                bodySegmentationMode = BodySegmentationMode.SNAP_WIPEOUT
+                bodySegColorHex = "#F59E0B"
+                resetSnapWipeout()
+            }
             else -> {
                 bodyArEnabled = true
                 bodyShowSkeleton = false
@@ -398,6 +461,180 @@ class ARFaceOverlayView @JvmOverloads constructor(
         }
         onOverlayDirty?.invoke()
         invalidate()
+    }
+
+    fun isSnapWipeoutArmed(): Boolean = bodyArEnabled && bodySegmentationMode == BodySegmentationMode.SNAP_WIPEOUT
+
+    fun isSnapVanishedOrDissolving(): Boolean =
+        snapPhase == SnapWipeoutPhase.DISINTEGRATING || snapPhase == SnapWipeoutPhase.VANISHED
+
+    fun hasSnapCleanPlate(): Boolean = snapCleanPlateBmp != null && !(snapCleanPlateBmp?.isRecycled ?: true)
+
+    fun setSnapCleanPlate(bmp: Bitmap?) {
+        try {
+            val prev = snapCleanPlateBmp
+            if (bmp == null || bmp.isRecycled) {
+                snapCleanPlateBmp = null
+            } else {
+                // Downscale to crisp 540px max side for fast 60fps canvas blitting & low RAM
+                val maxSide = Math.max(bmp.width, bmp.height).coerceAtLeast(1)
+                val ratio = if (maxSide > 540) 540f / maxSide.toFloat() else 1f
+                val tw = (bmp.width * ratio).toInt().coerceAtLeast(64)
+                val th = (bmp.height * ratio).toInt().coerceAtLeast(64)
+                snapCleanPlateBmp = Bitmap.createScaledBitmap(bmp, tw, th, true)
+            }
+            if (prev != null && prev != snapCleanPlateBmp && !prev.isRecycled) {
+                prev.recycle()
+            }
+        } catch (_: Throwable) {}
+        postInvalidateOnAnimation()
+    }
+
+    fun toggleSnapWindDirection(): Float {
+        snapWindDir = if (snapWindDir > 0f) -1f else 1f
+        return snapWindDir
+    }
+
+    fun resetSnapWipeout() {
+        snapPhase = SnapWipeoutPhase.ARMED
+        snapPhaseStartMs = 0L
+        snapShockwaveStartMs = 0L
+        snapDustParticles.clear()
+        postInvalidateOnAnimation()
+    }
+
+    fun triggerSnapWipeout(originNormX: Float, originNormY: Float, liveFrameBmp: Bitmap?) {
+        val nowMs = System.currentTimeMillis()
+        snapOriginNormX = originNormX.coerceIn(0.08f, 0.92f)
+        snapOriginNormY = originNormY.coerceIn(0.08f, 0.92f)
+        snapPhase = SnapWipeoutPhase.DISINTEGRATING
+        snapPhaseStartMs = nowMs
+        snapLastFrameMs = nowMs
+        snapShockwaveStartMs = nowMs
+        snapShockwaveIsReform = false
+
+        // Freeze current segmentation mask snapshot as fallback if subject disappears completely
+        val curMask = trackedBodySegMask
+        if (curMask != null && !curMask.isRecycled) {
+            try {
+                snapFrozenSegMask = curMask.copy(Bitmap.Config.ARGB_8888, false)
+            } catch (_: Throwable) {
+                snapFrozenSegMask = curMask
+            }
+        }
+        snapFrozenFrontCamera = bodyIsFrontCamera
+
+        // Build automatic handheld edge-blurred background fallback if user didn't pre-lock empty room plate
+        if (!hasSnapCleanPlate() && liveFrameBmp != null && !liveFrameBmp.isRecycled) {
+            try {
+                val tinyW = 40
+                val tinyH = 56
+                val tiny = Bitmap.createScaledBitmap(liveFrameBmp, tinyW, tinyH, true)
+                val inpaint = Bitmap.createBitmap(tinyW, tinyH, Bitmap.Config.ARGB_8888)
+                val ic = Canvas(inpaint)
+                ic.drawBitmap(tiny, 0f, 0f, null)
+                // Stretch left & right ambient background edges inward across center subject region
+                val lx = (tinyW * 0.24f).toInt().coerceAtLeast(3)
+                val rx = (tinyW * 0.76f).toInt().coerceAtMost(tinyW - 3)
+                val mid = tinyW / 2
+                ic.drawBitmap(tiny, android.graphics.Rect(0, 0, lx, tinyH), android.graphics.Rect(lx - 1, 0, mid + 2, tinyH), null)
+                ic.drawBitmap(tiny, android.graphics.Rect(rx, 0, tinyW, tinyH), android.graphics.Rect(mid - 1, 0, rx + 2, tinyH), null)
+                val prevAuto = snapAutoInpaintBmp
+                snapAutoInpaintBmp = Bitmap.createScaledBitmap(inpaint, 120, 168, true)
+                tiny.recycle()
+                inpaint.recycle()
+                if (prevAuto != null && !prevAuto.isRecycled) prevAuto.recycle()
+            } catch (_: Throwable) {}
+        }
+
+        // Sample 420 real RGB dust flakes from the person's clothes, hair & skin inside the live frame
+        snapDustParticles.clear()
+        val sampleBmp = if (liveFrameBmp != null && !liveFrameBmp.isRecycled) {
+            try { Bitmap.createScaledBitmap(liveFrameBmp, 96, 128, true) } catch (_: Throwable) { null }
+        } else null
+
+        val rawLm = trackedBodyLandmarks
+        var minX = 0.22f
+        var maxX = 0.78f
+        var minY = 0.14f
+        var maxY = 0.92f
+        if (rawLm.size >= 33) {
+            val lShX = if (bodyIsFrontCamera) 1f - rawLm[11].x else rawLm[11].x
+            val rShX = if (bodyIsFrontCamera) 1f - rawLm[12].x else rawLm[12].x
+            val noseX = if (bodyIsFrontCamera) 1f - rawLm[0].x else rawLm[0].x
+            minX = (Math.min(Math.min(lShX, rShX), noseX) - 0.16f).coerceIn(0.04f, 0.75f)
+            maxX = (Math.max(Math.max(lShX, rShX), noseX) + 0.16f).coerceIn(minX + 0.18f, 0.96f)
+            minY = (rawLm[0].y - 0.13f).coerceIn(0.03f, 0.60f)
+            maxY = (Math.max(rawLm[23].y, rawLm[24].y) + 0.34f).coerceIn(minY + 0.25f, 0.98f)
+        }
+        val spanX = (maxX - minX).coerceAtLeast(0.16f)
+        val spanY = (maxY - minY).coerceAtLeast(0.24f)
+        val bodyCx = (minX + maxX) * 0.5f
+        val bodyCy = (minY + maxY) * 0.48f
+
+        val count = 420
+        for (i in 0 until count) {
+            var nx = minX + Math.random().toFloat() * spanX
+            var ny = minY + Math.random().toFloat() * spanY
+            val dx = (nx - bodyCx) / (spanX * 0.48f)
+            val dy = (ny - bodyCy) / (spanY * 0.52f)
+            if (dx * dx + dy * dy > 1.05f) {
+                nx = bodyCx + (nx - bodyCx) * 0.62f
+                ny = bodyCy + (ny - bodyCy) * 0.74f
+            }
+
+            var r = 128
+            var g = 118
+            var b = 108
+            if (sampleBmp != null) {
+                val px = (nx * (sampleBmp.width - 1)).toInt().coerceIn(0, sampleBmp.width - 1)
+                val py = (ny * (sampleBmp.height - 1)).toInt().coerceIn(0, sampleBmp.height - 1)
+                val c = sampleBmp.getPixel(px, py)
+                r = Color.red(c)
+                g = Color.green(c)
+                b = Color.blue(c)
+            }
+            val isEmber = Math.random() < 0.13
+            val windAxis = if (snapWindDir > 0f) (maxX - nx) / spanX else (nx - minX) / spanX
+            val vertAxis = (ny - minY) / spanY
+            val noise = ((Math.sin((nx * 29.0 + ny * 17.0)) * 0.5 + 0.5).toFloat() * 0.22f) + Math.random().toFloat() * 0.12f
+            val triggerAt = (windAxis * 0.62f + vertAxis * 0.18f + noise).coerceIn(0.02f, 0.92f)
+            val speed = 0.08f + Math.random().toFloat() * 0.17f
+
+            snapDustParticles.add(
+                SnapDustParticle(
+                    originX = nx,
+                    originY = ny,
+                    x = nx,
+                    y = ny,
+                    vx = snapWindDir * speed,
+                    vy = -0.025f - Math.random().toFloat() * 0.065f,
+                    size = if (isEmber) 3.8f + Math.random().toFloat() * 4.5f else 4.5f + Math.random().toFloat() * 9.5f,
+                    rotation = (Math.random() * 360.0).toFloat(),
+                    rotSpeed = ((Math.random() - 0.5) * 190.0).toFloat(),
+                    triggerAt = triggerAt,
+                    seed = (Math.random() * 100.0).toFloat(),
+                    r = if (isEmber) 251 else ((r * 0.65f + 76f * 0.35f).toInt().coerceIn(0, 255)),
+                    g = if (isEmber) 168 else ((g * 0.65f + 70f * 0.35f).toInt().coerceIn(0, 255)),
+                    b = if (isEmber) 58 else ((b * 0.65f + 64f * 0.35f).toInt().coerceIn(0, 255)),
+                    isEmber = isEmber,
+                    life = 0f,
+                    detached = false
+                )
+            )
+        }
+        if (sampleBmp != null && !sampleBmp.isRecycled) sampleBmp.recycle()
+        postInvalidateOnAnimation()
+    }
+
+    fun triggerSnapReform() {
+        val nowMs = System.currentTimeMillis()
+        snapPhase = SnapWipeoutPhase.REFORMING
+        snapPhaseStartMs = nowMs
+        snapLastFrameMs = nowMs
+        snapShockwaveStartMs = nowMs
+        snapShockwaveIsReform = true
+        postInvalidateOnAnimation()
     }
 
     // Phase 4: World AR (6-DoF Sensor-Fused Floor/Wall Planes, Tap-to-Place 3D Objects & AR Surface Ruler)
@@ -3825,7 +4062,21 @@ class ARFaceOverlayView @JvmOverloads constructor(
     ) {
         if (!bodyArEnabled || viewW <= 0f || viewH <= 0f) return
         val rawLm = trackedBodyLandmarks
-        if (rawLm.size < 33 || (nowMs - lastBodyUpdateMs) > 1200L) return
+        val hasLivePose = rawLm.size >= 33 && (nowMs - lastBodyUpdateMs) <= 1200L
+        if (!hasLivePose) {
+            // Keep Avengers Snap-to-Dust animation running smoothly even if subject vanishes or steps out
+            if (bodySegmentationMode == BodySegmentationMode.SNAP_WIPEOUT && snapPhase != SnapWipeoutPhase.ARMED) {
+                drawSnapWipeoutEffect(
+                    canvas, viewW, viewH, nowMs,
+                    snapFrozenOffsetX, snapFrozenOffsetY,
+                    snapFrozenScaledW.coerceAtLeast(viewW), snapFrozenScaledH.coerceAtLeast(viewH),
+                    viewW * 0.22f, viewW * 0.78f,
+                    snapFrozenBodyPath
+                )
+                postInvalidateOnAnimation()
+            }
+            return
+        }
 
         // Map normalized MediaPipe pose landmarks using FILL_CENTER projection matching PreviewView
         val imgW = bodyInputWidth.toFloat().coerceAtLeast(1f)
@@ -3871,8 +4122,23 @@ class ARFaceOverlayView @JvmOverloads constructor(
         bodyTempPath.lineTo(Math.min(lHip.x, rHip.x) - shoulderW * 0.14f, hipMidY)
         bodyTempPath.close()
 
+        // Cache projection & silhouette for seamless Snap Wipeout continuation
+        snapFrozenOffsetX = offsetX
+        snapFrozenOffsetY = offsetY
+        snapFrozenScaledW = scaledW
+        snapFrozenScaledH = scaledH
+        snapFrozenBodyPath.set(bodyTempPath)
+
         // 1. Full-Body Segmentation Backdrops & Neon Edge Outline
-        if (bodySegmentationMode != BodySegmentationMode.NONE) {
+        if (bodySegmentationMode == BodySegmentationMode.SNAP_WIPEOUT) {
+            drawSnapWipeoutEffect(
+                canvas, viewW, viewH, nowMs,
+                offsetX, offsetY, scaledW, scaledH,
+                (leftX - shoulderW * 0.25f).coerceAtLeast(0f),
+                (rightX + shoulderW * 0.25f).coerceAtMost(viewW),
+                bodyTempPath
+            )
+        } else if (bodySegmentationMode != BodySegmentationMode.NONE) {
             val segCol = parseHexWithAlpha(bodySegColorHex, 0.92f, Color.CYAN)
             if (bodySegmentationMode == BodySegmentationMode.NEON_OUTLINE) {
                 bodyStrokePaint.shader = null
@@ -4331,6 +4597,241 @@ class ARFaceOverlayView @JvmOverloads constructor(
         }
 
         postInvalidateOnAnimation()
+    }
+
+    /**
+     * Avengers Endgame Snap-to-Dust Wipeout VFX Renderer:
+     * Erases the person progressively using real MediaPipe segmentation mask + Clean Background Plate
+     * (or auto-inpainted fallback) while 420 RGB-sampled ash flakes & embers drift slowly in curl wind.
+     */
+    private fun drawSnapWipeoutEffect(
+        canvas: Canvas,
+        viewW: Float,
+        viewH: Float,
+        nowMs: Long,
+        offsetX: Float,
+        offsetY: Float,
+        scaledW: Float,
+        scaledH: Float,
+        bodyMinX: Float,
+        bodyMaxX: Float,
+        silhouettePath: Path
+    ) {
+        val dt = if (snapLastFrameMs > 0L) {
+            ((nowMs - snapLastFrameMs).toFloat() / 1000f).coerceIn(0.008f, 0.06f)
+        } else 0.016f
+        snapLastFrameMs = nowMs
+
+        val disintegrateMs = 5200f
+        val reformMs = 2500f
+        val progress: Float = when (snapPhase) {
+            SnapWipeoutPhase.ARMED -> 0f
+            SnapWipeoutPhase.VANISHED -> 1f
+            SnapWipeoutPhase.DISINTEGRATING -> {
+                val p = ((nowMs - snapPhaseStartMs).toFloat() / disintegrateMs).coerceIn(0f, 1f)
+                if (p >= 1f) snapPhase = SnapWipeoutPhase.VANISHED
+                p
+            }
+            SnapWipeoutPhase.REFORMING -> {
+                val p = ((nowMs - snapPhaseStartMs).toFloat() / reformMs).coerceIn(0f, 1f)
+                if (p >= 1f) {
+                    snapPhase = SnapWipeoutPhase.ARMED
+                    snapDustParticles.clear()
+                    0f
+                } else {
+                    1f - p
+                }
+            }
+        }
+
+        // 1. Subtle golden armed reticle around person before the Snap fires
+        if (snapPhase == SnapWipeoutPhase.ARMED) {
+            snapEdgePaint.strokeWidth = 3.5f
+            snapEdgePaint.color = Color.argb(115, 245, 158, 11)
+            canvas.drawPath(silhouettePath, snapEdgePaint)
+            return
+        }
+
+        // 2. Progressive organic wind erosion of the person silhouette into the Clean Background Plate
+        val spanX = (bodyMaxX - bodyMinX).coerceAtLeast(viewW * 0.28f)
+        val frontX = if (snapWindDir > 0f) {
+            bodyMaxX - spanX * Math.min(1.14f, progress * 1.18f)
+        } else {
+            bodyMinX + spanX * Math.min(1.14f, progress * 1.18f)
+        }
+
+        if (progress > 0.005f) {
+            val bgPlate = snapCleanPlateBmp?.takeIf { !it.isRecycled } ?: snapAutoInpaintBmp?.takeIf { !it.isRecycled }
+            val segBmp = trackedBodySegMask?.takeIf { !it.isRecycled } ?: snapFrozenSegMask?.takeIf { !it.isRecycled }
+            val isFront = if (trackedBodySegMask != null) bodyIsFrontCamera else snapFrozenFrontCamera
+
+            // Build organic jagged wind-eroded half-plane clip path
+            snapErodeClipPath.reset()
+            val steps = 26
+            if (progress >= 0.98f) {
+                snapErodeClipPath.addRect(0f, 0f, viewW, viewH, Path.Direction.CW)
+            } else if (snapWindDir > 0f) {
+                snapErodeClipPath.moveTo(viewW, 0f)
+                snapErodeClipPath.lineTo(viewW, viewH)
+                for (i in steps downTo 0) {
+                    val ty = i.toFloat() / steps.toFloat()
+                    val y = ty * viewH
+                    val jag = (Math.sin(ty * 24.0 + nowMs * 0.003) * 26.0 + Math.cos(ty * 47.0 - progress * 9.0) * 15.0).toFloat()
+                    snapErodeClipPath.lineTo(frontX + jag, y)
+                }
+                snapErodeClipPath.close()
+            } else {
+                snapErodeClipPath.moveTo(0f, 0f)
+                for (i in 0..steps) {
+                    val ty = i.toFloat() / steps.toFloat()
+                    val y = ty * viewH
+                    val jag = (Math.sin(ty * 24.0 + nowMs * 0.003) * 26.0 + Math.cos(ty * 47.0 - progress * 9.0) * 15.0).toFloat()
+                    snapErodeClipPath.lineTo(frontX + jag, y)
+                }
+                snapErodeClipPath.lineTo(0f, viewH)
+                snapErodeClipPath.close()
+            }
+
+            // Offscreen compositing: draw clean room background clipped to eroded wave, then mask to REAL person silhouette via DST_IN!
+            val saveCount = canvas.saveLayer(0f, 0f, viewW, viewH, null)
+            canvas.save()
+            canvas.clipPath(snapErodeClipPath)
+            if (bgPlate != null) {
+                bodyTempRect.set(0f, 0f, viewW, viewH)
+                canvas.drawBitmap(bgPlate, null, bodyTempRect, null)
+            } else {
+                bodyFillPaint.shader = null
+                bodyFillPaint.color = Color.argb(235, 15, 23, 42)
+                canvas.drawRect(0f, 0f, viewW, viewH, bodyFillPaint)
+            }
+            canvas.restore()
+
+            if (segBmp != null) {
+                canvas.save()
+                if (isFront) {
+                    canvas.scale(-1f, 1f, viewW * 0.5f, viewH * 0.5f)
+                }
+                bodyTempRect.set(offsetX, offsetY, offsetX + scaledW, offsetY + scaledH)
+                canvas.drawBitmap(segBmp, null, bodyTempRect, snapMaskInPaint)
+                canvas.restore()
+            } else {
+                canvas.drawPath(silhouettePath, snapMaskInPaint)
+            }
+            canvas.restoreToCount(saveCount)
+
+            // Glowing amber / Time-Stone emerald ash-crumble seam along active moving dissolve front
+            if (progress in 0.02f..0.95f) {
+                canvas.save()
+                canvas.clipPath(silhouettePath)
+                snapErodeClipPath.reset()
+                for (i in 0..steps) {
+                    val ty = i.toFloat() / steps.toFloat()
+                    val y = ty * viewH
+                    val jag = (Math.sin(ty * 24.0 + nowMs * 0.003) * 26.0 + Math.cos(ty * 47.0 - progress * 9.0) * 15.0).toFloat()
+                    if (i == 0) snapErodeClipPath.moveTo(frontX + jag, y)
+                    else snapErodeClipPath.lineTo(frontX + jag, y)
+                }
+                snapEdgePaint.strokeWidth = 14f
+                snapEdgePaint.color = if (snapPhase == SnapWipeoutPhase.REFORMING) Color.argb(175, 52, 211, 153) else Color.argb(170, 245, 158, 11)
+                canvas.drawPath(snapErodeClipPath, snapEdgePaint)
+                snapEdgePaint.strokeWidth = 4f
+                snapEdgePaint.color = Color.argb(215, 255, 247, 237)
+                canvas.drawPath(snapErodeClipPath, snapEdgePaint)
+                canvas.restore()
+            }
+        }
+
+        // 3. Simulate & render 420 pixel-sampled tumbling ash flakes & embers drifting slowly in curl wind
+        if (snapDustParticles.isNotEmpty()) {
+            val timeSec = nowMs * 0.001
+            for (i in 0 until snapDustParticles.size) {
+                val p = snapDustParticles[i]
+                if (snapPhase == SnapWipeoutPhase.DISINTEGRATING || snapPhase == SnapWipeoutPhase.VANISHED) {
+                    if (!p.detached && progress >= p.triggerAt) {
+                        p.detached = true
+                        p.x = p.originX
+                        p.y = p.originY
+                        p.life = 0.001f
+                    }
+                    if (p.detached && p.life < 1.05f) {
+                        val gust = 1.0f + 0.35f * Math.sin(timeSec * 1.8 + p.seed).toFloat()
+                        val curlY = Math.sin(timeSec * 2.4 + p.originX * 14.0 + p.seed).toFloat() * 0.045f
+                        p.x += p.vx * gust * dt
+                        p.y += (p.vy + curlY) * dt
+                        p.rotation += p.rotSpeed * dt
+                        p.life += dt * 0.24f // ~4.1s slow wind drift per ash flake
+                    }
+                } else if (snapPhase == SnapWipeoutPhase.REFORMING) {
+                    if (p.detached) {
+                        val pull = (dt * 3.8f).coerceAtMost(1f)
+                        p.x += (p.originX - p.x) * pull
+                        p.y += (p.originY - p.y) * pull
+                        p.rotation -= p.rotSpeed * dt * 1.4f
+                        p.life = (p.life - dt * 0.55f).coerceAtLeast(0.05f)
+                    }
+                }
+
+                if (!p.detached || p.life >= 1.0f) continue
+                val alphaF = if (p.life < 0.12f) p.life / 0.12f else ((1f - (p.life - 0.12f) / 0.88f).coerceIn(0f, 1f))
+                val alphaInt = (alphaF * (if (p.isEmber) 245f else 225f)).toInt().coerceIn(0, 255)
+                val px = p.x * viewW
+                val py = p.y * viewH
+                val sz = p.size * (1f - p.life * 0.45f)
+
+                if (p.isEmber) {
+                    snapParticlePaint.color = if (snapPhase == SnapWipeoutPhase.REFORMING) {
+                        Color.argb(alphaInt, 52, 211, 153)
+                    } else {
+                        Color.argb(alphaInt, p.r, p.g, p.b)
+                    }
+                    canvas.drawCircle(px, py, sz * 0.72f, snapParticlePaint)
+                } else {
+                    val ashFade = (p.life * 0.75f).coerceAtMost(1f)
+                    val rr = (p.r * (1f - ashFade * 0.45f) + 52f * ashFade * 0.45f).toInt().coerceIn(0, 255)
+                    val gg = (p.g * (1f - ashFade * 0.45f) + 49f * ashFade * 0.45f).toInt().coerceIn(0, 255)
+                    val bb = (p.b * (1f - ashFade * 0.45f) + 46f * ashFade * 0.45f).toInt().coerceIn(0, 255)
+                    snapParticlePaint.color = Color.argb(alphaInt, rr, gg, bb)
+                    canvas.save()
+                    canvas.translate(px, py)
+                    canvas.rotate(p.rotation)
+                    canvas.drawRect(-sz, -sz * 0.52f, sz, sz * 0.52f, snapParticlePaint)
+                    canvas.restore()
+                }
+            }
+        }
+
+        // 4. Infinity Gauntlet Golden Snap Shockwave + Flash (or Emerald Time-Stone Reform Wave)
+        val waveElapsed = nowMs - snapShockwaveStartMs
+        if (snapShockwaveStartMs > 0L && waveElapsed in 0L..900L) {
+            val t = waveElapsed.toFloat() / 900f
+            val ease = 1f - (1f - t) * (1f - t)
+            val ox = snapOriginNormX * viewW
+            val oy = snapOriginNormY * viewH
+            val maxR = Math.max(viewW, viewH) * 0.72f
+
+            if (t < 0.24f) {
+                val flashAlpha = ((1f - t / 0.24f) * 105f).toInt().coerceIn(0, 255)
+                snapParticlePaint.color = if (snapShockwaveIsReform) {
+                    Color.argb(flashAlpha, 16, 185, 129)
+                } else {
+                    Color.argb(flashAlpha, 254, 243, 199)
+                }
+                canvas.drawRect(0f, 0f, viewW, viewH, snapParticlePaint)
+            }
+
+            val ringAlpha = ((1f - t) * 235f).toInt().coerceIn(0, 255)
+            snapEdgePaint.strokeWidth = ((1f - t) * 16f).coerceAtLeast(3f)
+            snapEdgePaint.color = if (snapShockwaveIsReform) {
+                Color.argb(ringAlpha, 52, 211, 153)
+            } else {
+                Color.argb(ringAlpha, 250, 204, 21)
+            }
+            canvas.drawCircle(ox, oy, 22f + maxR * ease, snapEdgePaint)
+
+            snapEdgePaint.strokeWidth = ((1f - t) * 5f).coerceAtLeast(1.5f)
+            snapEdgePaint.color = Color.argb(ringAlpha, 255, 255, 255)
+            canvas.drawCircle(ox, oy, 12f + maxR * ease * 0.68f, snapEdgePaint)
+        }
     }
 
     private fun parseSafeColor(hex: String, fallback: Int): Int {

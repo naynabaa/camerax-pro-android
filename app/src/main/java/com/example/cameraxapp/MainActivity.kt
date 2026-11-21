@@ -673,10 +673,23 @@ class MainActivity : AppCompatActivity() {
                 }
                 viewBinding.arFaceOverlayView.updateHandResults(mapped, inputWidth, inputHeight, isFront)
 
-                val primaryGesture = hands.firstOrNull()?.gesture
-                val isActionableGesture = primaryGesture == "PEACE_SIGN" || primaryGesture == "THUMBS_UP" || primaryGesture == "OPEN_PALM"
+                val primaryHand = hands.firstOrNull()
+                val primaryGesture = primaryHand?.gesture
                 val nowMs = System.currentTimeMillis()
-                if (isHandGestureTriggerEnabled && isActionableGesture && primaryGesture != null) {
+
+                // Avengers Endgame Instant Finger-Snap Trigger when Snap Dust Wipeout is armed!
+                if (primaryGesture == "FINGER_SNAP" && viewBinding.arFaceOverlayView.isSnapWipeoutArmed() && (nowMs - lastHandGestureTriggerMs) > 1600L) {
+                    lastHandGestureTriggerMs = nowMs
+                    val snapPt = primaryHand.landmarks.getOrNull(4)
+                    val sx = if (snapPt != null) (if (isFront) 1f - snapPt.x else snapPt.x) else 0.70f
+                    val sy = snapPt?.y ?: 0.42f
+                    runOnUiThread {
+                        triggerSnapWipeoutAction(sx, sy)
+                    }
+                }
+
+                val isActionableGesture = primaryGesture == "PEACE_SIGN" || primaryGesture == "THUMBS_UP" || primaryGesture == "OPEN_PALM"
+                if (isHandGestureTriggerEnabled && isActionableGesture && primaryGesture != null && !viewBinding.arFaceOverlayView.isSnapWipeoutArmed()) {
                     if (primaryGesture != lastStableHandGesture) {
                         lastStableHandGesture = primaryGesture
                         stableHandGestureStartMs = nowMs
@@ -2218,7 +2231,9 @@ class MainActivity : AppCompatActivity() {
 
                     // 4B. Phase 2: MediaPipe 21-Point Hand AR Tracking (alternating frames to preserve 60fps & thermals)
                     val needsHandTracking = !ecoBlocksAr && !thermalBlocksAr &&
-                        (viewBinding.arFaceOverlayView.handArEnabled || (cameraMode == CameraMode.AR_LENS && isHandGestureTriggerEnabled))
+                        (viewBinding.arFaceOverlayView.handArEnabled ||
+                            viewBinding.arFaceOverlayView.isSnapWipeoutArmed() ||
+                            (cameraMode == CameraMode.AR_LENS && isHandGestureTriggerEnabled))
                     if (needsHandTracking && analysisFrameCounter % 2 == 1) {
                         val hm = handLandmarkerHelper
                         if (hm != null && hm.isReady && !hm.isFailed) {
@@ -9865,7 +9880,43 @@ class MainActivity : AppCompatActivity() {
         if (currentArDockTab == ArDockTab.WORLD) {
             dock.tvArDockStatus.text = "WORLD AR · ${ov.getWorldAnchorCount()} ANCHORS"
         }
+        // Sync Snap Dust quick action chips inside Body AR strip
+        val isSnapArmed = ov.isSnapWipeoutArmed()
+        dock.btnDockBodyLockBg.visibility = if (isSnapArmed) View.VISIBLE else View.GONE
+        dock.btnDockBodySnapNow.visibility = if (isSnapArmed) View.VISIBLE else View.GONE
+        if (isSnapArmed) {
+            dock.btnDockBodyLockBg.text = if (ov.hasSnapCleanPlate()) "BG LOCKED" else "LOCK BG"
+            dock.btnDockBodyLockBg.setBackgroundResource(if (ov.hasSnapCleanPlate()) R.drawable.bg_cinema_button_active else R.drawable.bg_cinema_button_inactive)
+            dock.btnDockBodyLockBg.setTextColor(Color.parseColor(if (ov.hasSnapCleanPlate()) "#0F172A" else "#34D399"))
+            val vanished = ov.isSnapVanishedOrDissolving()
+            dock.btnDockBodySnapNow.text = if (vanished) "UNSNAP" else "SNAP!"
+            dock.tvArShutterHint.text = if (ov.hasSnapCleanPlate()) "SNAP FINGERS OR TAP SNAP!" else "LOCK EMPTY BG FIRST, THEN SNAP!"
+        }
         isSyncingArDockSliders = false
+    }
+
+    private fun triggerSnapWipeoutAction(originX: Float = 0.70f, originY: Float = 0.42f) {
+        val ov = viewBinding.arFaceOverlayView
+        if (!ov.isSnapWipeoutArmed()) {
+            ov.applyBodyArPreset("snap_wipeout")
+        }
+        val hapticConst = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            HapticFeedbackConstants.CONFIRM
+        } else {
+            HapticFeedbackConstants.LONG_PRESS
+        }
+        window.decorView.performHapticFeedback(hapticConst)
+        if (ov.isSnapVanishedOrDissolving()) {
+            ov.triggerSnapReform()
+            playCameraCue(ToneGenerator.TONE_PROP_BEEP2, 70)
+            showHudNotice("UNSNAP! Reforming from wind dust...")
+        } else {
+            val liveBmp = try { viewBinding.viewFinder.bitmap } catch (_: Throwable) { null }
+            ov.triggerSnapWipeout(originX, originY, liveBmp)
+            playCameraCue(ToneGenerator.TONE_PROP_ACK, 55)
+            showHudNotice("SNAP! Wiping out in slow wind dust...")
+        }
+        syncArDockFromCalibration()
     }
 
     private fun setupArLensModeDock() {
@@ -9922,6 +9973,7 @@ class MainActivity : AppCompatActivity() {
         // Quick Body AR Carousel listeners
         val bodyQuickMap = listOf(
             dock.btnDockBodyOff to "off",
+            dock.btnDockBodySnapDust to "snap_wipeout",
             dock.btnDockBodyWings to "cyber_angel",
             dock.btnDockBodyCape to "hero_cape",
             dock.btnDockBodyMecha to "mecha_armor",
@@ -9931,10 +9983,24 @@ class MainActivity : AppCompatActivity() {
         for ((btn, pid) in bodyQuickMap) {
             btn.setOnClickListener {
                 viewBinding.arFaceOverlayView.applyBodyArPreset(pid)
-                dock.tvArDockStatus.text = "BODY AR · ${pid.replace("_", " ").uppercase()}"
-                showHudNotice("Body AR: ${pid.replace("_", " ").uppercase()}")
+                dock.tvArDockStatus.text = if (pid == "snap_wipeout") "SNAP DUST · ENDGAME WIPEOUT" else "BODY AR · ${pid.replace("_", " ").uppercase()}"
+                showHudNotice(if (pid == "snap_wipeout") "SNAP DUST ARMED · Lock empty BG or snap fingers!" else "Body AR: ${pid.replace("_", " ").uppercase()}")
                 syncArDockFromCalibration()
             }
+        }
+        dock.btnDockBodyLockBg.setOnClickListener {
+            val bmp = try { viewBinding.viewFinder.bitmap } catch (_: Throwable) { null }
+            if (bmp != null) {
+                viewBinding.arFaceOverlayView.setSnapCleanPlate(bmp)
+                playCameraCue(ToneGenerator.TONE_PROP_BEEP, 40)
+                showHudNotice("CLEAN BG LOCKED! Step into frame & snap fingers!")
+            } else {
+                showHudNotice("Camera warming up — try LOCK BG again", isWarning = true)
+            }
+            syncArDockFromCalibration()
+        }
+        dock.btnDockBodySnapNow.setOnClickListener {
+            triggerSnapWipeoutAction(0.70f, 0.42f)
         }
         dock.btnDockBodySkel.setOnClickListener {
             val ov = viewBinding.arFaceOverlayView
