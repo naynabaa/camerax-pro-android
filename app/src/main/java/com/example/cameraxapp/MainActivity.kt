@@ -221,9 +221,10 @@ class MainActivity : AppCompatActivity() {
     private var burstRunnable: Runnable? = null
     private var isGridVisible = true
 
-    // AR Lens Mode Dedicated Dock & Tap-Photo / Hold (>=1s) Video Recording State
-    private enum class ArDockTab { LENSES, COMIC_TEXT }
+    // AR Lens Mode Dedicated Hybrid Stage Dock (FACE | HAND | BODY | WORLD | MIX) & Tap-Photo / Hold Video State
+    private enum class ArDockTab { LENSES, HAND, BODY, WORLD, MIX, COMIC_TEXT }
     private var currentArDockTab = ArDockTab.LENSES
+    private var arComboStreak: Int = 0
     private var isArDockCollapsed: Boolean = false
     private var isSyncingArDockSliders: Boolean = false
     private var lastActiveArLensName: String = "cyberpunk_visor"
@@ -259,7 +260,7 @@ class MainActivity : AppCompatActivity() {
     private var comicSfxHelper: ComicSoundEffectsHelper? = null
     private var cameraFontHelper: CameraFontHelper? = null
     private var selectedVideoQualityLabel: String = "HD 30FPS"
-    private var activeEffectIntensity: Float = 1.00f
+    private var activeEffectIntensity: Float = 0.85f
     private var comicHalftoneDensity: Float = 1.0f
     private var comicHalftoneDotSize: Float = 1.0f
     private var comicLabelDepth: Float = 1.0f
@@ -329,24 +330,17 @@ class MainActivity : AppCompatActivity() {
         val telemetryText: String = ""
     )
     private val injectedCustomLenses = mutableListOf<CustomLensDef>(
-        CustomLensDef("lens_neon_cat_ears", "Neon Feline Ears", "forehead", "cat_ears", "#ec4899", "#38bdf8", "", "", 1f, 0f, 0f, 0f, true, "NEKO.SYS // V2.0"),
-        CustomLensDef("lens_celestial_halo", "Celestial Halo", "forehead", "halo_tiara", "#fbbf24", "#ffffff", "", "", 1f, 0f, 0f, 0f, true, "AURA LEVEL // 9999"),
-        CustomLensDef("lens_cyber_respirator", "Cyber Mask 2077", "mouth", "cyber_mask", "#06b6d4", "#f43f5e", "", "", 1f, 0f, 0f, 0f, true, "O2 FILTER // 100%"),
-        CustomLensDef("lens_anime_stars", "Star Catchlight", "eyes", "floating_prop", "#fbbf24", "#f43f5e", "", "", 1f, 0f, 0f, 0f, true, "STAR.EYE // ACTIVE"),
-        CustomLensDef("lens_tactical_hud", "Tactical Combat Reticle", "full_face", "target_reticle", "#10b981", "#ef4444", "", "", 1f, 0f, 0f, 0f, true, "LOCK // DIST 1.8M")
+        
     )
     private data class CustomFontDef(
         val id: String, val name: String, val family: String, val category: String,
         val colorHex: String, val glowHex: String, val sampleText: String, val italic: Boolean
     )
     private val injectedFonts = listOf<CustomFontDef>(
-        CustomFontDef("font_jetbrains_mono", "Cyber HUD Monospace", "\"JetBrains Mono\", monospace", "monospace", "#38bdf8", "#0284c7", "CAMERAX PRO · 60FPS · RAW", false),
-        CustomFontDef("font_orbitron", "Orbitron Sci-Fi", "\"Orbitron\", sans-serif", "scifi", "#22d3ee", "#06b6d4", "TARGET LOCK // 99.8% · ACTIVE", false),
-        CustomFontDef("font_vt323", "90s Camcorder VHS", "\"VT323\", monospace", "retro", "#4ade80", "#16a34a", "PLAY ▶ REC · 00:14:28 · SP", false),
-        CustomFontDef("font_chakra_petch", "Tactical Mecha", "\"Chakra Petch\", sans-serif", "tactical", "#fbbf24", "#d97706", "MIL-STD // 810G · APERTURE F/1.8", false),
-        CustomFontDef("font_cinzel", "Cinematic Anamorphic", "\"Cinzel\", serif", "cinematic", "#f8fafc", "#94a3b8", "PANAVISION · 2.39:1 · SCENE 04", false),
-        CustomFontDef("font_space_grotesk", "Studio Clean Minimal", "\"Space Grotesk\", sans-serif", "editorial", "#ffffff", "#64748b", "STUDIO MASTER · 4K UHD · 10-BIT", false),
-        CustomFontDef("font_black_ops", "Black Ops Stencil", "\"Black Ops One\", cursive", "tactical", "#f43f5e", "#be123c", "DEFCON 1 · THERMAL OPTIC ENGAGED", false)
+        CustomFontDef("font_cyber_orbitron", "Cyber Orbitron", "Orbitron", "scifi", "#38BDF8", "#0284C7", "CAMERAX PRO · 4K 60FPS", false),
+        CustomFontDef("font_tech_mono", "Technical Mono", "JetBrains Mono", "monospace", "#FACC15", "#CA8A04", "REC // ISO 400 · f/1.8", false),
+        CustomFontDef("font_retro_pixel", "Retro Arcade", "VT323", "retro", "#34D399", "#059669", "VHS 1994 // CH-03", false),
+        CustomFontDef("font_cinema_serif", "Editorial Cinema", "Cinzel", "cinematic", "#F8FAFC", "#94A3B8", "ANAMORPHIC 2.39:1", true)
     )
     private var activeFontIndex = injectedFonts.indexOfFirst { it.id == "font_jetbrains_mono" }.coerceAtLeast(0)
     private val dynamicFilterChips = mutableListOf<Pair<TextView, String>>()
@@ -838,9 +832,9 @@ class MainActivity : AppCompatActivity() {
 
         viewBinding.proOverlayView.sensorAspectRatio = currentAspectRatio
         viewBinding.tvVideoQualityPill.text = selectedVideoQualityLabel
-        viewBinding.proOverlayView.showWatermark = true
-        viewBinding.proStudioDrawer.switchWatermark.isChecked = true
-        viewBinding.proOverlayView.watermarkText = "CAMERAX PRO · 4K 60FPS · RAW"
+        viewBinding.proOverlayView.showWatermark = false
+        viewBinding.proStudioDrawer.switchWatermark.isChecked = false
+        viewBinding.proOverlayView.watermarkText = "CAMERAX PRO · STUDIO"
         if (false) {
             setAspectMatteMode(ProOverlayView.AspectMatte.CINE_239)
         }
@@ -9683,23 +9677,163 @@ class MainActivity : AppCompatActivity() {
         updateBatchQueueHud()
     }
 
-    private fun selectArDockTab(tab: ArDockTab) {
+    private fun selectArDockTab(tab: ArDockTab, fromUser: Boolean = true) {
         currentArDockTab = tab
-        val isLenses = tab == ArDockTab.LENSES
-        val isComicText = tab == ArDockTab.COMIC_TEXT
+        val dock = viewBinding.arLensModeDock
+        val ov = viewBinding.arFaceOverlayView
 
-        viewBinding.arLensModeDock.tabArDockLenses.setBackgroundResource(if (isLenses) R.drawable.bg_cinema_button_active else R.drawable.bg_cinema_button_inactive)
-        viewBinding.arLensModeDock.tabArDockLenses.setTextColor(Color.parseColor(if (isLenses) "#0F172A" else "#94A3B8"))
-        viewBinding.arLensModeDock.tabArDockComicText.setBackgroundResource(if (isComicText) R.drawable.bg_cinema_button_active else R.drawable.bg_cinema_button_inactive)
-        viewBinding.arLensModeDock.tabArDockComicText.setTextColor(Color.parseColor(if (isComicText) "#0F172A" else "#94A3B8"))
+        val tabButtons = listOf(
+            dock.tabArDockLenses to ArDockTab.LENSES,
+            dock.tabArDockHand to ArDockTab.HAND,
+            dock.tabArDockBody to ArDockTab.BODY,
+            dock.tabArDockWorld to ArDockTab.WORLD,
+            dock.tabArDockMix to ArDockTab.MIX,
+            dock.tabArDockComicText to ArDockTab.COMIC_TEXT
+        )
+        for ((btn, t) in tabButtons) {
+            val active = (tab == t)
+            btn.setBackgroundResource(if (active) R.drawable.bg_cinema_button_active else R.drawable.bg_cinema_button_inactive)
+            btn.setTextColor(Color.parseColor(if (active) "#0F172A" else if (t == ArDockTab.MIX) "#F472B6" else "#94A3B8"))
+        }
 
-        viewBinding.arLensModeDock.scrollArModeLensesStrip.visibility = if (isLenses) View.VISIBLE else View.GONE
-        viewBinding.arLensModeDock.layoutArModeComicTextPanel.visibility = if (isComicText) View.VISIBLE else View.GONE
+        dock.scrollArModeLensesStrip.visibility = if (tab == ArDockTab.LENSES) View.VISIBLE else View.GONE
+        dock.scrollArModeHandStrip.visibility = if (tab == ArDockTab.HAND) View.VISIBLE else View.GONE
+        dock.scrollArModeBodyStrip.visibility = if (tab == ArDockTab.BODY) View.VISIBLE else View.GONE
+        dock.scrollArModeWorldStrip.visibility = if (tab == ArDockTab.WORLD) View.VISIBLE else View.GONE
+        dock.layoutArModeMixPanel.visibility = if (tab == ArDockTab.MIX) View.VISIBLE else View.GONE
+        dock.layoutArModeComicTextPanel.visibility = if (tab == ArDockTab.COMIC_TEXT) View.VISIBLE else View.GONE
+
+        // Exclusive Single-Tracker Performance Isolation on Motorola Edge 60 Pro (keeps 60 FPS & low heat)
+        if (fromUser) {
+            when (tab) {
+                ArDockTab.LENSES -> {
+                    ov.handArEnabled = false
+                    ov.bodyArEnabled = false
+                    ov.worldArEnabled = false
+                    syncWorldArLifecycleAndPower()
+                    if (currentArLensName == "none") setArLens("cyberpunk_visor", showNotice = false)
+                }
+                ArDockTab.HAND -> {
+                    ov.bodyArEnabled = false
+                    ov.worldArEnabled = false
+                    syncWorldArLifecycleAndPower()
+                    if (!ov.handArEnabled) ov.applyHandArPreset("cyber_gauntlet")
+                }
+                ArDockTab.BODY -> {
+                    ov.handArEnabled = false
+                    ov.worldArEnabled = false
+                    syncWorldArLifecycleAndPower()
+                    if (!ov.bodyArEnabled) ov.applyBodyArPreset("cyber_angel")
+                }
+                ArDockTab.WORLD -> {
+                    ov.handArEnabled = false
+                    ov.bodyArEnabled = false
+                    if (!ov.worldArEnabled) {
+                        worldArTracker?.resetReferenceYaw()
+                        ov.applyWorldArPreset("holo_showcase")
+                    }
+                    syncWorldArLifecycleAndPower()
+                    // Smart camera flip: World AR naturally uses Back Camera for floors & walls
+                    if (lensFacing == CameraSelector.DEFAULT_FRONT_CAMERA && recording == null) {
+                        lensFacing = CameraSelector.DEFAULT_BACK_CAMERA
+                        faceMeshHelper?.setFrontFacing(false)
+                        bindCameraUseCases()
+                    }
+                }
+                ArDockTab.MIX -> {
+                    // Mix mode allows stacking Face + Hand + Body + World simultaneously
+                    syncWorldArLifecycleAndPower()
+                }
+                ArDockTab.COMIC_TEXT -> Unit
+            }
+        }
+
+        // Interactive mode prompt & status header
+        when (tab) {
+            ArDockTab.LENSES -> {
+                dock.tvArShutterHint.text = "2-FINGER: PLACE · SIZE · TILT"
+                dock.tvArDockStatus.setTextColor(Color.parseColor("#E879F9"))
+            }
+            ArDockTab.HAND -> {
+                dock.tvArDockStatus.text = "HAND AR · ${ov.handPresetId.replace("_", " ").uppercase()}"
+                dock.tvArDockStatus.setTextColor(Color.parseColor("#34D399"))
+                dock.tvArShutterHint.text = "TRY: PEACE / PINCH / PALM FX"
+            }
+            ArDockTab.BODY -> {
+                dock.tvArDockStatus.text = "BODY AR · ${ov.bodyPresetId.replace("_", " ").uppercase()}"
+                dock.tvArDockStatus.setTextColor(Color.parseColor("#A78BFA"))
+                dock.tvArShutterHint.text = "ARMS UP = SNAP · T-POSE = GEAR"
+            }
+            ArDockTab.WORLD -> {
+                dock.tvArDockStatus.text = "WORLD AR · ${ov.getWorldAnchorCount()} ANCHORS"
+                dock.tvArDockStatus.setTextColor(Color.parseColor("#38BDF8"))
+                dock.tvArShutterHint.text = "TAP FLOOR/WALL TO DROP 3D"
+            }
+            ArDockTab.MIX -> {
+                dock.tvArDockStatus.text = "MIX STUDIO · STACK ALL AR LAYERS"
+                dock.tvArDockStatus.setTextColor(Color.parseColor("#F472B6"))
+                dock.tvArShutterHint.text = "TAP ROLL FOR WILD COMBOS"
+            }
+            ArDockTab.COMIC_TEXT -> {
+                dock.tvArShutterHint.text = "HOLD & DRAG AR TEXT ON SCREEN"
+            }
+        }
 
         if (isArDockCollapsed) {
             isArDockCollapsed = false
-            viewBinding.arLensModeDock.layoutArDockBody.visibility = View.VISIBLE
-            viewBinding.arLensModeDock.btnArDockToggle.text = "v"
+            dock.layoutArDockBody.visibility = View.VISIBLE
+            dock.btnArDockToggle.text = "v"
+        }
+        syncArDockFromCalibration()
+    }
+
+    private fun rollSurpriseArLook() {
+        val ov = viewBinding.arFaceOverlayView
+        arComboStreak += 1
+        window.decorView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+        playCameraCue(ToneGenerator.TONE_PROP_ACK, 45)
+        viewBinding.arLensModeDock.btnArSurprise.text = "#$arComboStreak"
+
+        val faceChoices = listOf("cyberpunk_visor", "golden_crown", "scifi_hud", "mesh_contour", "comic_frame")
+        val handChoices = listOf("cyber_gauntlet", "luxury_jewelry", "arcane_orb", "pyro_wand")
+        val bodyChoices = listOf("cyber_angel", "hero_cape", "mecha_armor", "celestial_stardust", "chroma_studio")
+        val worldChoices = listOf("holo_showcase", "cyber_portal", "cosmic_desk", "ar_measure")
+
+        when (currentArDockTab) {
+            ArDockTab.HAND -> {
+                val pick = handChoices.filter { it != ov.handPresetId }.randomOrNull() ?: handChoices.random()
+                ov.applyHandArPreset(pick)
+                showHudNotice("ROLL #$arComboStreak · HAND: ${pick.replace("_", " ").uppercase()}!")
+            }
+            ArDockTab.BODY -> {
+                val pick = bodyChoices.filter { it != ov.bodyPresetId }.randomOrNull() ?: bodyChoices.random()
+                ov.applyBodyArPreset(pick)
+                showHudNotice("ROLL #$arComboStreak · BODY: ${pick.replace("_", " ").uppercase()}!")
+            }
+            ArDockTab.WORLD -> {
+                val pick = worldChoices.filter { it != ov.worldPresetId }.randomOrNull() ?: worldChoices.random()
+                worldArTracker?.resetReferenceYaw()
+                ov.applyWorldArPreset(pick)
+                syncWorldArLifecycleAndPower()
+                showHudNotice("ROLL #$arComboStreak · WORLD: ${pick.replace("_", " ").uppercase()}!")
+            }
+            ArDockTab.MIX -> {
+                val f = faceChoices.random()
+                val h = handChoices.random()
+                val b = bodyChoices.random()
+                val w = worldChoices.random()
+                setArLens(f, showNotice = false)
+                ov.applyHandArPreset(h)
+                ov.applyBodyArPreset(b)
+                ov.applyWorldArPreset(w)
+                syncWorldArLifecycleAndPower()
+                showHudNotice("WILD COMBO #$arComboStreak: ${f.take(5).uppercase()} + ${h.take(5).uppercase()} + ${b.take(5).uppercase()}!")
+            }
+            else -> {
+                val pick = faceChoices.filter { it != currentArLensName }.randomOrNull() ?: faceChoices.random()
+                setArLens(pick, showNotice = false)
+                showHudNotice("ROLL #$arComboStreak · LENS: ${pick.replace("_", " ").uppercase()}!")
+            }
         }
         syncArDockFromCalibration()
     }
@@ -9707,20 +9841,42 @@ class MainActivity : AppCompatActivity() {
     private fun syncArDockFromCalibration() {
         isSyncingArDockSliders = true
         val dock = viewBinding.arLensModeDock
+        val ov = viewBinding.arFaceOverlayView
         val isModified = Math.abs(calibOffsetX) > 0.002f ||
             Math.abs(calibOffsetY) > 0.002f ||
             Math.abs(calibScale - 1.0f) > 0.01f ||
             Math.abs(calibRotDeg) > 0.5f
         dock.btnArGestureReset.visibility = if (isModified) View.VISIBLE else View.GONE
-        dock.switchArDockBubble.isChecked = viewBinding.arFaceOverlayView.enableComicSpeechBubble
+        dock.switchArDockBubble.isChecked = ov.enableComicSpeechBubble
         dock.switchArDockAutoAdapt.isChecked = isAutoAdaptEnabled
+
+        // Highlight MIX layer status pills
+        val faceOn = currentArLensName != "none" || ov.faceBeautyEnabled
+        val mixStates = listOf(
+            dock.btnDockMixFace to faceOn,
+            dock.btnDockMixHand to ov.handArEnabled,
+            dock.btnDockMixBody to ov.bodyArEnabled,
+            dock.btnDockMixWorld to ov.worldArEnabled
+        )
+        for ((btn, active) in mixStates) {
+            btn.setBackgroundResource(if (active) R.drawable.bg_cinema_button_active else R.drawable.bg_cinema_button_inactive)
+            btn.setTextColor(Color.parseColor(if (active) "#0F172A" else "#94A3B8"))
+        }
+        if (currentArDockTab == ArDockTab.WORLD) {
+            dock.tvArDockStatus.text = "WORLD AR · ${ov.getWorldAnchorCount()} ANCHORS"
+        }
         isSyncingArDockSliders = false
     }
 
     private fun setupArLensModeDock() {
         val dock = viewBinding.arLensModeDock
-        dock.tabArDockLenses.setOnClickListener { selectArDockTab(ArDockTab.LENSES) }
-        dock.tabArDockComicText.setOnClickListener { selectArDockTab(ArDockTab.COMIC_TEXT) }
+        dock.tabArDockLenses.setOnClickListener { selectArDockTab(ArDockTab.LENSES, fromUser = true) }
+        dock.tabArDockHand.setOnClickListener { selectArDockTab(ArDockTab.HAND, fromUser = true) }
+        dock.tabArDockBody.setOnClickListener { selectArDockTab(ArDockTab.BODY, fromUser = true) }
+        dock.tabArDockWorld.setOnClickListener { selectArDockTab(ArDockTab.WORLD, fromUser = true) }
+        dock.tabArDockMix.setOnClickListener { selectArDockTab(ArDockTab.MIX, fromUser = true) }
+        dock.tabArDockComicText.setOnClickListener { selectArDockTab(ArDockTab.COMIC_TEXT, fromUser = true) }
+        dock.btnArSurprise.setOnClickListener { rollSurpriseArLook() }
         dock.btnArDockToggle.setOnClickListener {
             isArDockCollapsed = !isArDockCollapsed
             dock.layoutArDockBody.visibility = if (isArDockCollapsed) View.GONE else View.VISIBLE
@@ -9739,7 +9895,112 @@ class MainActivity : AppCompatActivity() {
             viewBinding.switchArAutoAdapt.isChecked = isChecked
             showHudNotice("AR Auto-Adapt ${if (isChecked) "ON" else "OFF"}")
         }
-        selectArDockTab(ArDockTab.LENSES)
+
+        // Quick Hand AR Carousel listeners
+        val handQuickMap = listOf(
+            dock.btnDockHandOff to "off",
+            dock.btnDockHandCyber to "cyber_gauntlet",
+            dock.btnDockHandGold to "luxury_jewelry",
+            dock.btnDockHandOrb to "arcane_orb",
+            dock.btnDockHandFlame to "pyro_wand"
+        )
+        for ((btn, pid) in handQuickMap) {
+            btn.setOnClickListener {
+                viewBinding.arFaceOverlayView.applyHandArPreset(pid)
+                dock.tvArDockStatus.text = "HAND AR · ${pid.replace("_", " ").uppercase()}"
+                showHudNotice("Hand AR: ${pid.replace("_", " ").uppercase()}")
+                syncArDockFromCalibration()
+            }
+        }
+        dock.btnDockHandSkel.setOnClickListener {
+            val ov = viewBinding.arFaceOverlayView
+            ov.handShowSkeleton = !ov.handShowSkeleton
+            if (ov.handShowSkeleton) ov.handArEnabled = true
+            showHudNotice("21-Pt Hand Skeleton ${if (ov.handShowSkeleton) "ON" else "OFF"}")
+        }
+
+        // Quick Body AR Carousel listeners
+        val bodyQuickMap = listOf(
+            dock.btnDockBodyOff to "off",
+            dock.btnDockBodyWings to "cyber_angel",
+            dock.btnDockBodyCape to "hero_cape",
+            dock.btnDockBodyMecha to "mecha_armor",
+            dock.btnDockBodyStardust to "celestial_stardust",
+            dock.btnDockBodyChroma to "chroma_studio"
+        )
+        for ((btn, pid) in bodyQuickMap) {
+            btn.setOnClickListener {
+                viewBinding.arFaceOverlayView.applyBodyArPreset(pid)
+                dock.tvArDockStatus.text = "BODY AR · ${pid.replace("_", " ").uppercase()}"
+                showHudNotice("Body AR: ${pid.replace("_", " ").uppercase()}")
+                syncArDockFromCalibration()
+            }
+        }
+        dock.btnDockBodySkel.setOnClickListener {
+            val ov = viewBinding.arFaceOverlayView
+            ov.bodyShowSkeleton = !ov.bodyShowSkeleton
+            if (ov.bodyShowSkeleton) ov.bodyArEnabled = true
+            showHudNotice("33-Pt Body Skeleton ${if (ov.bodyShowSkeleton) "ON" else "OFF"}")
+        }
+
+        // Quick World AR Carousel listeners
+        val worldQuickMap = listOf(
+            dock.btnDockWorldOff to "off",
+            dock.btnDockWorldCube to "holo_showcase",
+            dock.btnDockWorldPortal to "cyber_portal",
+            dock.btnDockWorldPlanet to "cosmic_desk",
+            dock.btnDockWorldRuler to "ar_measure",
+            dock.btnDockWorldGlb to "glb_world_stage"
+        )
+        for ((btn, pid) in worldQuickMap) {
+            btn.setOnClickListener {
+                if (pid != "off") worldArTracker?.resetReferenceYaw()
+                viewBinding.arFaceOverlayView.applyWorldArPreset(pid)
+                syncWorldArLifecycleAndPower()
+                showHudNotice("World AR: ${pid.replace("_", " ").uppercase()}")
+                syncArDockFromCalibration()
+            }
+        }
+        dock.btnDockWorldDrop.setOnClickListener {
+            viewBinding.arFaceOverlayView.worldArEnabled = true
+            val placed = viewBinding.arFaceOverlayView.dropDefaultWorldAnchor()
+            syncWorldArLifecycleAndPower()
+            syncArDockFromCalibration()
+            showHudNotice("Dropped ${placed.objectType.name.replace("_", " ")} (${String.format(Locale.US, "%.2fm", placed.distanceM)})")
+        }
+        dock.btnDockWorldClear.setOnClickListener {
+            viewBinding.arFaceOverlayView.clearWorldAnchors()
+            syncArDockFromCalibration()
+            showHudNotice("World Anchors Cleared")
+        }
+
+        // Quick MIX Studio layer toggles + Wild Combo button
+        dock.btnDockMixFace.setOnClickListener {
+            if (currentArLensName == "none") setArLens("cyberpunk_visor", showNotice = false) else setArLens("none", showNotice = false)
+            syncArDockFromCalibration()
+        }
+        dock.btnDockMixHand.setOnClickListener {
+            val ov = viewBinding.arFaceOverlayView
+            if (ov.handArEnabled) ov.applyHandArPreset("off") else ov.applyHandArPreset("arcane_orb")
+            syncArDockFromCalibration()
+        }
+        dock.btnDockMixBody.setOnClickListener {
+            val ov = viewBinding.arFaceOverlayView
+            if (ov.bodyArEnabled) ov.applyBodyArPreset("off") else ov.applyBodyArPreset("cyber_angel")
+            syncArDockFromCalibration()
+        }
+        dock.btnDockMixWorld.setOnClickListener {
+            val ov = viewBinding.arFaceOverlayView
+            if (ov.worldArEnabled) ov.applyWorldArPreset("off") else ov.applyWorldArPreset("cyber_portal")
+            syncWorldArLifecycleAndPower()
+            syncArDockFromCalibration()
+        }
+        dock.btnDockMixRoll.setOnClickListener {
+            currentArDockTab = ArDockTab.MIX
+            rollSurpriseArLook()
+        }
+
+        selectArDockTab(ArDockTab.LENSES, fromUser = false)
         syncArDockFromCalibration()
     }
 
