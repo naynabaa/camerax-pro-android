@@ -267,6 +267,8 @@ class ARFaceOverlayView @JvmOverloads constructor(
     var snapDustDensity: Float = 1.35f
     @Volatile
     var snapWindSpeed: Float = 1.3f
+    @Volatile
+    var snapMinNearHandScale: Float = 0.15f
     private val gauntletFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
     }
@@ -4976,12 +4978,23 @@ class ARFaceOverlayView @JvmOverloads constructor(
             }
             val palette = if (isBackOfHand) goldBackColors else goldPalmColors
 
-            // Compute live Pinch Charge (Thumb #4 <-> Middle #12 or Index #8)
+            // Compute live Pinch Charge (Thumb #4 <-> Middle #12 or Index #8) + Near-Camera Proximity Surge
+            val lm0 = hand.landmarks[0]
+            val lm9 = hand.landmarks[9]
+            val lm5 = hand.landmarks[5]
+            val lm17 = hand.landmarks[17]
+            val normPalm = Math.hypot((lm9.x - lm0.x).toDouble(), (lm9.y - lm0.y).toDouble()).toFloat()
+            val normKnuckle = Math.hypot((lm5.x - lm17.x).toDouble(), (lm5.y - lm17.y).toDouble()).toFloat()
+            val apparentNormScale = Math.max(normPalm, normKnuckle * 1.18f)
+            val minGate = snapMinNearHandScale.coerceIn(0.08f, 0.28f)
+            val proximityCharge = ((apparentNormScale - minGate * 0.65f) / (minGate * 0.60f)).coerceIn(0f, 1f)
+            val proximityGain = 0.38f + proximityCharge * 0.80f
+
             val thumbMidRatio = Math.hypot((pts[4].x - pts[12].x).toDouble(), (pts[4].y - pts[12].y).toDouble()).toFloat() / handScale
             val thumbIdxRatio = Math.hypot((pts[4].x - pts[8].x).toDouble(), (pts[4].y - pts[8].y).toDouble()).toFloat() / handScale
             val minPinchRatio = Math.min(thumbMidRatio, thumbIdxRatio)
             val pinchCharge = ((0.60f - minPinchRatio) / 0.34f).coerceIn(0f, 1f)
-            val totalPower = (pinchCharge * 0.85f + snapFlare * 1.35f).coerceAtMost(1.6f)
+            val totalPower = ((pinchCharge * 0.85f + proximityCharge * 0.32f) * proximityGain + snapFlare * 1.35f).coerceAtMost(1.65f)
 
             // 1. Armored Forearm / Wrist Cuff
             run {

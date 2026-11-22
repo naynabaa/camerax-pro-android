@@ -60,6 +60,9 @@ class HandLandmarkerHelper(
     @Volatile var snapReleaseThreshold: Float = 0.50f
     @Volatile var snapMaxWindowMs: Long = 680L
     @Volatile var snapCooldownMs: Long = 1800L
+    // Nearby Camera Distance Mechanism: ignore distant background hands below minimum apparent palm/knuckle scale
+    @Volatile var nearCameraDistanceEnabled: Boolean = true
+    @Volatile var minNearHandScale: Float = 0.15f
 
     private var lastSnapPinchTimeMs: Long = 0L
     private var lastSnapEmittedTimeMs: Long = 0L
@@ -104,12 +107,17 @@ class HandLandmarkerHelper(
                             if (lmList.size < 21) continue
                             val pts = lmList.map { PointF(it.x(), it.y()) }
                             val handedLabel = allHanded.getOrNull(hIdx)?.firstOrNull()?.categoryName() ?: "Right"
-                            var gesture = classifyGesture(pts)
+                            val wrist = pts[0]
+                            val rawPalmSize = hypot((pts[9].x - wrist.x).toDouble(), (pts[9].y - wrist.y).toDouble()).toFloat()
+                            val knuckleWidth = hypot((pts[5].x - pts[17].x).toDouble(), (pts[5].y - pts[17].y).toDouble()).toFloat()
+                            val apparentScale = Math.max(rawPalmSize, knuckleWidth * 1.18f)
+                            val isWithinNearCameraRange = !nearCameraDistanceEnabled || apparentScale >= minNearHandScale
 
-                            // Real 21-Point Avengers Finger-Snap Detector using configurable sensitivity thresholds
-                            if (snapEnabled) {
-                                val wrist = pts[0]
-                                val palmSize = hypot((pts[9].x - wrist.x).toDouble(), (pts[9].y - wrist.y).toDouble()).toFloat().coerceAtLeast(0.04f)
+                            var gesture = if (isWithinNearCameraRange) classifyGesture(pts) else "NONE"
+
+                            // Real 21-Point Avengers Finger-Snap Detector gated by Nearby Camera Distance Mechanism
+                            if (snapEnabled && isWithinNearCameraRange) {
+                                val palmSize = rawPalmSize.coerceAtLeast(0.04f)
                                 val thumbMiddleDist = hypot((pts[4].x - pts[12].x).toDouble(), (pts[4].y - pts[12].y).toDouble()).toFloat() / palmSize
                                 val middleToWrist = hypot((pts[12].x - wrist.x).toDouble(), (pts[12].y - wrist.y).toDouble()).toFloat() / palmSize
                                 if (thumbMiddleDist <= snapPinchThreshold) {
@@ -124,6 +132,8 @@ class HandLandmarkerHelper(
                                     lastSnapPinchTimeMs = 0L
                                     lastSnapEmittedTimeMs = nowMs
                                 }
+                            } else if (!isWithinNearCameraRange) {
+                                lastSnapPinchTimeMs = 0L
                             }
 
                             hands.add(TrackedHand(pts, gesture, handedLabel))

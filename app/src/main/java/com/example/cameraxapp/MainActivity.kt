@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.ContentUris
 import android.content.ContentValues
 import android.content.pm.PackageManager
+import android.content.res.ColorStateList
 import android.net.Uri
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -113,6 +114,7 @@ import java.text.SimpleDateFormat
 import java.util.Locale
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import org.json.JSONArray
 import org.json.JSONObject
 import kotlin.math.roundToInt
@@ -153,6 +155,28 @@ class MainActivity : AppCompatActivity() {
     private var isNightExtensionActive: Boolean = false
     private var preNightExposureIndex: Int = 0
     private var hasSavedPreNightExposure: Boolean = false
+
+    // Intelligent Tap-to-Focus, Continuous AF & Real-Time Auto Blur Clearing
+    @Volatile
+    private var isAutoBlurClearEnabled: Boolean = true
+    @Volatile
+    private var isAutoClearBlurLogsEnabled: Boolean = true
+    @Volatile
+    private var configuredFocusMode: String = "continuous_af"
+    @Volatile
+    private var isAfAeLocked: Boolean = false
+    @Volatile
+    private var lastFocusNormX: Float = 0.5f
+    @Volatile
+    private var lastFocusNormY: Float = 0.5f
+    @Volatile
+    private var lastBlurCheckMs: Long = 0L
+    @Volatile
+    private var lastAutoBlurClearMs: Long = 0L
+    @Volatile
+    private var rollingPeakSharpness: Float = 0f
+    @Volatile
+    private var consecutiveBlurFrames: Int = 0
 
     // Default lens is BACK camera
     private var lensFacing: CameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
@@ -2103,6 +2127,74 @@ class MainActivity : AppCompatActivity() {
                         }
                     }
 
+                    // Real-Time Laplacian Sharpness Monitor: Auto Blur Clearing (runs every 320ms, zero allocations)
+                    if (isAutoBlurClearEnabled && !isAfAeLocked && !isPanoramaCapturing && !thermalComplexityReduced && (nowMs - lastBlurCheckMs) >= 320L) {
+                        lastBlurCheckMs = nowMs
+                        try {
+                            val yPlane = imageProxy.planes[0]
+                            val yBuf = yPlane.buffer
+                            val yWidth = imageProxy.width
+                            val yHeight = imageProxy.height
+                            val yRowStride = yPlane.rowStride
+                            val yPixelStride = yPlane.pixelStride
+                            if (yWidth > 24 && yHeight > 24) {
+                                val startX = (yWidth * 0.22f).toInt().coerceAtLeast(2)
+                                val endX = (yWidth * 0.78f).toInt().coerceAtMost(yWidth - 3)
+                                val startY = (yHeight * 0.22f).toInt().coerceAtLeast(2)
+                                val endY = (yHeight * 0.78f).toInt().coerceAtMost(yHeight - 3)
+                                val step = Math.max(6, Math.min(yWidth, yHeight) / 28)
+                                var lapSum = 0.0
+                                var lapSqSum = 0.0
+                                var sampleCount = 0
+                                var sy = startY
+                                while (sy < endY) {
+                                    val rowC = sy * yRowStride
+                                    val rowU = (sy - 1) * yRowStride
+                                    val rowD = (sy + 1) * yRowStride
+                                    var sx = startX
+                                    while (sx < endX) {
+                                        val iC = rowC + sx * yPixelStride
+                                        val iL = rowC + (sx - 1) * yPixelStride
+                                        val iR = rowC + (sx + 1) * yPixelStride
+                                        val iU = rowU + sx * yPixelStride
+                                        val iD = rowD + sx * yPixelStride
+                                        if (iR < yBuf.limit() && iD < yBuf.limit()) {
+                                            val c = yBuf.get(iC).toInt() and 0xFF
+                                            val l = yBuf.get(iL).toInt() and 0xFF
+                                            val r = yBuf.get(iR).toInt() and 0xFF
+                                            val u = yBuf.get(iU).toInt() and 0xFF
+                                            val d = yBuf.get(iD).toInt() and 0xFF
+                                            val lap = (4 * c - l - r - u - d).toDouble()
+                                            lapSum += lap
+                                            lapSqSum += lap * lap
+                                            sampleCount++
+                                        }
+                                        sx += step
+                                    }
+                                    sy += step
+                                }
+                                if (sampleCount > 16) {
+                                    val mean = lapSum / sampleCount
+                                    val variance = ((lapSqSum / sampleCount) - (mean * mean)).toFloat().coerceAtLeast(0f)
+                                    val decayedPeak = rollingPeakSharpness * 0.96f
+                                    rollingPeakSharpness = if (variance > decayedPeak) variance else decayedPeak
+                                    if (rollingPeakSharpness > 180f && variance < rollingPeakSharpness * 0.50f) {
+                                        consecutiveBlurFrames++
+                                        if (consecutiveBlurFrames >= 2 && (nowMs - lastAutoBlurClearMs) >= 2200L) {
+                                            consecutiveBlurFrames = 0
+                                            lastAutoBlurClearMs = nowMs
+                                            runOnUiThread { triggerAutoBlurClearSweep(silent = false) }
+                                        }
+                                    } else {
+                                        consecutiveBlurFrames = 0
+                                    }
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Auto blur sharpness analysis skipped", e)
+                        }
+                    }
+
                     // Automated Panorama Sequence: CameraX ImageAnalysis Overlap Detection, Stitch Alignment & Guidance Arrows
                     if (cameraMode == CameraMode.PANORAMA && isPanoramaCapturing && !isPanoramaStitching) {
                         try {
@@ -2654,6 +2746,14 @@ class MainActivity : AppCompatActivity() {
             // Re-apply real-time ColorMatrix / RenderEffect filter onto TextureView preview
             syncStylizeLoopState()
             viewBinding.viewFinder.post { applyLivePreviewColorMatrix() }
+
+            // Reset sharpness baseline & run initial Auto-Focus / Blur-Clear sweep after binding
+            isAfAeLocked = false
+            rollingPeakSharpness = 0f
+            consecutiveBlurFrames = 0
+            if (isAutoBlurClearEnabled) {
+                viewBinding.viewFinder.postDelayed({ triggerAutoBlurClearSweep(silent = true) }, 280L)
+            }
 
         } catch (exc: Exception) {
             Log.e(TAG, "Use case binding failed, attempting fallback without analysis", exc)
@@ -7894,6 +7994,132 @@ class MainActivity : AppCompatActivity() {
         return isTwoFingerArAdjusting
     }
 
+    private fun animateFocusRing(x: Float, y: Float, colorHex: String, keepVisible: Boolean = false, pulseScale: Float = 1.28f) {
+        val ring = viewBinding.focusRing
+        val fallbackPx = 64f * resources.displayMetrics.density
+        val ringW = if (ring.width > 0) ring.width.toFloat() else fallbackPx
+        val ringH = if (ring.height > 0) ring.height.toFloat() else fallbackPx
+        ring.animate().cancel()
+        ring.x = (x - ringW / 2f).coerceIn(0f, (viewBinding.viewFinder.width - ringW).coerceAtLeast(0f))
+        ring.y = (y - ringH / 2f).coerceIn(0f, (viewBinding.viewFinder.height - ringH).coerceAtLeast(0f))
+        ring.backgroundTintList = ColorStateList.valueOf(Color.parseColor(colorHex))
+        ring.visibility = View.VISIBLE
+        ring.alpha = 1.0f
+        ring.scaleX = pulseScale
+        ring.scaleY = pulseScale
+        ring.animate()
+            .scaleX(1.0f)
+            .scaleY(1.0f)
+            .alpha(if (keepVisible) 0.96f else 0.88f)
+            .setDuration(200L)
+            .setInterpolator(DecelerateInterpolator())
+            .withEndAction {
+                if (!keepVisible) {
+                    ring.animate()
+                        .alpha(0f)
+                        .setStartDelay(950L)
+                        .setDuration(240L)
+                        .withEndAction { ring.visibility = View.GONE }
+                        .start()
+                }
+            }
+            .start()
+    }
+
+    private fun triggerTapToFocusAndClearBlur(
+        x: Float,
+        y: Float,
+        lockAfAe: Boolean = false,
+        isAutoClear: Boolean = false,
+        silent: Boolean = false
+    ) {
+        val control = cameraControl ?: return
+        val vfW = viewBinding.viewFinder.width.toFloat().coerceAtLeast(1f)
+        val vfH = viewBinding.viewFinder.height.toFloat().coerceAtLeast(1f)
+        val clampedX = x.coerceIn(0f, vfW)
+        val clampedY = y.coerceIn(0f, vfH)
+        lastFocusNormX = (clampedX / vfW).coerceIn(0.12f, 0.88f)
+        lastFocusNormY = (clampedY / vfH).coerceIn(0.12f, 0.88f)
+        isAfAeLocked = lockAfAe
+        consecutiveBlurFrames = 0
+        lastAutoBlurClearMs = SystemClock.uptimeMillis()
+
+        // Cancel any stale/blurry focus lock immediately before issuing a fresh optical sweep
+        try {
+            control.cancelFocusAndMetering()
+        } catch (_: Exception) {
+        }
+
+        val factory = viewBinding.viewFinder.meteringPointFactory
+        // Tight AF spot (0.14) for crisp subject sharpness + wider AE/AWB spot (0.28) to prevent blown highlights
+        val afPoint = factory.createPoint(clampedX, clampedY, 0.14f)
+        val aePoint = factory.createPoint(clampedX, clampedY, 0.28f)
+        val actionBuilder = FocusMeteringAction.Builder(afPoint, FocusMeteringAction.FLAG_AF)
+            .addPoint(aePoint, FocusMeteringAction.FLAG_AE or FocusMeteringAction.FLAG_AWB)
+
+        if (lockAfAe) {
+            actionBuilder.disableAutoCancel()
+        } else {
+            // Auto-return to Continuous Auto-Focus (CAF) after 3s so camera stays sharp when moving
+            actionBuilder.setAutoCancelDuration(3L, TimeUnit.SECONDS)
+        }
+
+        if (!silent) {
+            val initialColor = when {
+                lockAfAe -> "#F59E0B"
+                isAutoClear -> "#38BDF8"
+                else -> "#FACC15"
+            }
+            animateFocusRing(clampedX, clampedY, initialColor, keepVisible = lockAfAe)
+            if (!isAutoClear) {
+                playCameraCue(ToneGenerator.TONE_PROP_ACK, 40)
+            }
+        }
+
+        val future = control.startFocusAndMetering(actionBuilder.build())
+        future.addListener({
+            try {
+                val result = future.get()
+                if (result.isFocusSuccessful) {
+                    if (!silent) {
+                        val confirmColor = if (lockAfAe) "#F59E0B" else "#34D399"
+                        animateFocusRing(clampedX, clampedY, confirmColor, keepVisible = lockAfAe, pulseScale = 1.06f)
+                        if (lockAfAe) {
+                            window.decorView.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                            showHudNotice("AF/AE Locked • Tap anywhere to unlock")
+                        } else if (isAutoClear) {
+                            showHudNotice("Auto Blur Cleared • Sharp")
+                        }
+                    }
+                } else if (!isAutoClear && !lockAfAe) {
+                    // Fallback wide blur-clearing sweep so lens never stays blurry on low-contrast taps
+                    try {
+                        control.cancelFocusAndMetering()
+                        val widePoint = factory.createPoint(clampedX, clampedY, 0.36f)
+                        val fallbackAction = FocusMeteringAction.Builder(
+                            widePoint,
+                            FocusMeteringAction.FLAG_AF or FocusMeteringAction.FLAG_AE
+                        ).setAutoCancelDuration(3L, TimeUnit.SECONDS).build()
+                        control.startFocusAndMetering(fallbackAction)
+                    } catch (_: Exception) {
+                    }
+                }
+            } catch (_: Exception) {
+                // Cancelled by a newer tap focus request
+            }
+        }, ContextCompat.getMainExecutor(this))
+    }
+
+    private fun triggerAutoBlurClearSweep(silent: Boolean = false) {
+        if (!isAutoBlurClearEnabled || isAfAeLocked) return
+        val vfW = viewBinding.viewFinder.width.toFloat()
+        val vfH = viewBinding.viewFinder.height.toFloat()
+        if (vfW <= 1f || vfH <= 1f) return
+        val targetX = vfW * lastFocusNormX.coerceIn(0.2f, 0.8f)
+        val targetY = vfH * lastFocusNormY.coerceIn(0.2f, 0.8f)
+        triggerTapToFocusAndClearBlur(targetX, targetY, lockAfAe = false, isAutoClear = true, silent = silent)
+    }
+
     private fun setupViewfinderGestures() {
         val scaleGestureDetector = ScaleGestureDetector(this, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
             override fun onScale(detector: ScaleGestureDetector): Boolean {
@@ -7903,6 +8129,16 @@ class MainActivity : AppCompatActivity() {
                 val currentZoomRatio = camera?.cameraInfo?.zoomState?.value?.zoomRatio ?: 1f
                 cameraControl?.setZoomRatio(currentZoomRatio * detector.scaleFactor)
                 return true
+            }
+
+            override fun onScaleEnd(detector: ScaleGestureDetector) {
+                if (cameraMode != CameraMode.AR_LENS || currentArLensName == "none") {
+                    rollingPeakSharpness = 0f
+                    consecutiveBlurFrames = 0
+                    if (isAutoBlurClearEnabled && !isAfAeLocked) {
+                        viewBinding.viewFinder.postDelayed({ triggerAutoBlurClearSweep(silent = true) }, 180L)
+                    }
+                }
             }
         })
 
@@ -7930,30 +8166,16 @@ class MainActivity : AppCompatActivity() {
                 }
 
                 
-                val point = viewBinding.viewFinder.meteringPointFactory.createPoint(e.x, e.y)
-                val action = FocusMeteringAction.Builder(point).build()
-                cameraControl?.startFocusAndMetering(action)
-                playCameraCue(ToneGenerator.TONE_PROP_ACK, 40)
-
-                // Animate Focus Ring
-                viewBinding.focusRing.x = e.x - (viewBinding.focusRing.width / 2)
-                viewBinding.focusRing.y = e.y - (viewBinding.focusRing.height / 2)
-                viewBinding.focusRing.visibility = View.VISIBLE
-                viewBinding.focusRing.alpha = 1.0f
-                viewBinding.focusRing.scaleX = 1.3f
-                viewBinding.focusRing.scaleY = 1.3f
-                viewBinding.focusRing.animate()
-                    .scaleX(1.0f)
-                    .scaleY(1.0f)
-                    .alpha(0.8f)
-                    .setDuration(250)
-                    .withEndAction {
-                        viewBinding.focusRing.animate().alpha(0f).setStartDelay(900).setDuration(250).withEndAction {
-                            viewBinding.focusRing.visibility = View.GONE
-                        }.start()
-                    }.start()
+                triggerTapToFocusAndClearBlur(e.x, e.y, lockAfAe = false, isAutoClear = false, silent = false)
                 
                 return true
+            }
+
+            override fun onLongPress(e: MotionEvent) {
+                if (suppressNextTapFocus) return
+                
+                triggerTapToFocusAndClearBlur(e.x, e.y, lockAfAe = true, isAutoClear = false, silent = false)
+                
             }
         })
 
@@ -10276,6 +10498,22 @@ class MainActivity : AppCompatActivity() {
                         }
                     ),
                     FloatingMenuSpec(
+                        id = "snap_distance",
+                        label = "Range",
+                        isSlider = true,
+                        min = 48,
+                        max = 165,
+                        defaultVal = 88,
+                        currentVal = (13.2f / (handLandmarkerHelper?.minNearHandScale ?: 0.15f).coerceIn(0.08f, 0.28f)).toInt().coerceIn(48, 165),
+                        formatVal = { v -> "≤${v}cm" },
+                        onSliderChange = { v ->
+                            val minScale = (13.2f / v.toFloat().coerceAtLeast(48f)).coerceIn(0.08f, 0.28f)
+                            handLandmarkerHelper?.nearCameraDistanceEnabled = true
+                            handLandmarkerHelper?.minNearHandScale = minScale
+                            ov.snapMinNearHandScale = minScale
+                        }
+                    ),
+                    FloatingMenuSpec(
                         id = "snap_density",
                         label = "Density",
                         isSlider = true,
@@ -10620,6 +10858,8 @@ class MainActivity : AppCompatActivity() {
             id = "pro_tools",
             label = "Tools",
             options = listOf(
+                "auto_blur_clear" to if (isAutoBlurClearEnabled) "Auto Clear Blur ✓" else "Auto Clear Blur",
+                "auto_clear_blur_logs" to if (isAutoClearBlurLogsEnabled) "Auto-Clear Blur Logs ✓" else "Auto-Clear Blur Logs",
                 "peaking" to if (viewBinding.proOverlayView.showFocusPeaking) "Peaking ✓" else "Peaking",
                 "hist" to if (viewBinding.proOverlayView.showHistogram) "Histogram ✓" else "Histogram",
                 "zebra" to if (viewBinding.proOverlayView.showZebraStripes) "Zebra ✓" else "Zebra",
@@ -10629,6 +10869,19 @@ class MainActivity : AppCompatActivity() {
             activeOptionId = "",
             onOptionSelect = { id ->
                 when (id) {
+                    "auto_blur_clear" -> {
+                        isAutoBlurClearEnabled = !isAutoBlurClearEnabled
+                        showHudNotice(if (isAutoBlurClearEnabled) "Auto Blur Clear: ON (Live AF)" else "Auto Blur Clear: OFF")
+                        if (isAutoBlurClearEnabled) {
+                            rollingPeakSharpness = 0f
+                            consecutiveBlurFrames = 0
+                            triggerAutoBlurClearSweep(silent = false)
+                        }
+                    }
+                    "auto_clear_blur_logs" -> {
+                        isAutoClearBlurLogsEnabled = !isAutoClearBlurLogsEnabled
+                        showHudNotice(if (isAutoClearBlurLogsEnabled) "Auto-Clear Blur Logs: ON" else "Auto-Clear Blur Logs: OFF")
+                    }
                     "peaking" -> viewBinding.proOverlayView.showFocusPeaking = !viewBinding.proOverlayView.showFocusPeaking
                     "hist" -> viewBinding.proOverlayView.showHistogram = !viewBinding.proOverlayView.showHistogram
                     "zebra" -> viewBinding.proOverlayView.showZebraStripes = !viewBinding.proOverlayView.showZebraStripes
