@@ -489,12 +489,14 @@
             android:textStyle="bold" />
     </LinearLayout>
 
-    <!-- 5-Slot Infinite Rotating Mode Carousel (Silver Glassy Theme - No multi-line text wrap) -->
+    <!-- 5-Slot Infinite Rotating Mode Carousel (High-Contrast Dark Scrim + Text Shadows) -->
     <FrameLayout
         android:id="@+id/modeScrollView"
         android:layout_width="match_parent"
-        android:layout_height="44dp"
-        android:layout_marginBottom="12dp"
+        android:layout_height="48dp"
+        android:paddingTop="4dp"
+        android:paddingBottom="4dp"
+        android:background="#8C000000"
         app:layout_constraintBottom_toTopOf="@id/bottomControls"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent">
@@ -524,7 +526,7 @@
                 android:layout_weight="0.88"
                 android:gravity="center"
                 android:text="SLOW-MO"
-                android:textColor="#64748B"
+                android:textColor="#CBD5E1"
                 android:textSize="9.5sp"
                 android:textStyle="bold"
                 android:singleLine="true"
@@ -532,7 +534,11 @@
                 android:ellipsize="none"
                 android:fontFamily="sans-serif-medium"
                 android:letterSpacing="0.03"
-                android:alpha="0.4"
+                android:shadowColor="#E6000000"
+                android:shadowDx="0"
+                android:shadowDy="1"
+                android:shadowRadius="4"
+                android:alpha="0.62"
                 android:clickable="true"
                 android:focusable="false" />
 
@@ -544,7 +550,7 @@
                 android:layout_weight="0.92"
                 android:gravity="center"
                 android:text="VIDEO"
-                android:textColor="#94A3B8"
+                android:textColor="#E2E8F0"
                 android:textSize="11sp"
                 android:textStyle="bold"
                 android:singleLine="true"
@@ -552,7 +558,11 @@
                 android:ellipsize="none"
                 android:fontFamily="sans-serif-medium"
                 android:letterSpacing="0.04"
-                android:alpha="0.75"
+                android:shadowColor="#E6000000"
+                android:shadowDx="0"
+                android:shadowDy="1"
+                android:shadowRadius="4"
+                android:alpha="0.88"
                 android:clickable="true"
                 android:focusable="false" />
 
@@ -572,6 +582,10 @@
                 android:ellipsize="none"
                 android:fontFamily="sans-serif-medium"
                 android:letterSpacing="0.05"
+                android:shadowColor="#E6000000"
+                android:shadowDx="0"
+                android:shadowDy="1"
+                android:shadowRadius="4"
                 android:alpha="1.0"
                 android:clickable="true"
                 android:focusable="false" />
@@ -584,7 +598,7 @@
                 android:layout_weight="0.92"
                 android:gravity="center"
                 android:text="PORTRAIT"
-                android:textColor="#94A3B8"
+                android:textColor="#E2E8F0"
                 android:textSize="11sp"
                 android:textStyle="bold"
                 android:singleLine="true"
@@ -592,7 +606,11 @@
                 android:ellipsize="none"
                 android:fontFamily="sans-serif-medium"
                 android:letterSpacing="0.04"
-                android:alpha="0.75"
+                android:shadowColor="#E6000000"
+                android:shadowDx="0"
+                android:shadowDy="1"
+                android:shadowRadius="4"
+                android:alpha="0.88"
                 android:clickable="true"
                 android:focusable="false" />
 
@@ -604,7 +622,7 @@
                 android:layout_weight="0.88"
                 android:gravity="center"
                 android:text="NIGHT"
-                android:textColor="#64748B"
+                android:textColor="#CBD5E1"
                 android:textSize="9.5sp"
                 android:textStyle="bold"
                 android:singleLine="true"
@@ -612,7 +630,11 @@
                 android:ellipsize="none"
                 android:fontFamily="sans-serif-medium"
                 android:letterSpacing="0.03"
-                android:alpha="0.4"
+                android:shadowColor="#E6000000"
+                android:shadowDx="0"
+                android:shadowDy="1"
+                android:shadowRadius="4"
+                android:alpha="0.62"
                 android:clickable="true"
                 android:focusable="false" />
         </LinearLayout>
@@ -640,7 +662,7 @@
         android:layout_height="100dp"
         android:paddingHorizontal="28dp"
         android:paddingBottom="16dp"
-        android:background="#40000000"
+        android:background="#A6000000"
         android:elevation="36dp"
         app:layout_constraintBottom_toBottomOf="parent">
 

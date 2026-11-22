@@ -32,9 +32,9 @@
         <!-- Mode-Specific Vertical Settings Rail -->
         <ScrollView
             android:id="@+id/scrollFloatingMenuItems"
-            android:layout_width="68dp"
+            android:layout_width="76dp"
             android:layout_height="wrap_content"
-            android:maxHeight="280dp"
+            android:maxHeight="304dp"
             android:scrollbars="none"
             android:background="@drawable/bg_pro_drawer"
             android:paddingVertical="6dp"

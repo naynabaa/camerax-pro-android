@@ -2976,7 +2976,7 @@ class MainActivity : AppCompatActivity() {
             sliceCount = 0,
             direction = 0
         )
-        viewBinding.btnCapture.setImageResource(R.drawable.bg_record_button_active)
+        updateCaptureButtonVisual(isRecordingActive = true)
         viewBinding.tvRecordingStatus.text = "AUTO PANO"
         viewBinding.tvRecordingStatus.setTextColor(Color.parseColor("#FACC15"))
         viewBinding.chronometer.text = "0/14 F · 100%"
@@ -2993,7 +2993,7 @@ class MainActivity : AppCompatActivity() {
         viewBinding.proOverlayView.updatePanoramaAnalysis("READY", 0f, 100, 0f, 0f, 0f, 0f, 0f, 0, 0)
         clearPanoramaSlices()
         if (cameraMode == CameraMode.PANORAMA) {
-            viewBinding.btnCapture.setImageResource(R.drawable.bg_shutter_button)
+            updateCaptureButtonVisual(isRecordingActive = false)
         }
     }
 
@@ -3012,7 +3012,7 @@ class MainActivity : AppCompatActivity() {
         panoramaFallbackRunnable?.let { panoramaFallbackHandler.removeCallbacks(it) }
         panoramaFallbackRunnable = null
         viewBinding.proOverlayView.isPanoramaCapturing = false
-        viewBinding.btnCapture.setImageResource(R.drawable.bg_shutter_button)
+        updateCaptureButtonVisual(isRecordingActive = false)
 
         val snapshot: List<PanoramaStitcher.PanoramaSlice>
         synchronized(panoramaLock) {
@@ -6267,7 +6267,7 @@ class MainActivity : AppCompatActivity() {
                     is VideoRecordEvent.Start -> {
                         playCameraCue(ToneGenerator.TONE_PROP_BEEP2, 95)
                         isRecordingPaused = false
-                        viewBinding.btnCapture.setImageResource(R.drawable.bg_record_button_active)
+                        updateCaptureButtonVisual(isRecordingActive = true)
                         viewBinding.recordingTimer.visibility = View.VISIBLE
                         viewBinding.tvRecordingStatus.text = if (cameraMode == CameraMode.AR_LENS) {
                             if (isArRecordingLocked) "AR REC · LOCK" else "AR REC"
@@ -6343,14 +6343,14 @@ class MainActivity : AppCompatActivity() {
                             viewBinding.recordingDot.visibility = View.VISIBLE
                             viewBinding.chronometer.text = "TAP PHOTO · HOLD 0.5S VID"
                             viewBinding.chronometer.setTextColor(Color.parseColor("#F0ABFC"))
-                            viewBinding.btnCapture.setImageResource(R.drawable.bg_shutter_button)
+                            updateCaptureButtonVisual(isRecordingActive = false)
                             viewBinding.arLensModeDock.root.visibility = View.VISIBLE
                         } else {
                             viewBinding.tvRecordingStatus.text = "STANDBY"
                             viewBinding.tvRecordingStatus.setTextColor(ContextCompat.getColor(this, android.R.color.darker_gray))
                             viewBinding.recordingDot.visibility = View.GONE
                             viewBinding.chronometer.text = "00:00:00"
-                            viewBinding.btnCapture.setImageResource(R.drawable.bg_record_button_idle)
+                            updateCaptureButtonVisual(isRecordingActive = false)
                         }
 
                         viewBinding.tabPhoto.isEnabled = true
@@ -7451,6 +7451,205 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun updateCaptureButtonVisual(isRecordingActive: Boolean = false) {
+        val isSnapMagic = (cameraMode == CameraMode.AR_LENS && activeArFamily == "snap_magic")
+        viewBinding.btnCapture.setImageDrawable(
+            createModeCaptureDrawable(cameraMode, isRecordingActive, isSnapMagic)
+        )
+    }
+
+    private fun createModeCaptureDrawable(
+        mode: CameraMode,
+        isRecordingActive: Boolean,
+        isSnapMagic: Boolean
+    ): android.graphics.drawable.Drawable {
+        return object : android.graphics.drawable.Drawable() {
+            private val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+            private val path = android.graphics.Path()
+
+            override fun draw(canvas: android.graphics.Canvas) {
+                val b = bounds
+                val w = b.width().toFloat()
+                val h = b.height().toFloat()
+                if (w <= 0f || h <= 0f) return
+                val cx = b.exactCenterX()
+                val cy = b.exactCenterY()
+                val outerR = Math.min(w, h) * 0.46f
+                val ringW = outerR * 0.11f
+                val innerR = outerR - ringW * 1.45f
+
+                // Outer ring color tuned per camera mode
+                val ringColor = when {
+                    isRecordingActive && mode == CameraMode.PANORAMA -> Color.parseColor("#38BDF8")
+                    isRecordingActive -> Color.parseColor("#EF4444")
+                    mode == CameraMode.VIDEO -> Color.parseColor("#EF4444")
+                    mode == CameraMode.SLOW_MO -> Color.parseColor("#FACC15")
+                    mode == CameraMode.PORTRAIT -> Color.parseColor("#FBBF24")
+                    mode == CameraMode.NIGHT -> Color.parseColor("#818CF8")
+                    mode == CameraMode.PANORAMA -> Color.parseColor("#38BDF8")
+                    mode == CameraMode.AR_LENS && isSnapMagic -> Color.parseColor("#FACC15")
+                    mode == CameraMode.AR_LENS -> Color.parseColor("#22D3EE")
+                    else -> Color.parseColor("#F8FAFC")
+                }
+
+                // Subtle dark backing for legibility over bright backgrounds
+                paint.style = android.graphics.Paint.Style.FILL
+                paint.color = Color.argb(120, 8, 12, 20)
+                canvas.drawCircle(cx, cy, outerR, paint)
+
+                // Outer stroke ring
+                paint.style = android.graphics.Paint.Style.STROKE
+                paint.strokeWidth = ringW
+                paint.color = ringColor
+                canvas.drawCircle(cx, cy, outerR - ringW * 0.5f, paint)
+
+                // Active recording / panorama sweep stop square
+                if (isRecordingActive) {
+                    val sqHalf = innerR * 0.46f
+                    val sqCorner = innerR * 0.18f
+                    paint.style = android.graphics.Paint.Style.FILL
+                    paint.color = if (mode == CameraMode.PANORAMA) Color.parseColor("#38BDF8") else Color.parseColor("#EF4444")
+                    val rect = android.graphics.RectF(cx - sqHalf, cy - sqHalf, cx + sqHalf, cy + sqHalf)
+                    canvas.drawRoundRect(rect, sqCorner, sqCorner, paint)
+                    return
+                }
+
+                // Inner disc fill
+                val fillColor = when {
+                    mode == CameraMode.VIDEO -> Color.parseColor("#EF4444")
+                    mode == CameraMode.SLOW_MO -> Color.parseColor("#FACC15")
+                    mode == CameraMode.NIGHT || mode == CameraMode.PANORAMA || mode == CameraMode.AR_LENS -> Color.parseColor("#0F172A")
+                    else -> Color.parseColor("#F8FAFC")
+                }
+                paint.style = android.graphics.Paint.Style.FILL
+                paint.color = fillColor
+                canvas.drawCircle(cx, cy, innerR, paint)
+
+                if (mode == CameraMode.NIGHT || mode == CameraMode.PANORAMA || mode == CameraMode.AR_LENS) {
+                    paint.style = android.graphics.Paint.Style.STROKE
+                    paint.strokeWidth = ringW * 0.55f
+                    paint.color = ringColor
+                    canvas.drawCircle(cx, cy, innerR - ringW * 0.35f, paint)
+                }
+
+                // Mode-specific crisp vector icon centered inside shutter
+                val ic = innerR * 0.48f
+                paint.strokeCap = android.graphics.Paint.Cap.ROUND
+                paint.strokeJoin = android.graphics.Paint.Join.ROUND
+
+                when (mode) {
+                    CameraMode.PHOTO -> {
+                        // Crisp camera icon (body + top bump + center lens)
+                        paint.style = android.graphics.Paint.Style.STROKE
+                        paint.strokeWidth = innerR * 0.095f
+                        paint.color = Color.parseColor("#0F172A")
+                        val body = android.graphics.RectF(cx - ic, cy - ic * 0.62f, cx + ic, cy + ic * 0.72f)
+                        canvas.drawRoundRect(body, ic * 0.24f, ic * 0.24f, paint)
+                        path.reset()
+                        path.moveTo(cx - ic * 0.42f, cy - ic * 0.62f)
+                        path.lineTo(cx - ic * 0.24f, cy - ic * 0.92f)
+                        path.lineTo(cx + ic * 0.24f, cy - ic * 0.92f)
+                        path.lineTo(cx + ic * 0.42f, cy - ic * 0.62f)
+                        canvas.drawPath(path, paint)
+                        canvas.drawCircle(cx, cy + ic * 0.06f, ic * 0.34f, paint)
+                    }
+                    CameraMode.PORTRAIT -> {
+                        // Aperture / bokeh iris ring with 6 blades
+                        paint.style = android.graphics.Paint.Style.STROKE
+                        paint.strokeWidth = innerR * 0.09f
+                        paint.color = Color.parseColor("#B45309")
+                        canvas.drawCircle(cx, cy, ic * 0.88f, paint)
+                        canvas.drawCircle(cx, cy, ic * 0.30f, paint)
+                        for (i in 0 until 6) {
+                            val a = Math.toRadians((i * 60.0) - 15.0)
+                            val a2 = Math.toRadians((i * 60.0) + 45.0)
+                            val x1 = cx + (Math.cos(a) * ic * 0.30f).toFloat()
+                            val y1 = cy + (Math.sin(a) * ic * 0.30f).toFloat()
+                            val x2 = cx + (Math.cos(a2) * ic * 0.86f).toFloat()
+                            val y2 = cy + (Math.sin(a2) * ic * 0.86f).toFloat()
+                            canvas.drawLine(x1, y1, x2, y2, paint)
+                        }
+                    }
+                    CameraMode.NIGHT -> {
+                        // Crescent moon + 2 crisp stars
+                        paint.style = android.graphics.Paint.Style.FILL
+                        paint.color = Color.parseColor("#C7D2FE")
+                        val moonR = ic * 0.78f
+                        canvas.drawCircle(cx - ic * 0.08f, cy + ic * 0.04f, moonR, paint)
+                        paint.color = Color.parseColor("#0F172A")
+                        canvas.drawCircle(cx + ic * 0.26f, cy - ic * 0.20f, moonR * 0.82f, paint)
+                        paint.color = Color.parseColor("#E0E7FF")
+                        canvas.drawCircle(cx + ic * 0.46f, cy - ic * 0.42f, ic * 0.13f, paint)
+                        canvas.drawCircle(cx + ic * 0.62f, cy - ic * 0.05f, ic * 0.09f, paint)
+                    }
+                    CameraMode.PANORAMA -> {
+                        // Wide curved panorama frame + left/right sweep arrows
+                        paint.style = android.graphics.Paint.Style.STROKE
+                        paint.strokeWidth = innerR * 0.09f
+                        paint.color = Color.parseColor("#7DD3FC")
+                        path.reset()
+                        path.moveTo(cx - ic * 0.92f, cy - ic * 0.56f)
+                        path.quadTo(cx, cy - ic * 0.24f, cx + ic * 0.92f, cy - ic * 0.56f)
+                        path.lineTo(cx + ic * 0.92f, cy + ic * 0.56f)
+                        path.quadTo(cx, cy + ic * 0.24f, cx - ic * 0.92f, cy + ic * 0.56f)
+                        path.close()
+                        canvas.drawPath(path, paint)
+                        // Center horizontal sweep arrow
+                        canvas.drawLine(cx - ic * 0.42f, cy, cx + ic * 0.42f, cy, paint)
+                        canvas.drawLine(cx + ic * 0.20f, cy - ic * 0.20f, cx + ic * 0.44f, cy, paint)
+                        canvas.drawLine(cx + ic * 0.20f, cy + ic * 0.20f, cx + ic * 0.44f, cy, paint)
+                    }
+                    CameraMode.VIDEO -> {
+                        // White camcorder silhouette
+                        paint.style = android.graphics.Paint.Style.FILL
+                        paint.color = Color.WHITE
+                        val camBody = android.graphics.RectF(cx - ic * 0.86f, cy - ic * 0.54f, cx + ic * 0.28f, cy + ic * 0.54f)
+                        canvas.drawRoundRect(camBody, ic * 0.22f, ic * 0.22f, paint)
+                        path.reset()
+                        path.moveTo(cx + ic * 0.34f, cy - ic * 0.20f)
+                        path.lineTo(cx + ic * 0.88f, cy - ic * 0.52f)
+                        path.lineTo(cx + ic * 0.88f, cy + ic * 0.52f)
+                        path.lineTo(cx + ic * 0.34f, cy + ic * 0.20f)
+                        path.close()
+                        canvas.drawPath(path, paint)
+                    }
+                    CameraMode.SLOW_MO -> {
+                        // Speedometer gauge arc + needle in dark slate
+                        paint.style = android.graphics.Paint.Style.STROKE
+                        paint.strokeWidth = innerR * 0.10f
+                        paint.color = Color.parseColor("#0F172A")
+                        val arcRect = android.graphics.RectF(cx - ic * 0.84f, cy - ic * 0.72f, cx + ic * 0.84f, cy + ic * 0.96f)
+                        canvas.drawArc(arcRect, 180f, 180f, false, paint)
+                        canvas.drawLine(cx, cy + ic * 0.20f, cx + ic * 0.46f, cy - ic * 0.32f, paint)
+                        paint.style = android.graphics.Paint.Style.FILL
+                        canvas.drawCircle(cx, cy + ic * 0.20f, ic * 0.16f, paint)
+                    }
+                    CameraMode.AR_LENS -> {
+                        // 4-point sparkle star (amber-gold for Snap Magic, cyan for Face/Hand/Body/World AR)
+                        val starColor = if (isSnapMagic) Color.parseColor("#FDE047") else Color.parseColor("#67E8F9")
+                        paint.style = android.graphics.Paint.Style.FILL
+                        paint.color = starColor
+                        path.reset()
+                        path.moveTo(cx, cy - ic * 0.92f)
+                        path.quadTo(cx + ic * 0.14f, cy - ic * 0.14f, cx + ic * 0.92f, cy)
+                        path.quadTo(cx + ic * 0.14f, cy + ic * 0.14f, cx, cy + ic * 0.92f)
+                        path.quadTo(cx - ic * 0.14f, cy + ic * 0.14f, cx - ic * 0.92f, cy)
+                        path.quadTo(cx - ic * 0.14f, cy - ic * 0.14f, cx, cy - ic * 0.92f)
+                        path.close()
+                        canvas.drawPath(path, paint)
+                        // Secondary accent sparkle dot
+                        canvas.drawCircle(cx + ic * 0.58f, cy - ic * 0.56f, ic * 0.14f, paint)
+                    }
+                }
+            }
+
+            override fun setAlpha(alpha: Int) { paint.alpha = alpha }
+            override fun setColorFilter(colorFilter: android.graphics.ColorFilter?) { paint.colorFilter = colorFilter }
+            @Deprecated("Deprecated in Java")
+            override fun getOpacity(): Int = android.graphics.PixelFormat.TRANSLUCENT
+        }
+    }
+
     private fun setMode(mode: CameraMode, slideDirection: Int = 0) {
         if (recording != null || isNightStacking) return
         val prevMode = cameraMode
@@ -7481,7 +7680,7 @@ class MainActivity : AppCompatActivity() {
         nightExposureStacker.clearDarkEpisodeLock()
         viewBinding.proOverlayView.isNightModeHudActive = (mode == CameraMode.NIGHT || currentShootingEffect == "night_sight")
         isLastActionCreative = false
-        showHudNotice(if (mode == CameraMode.AR_LENS) "AR LENS · Tap Photo · Hold 0.5s Video" else "Mode: ${getModeLabel(mode)}")
+        // Mode switch is already reflected cleanly by the center carousel pill, shutter icon, and top badge (no overlapping Mode toast)
         viewBinding.proOverlayView.isPanoramaModeActive = (mode == CameraMode.PANORAMA)
 
         updateModeCarouselSlots(animated = true, slideDirection = slideDirection)
@@ -7503,7 +7702,7 @@ class MainActivity : AppCompatActivity() {
             viewBinding.effectsStudioDrawer.root.visibility = View.GONE
             viewBinding.proStudioDrawer.root.visibility = View.GONE
             viewBinding.layoutGuideFloatingBar.visibility = View.GONE
-            viewBinding.btnCapture.setImageResource(R.drawable.bg_shutter_button)
+            updateCaptureButtonVisual(isRecordingActive = false)
             viewBinding.btnPauseResume.visibility = View.GONE
             viewBinding.recordingDot.setBackgroundResource(R.drawable.bg_green_dot)
             viewBinding.recordingDot.visibility = View.VISIBLE
@@ -7518,7 +7717,7 @@ class MainActivity : AppCompatActivity() {
             syncArDockFromCalibration()
             refreshFloatingModeMenu()
         } else if (!isVideoType) {
-            viewBinding.btnCapture.setImageResource(R.drawable.bg_shutter_button)
+            updateCaptureButtonVisual(isRecordingActive = false)
             viewBinding.btnPauseResume.visibility = View.GONE
             viewBinding.recordingDot.setBackgroundResource(R.drawable.bg_green_dot)
             viewBinding.recordingDot.visibility = View.VISIBLE
@@ -7548,7 +7747,7 @@ class MainActivity : AppCompatActivity() {
             isFloatingMenuOpen = false
             refreshFloatingModeMenu()
         } else {
-            viewBinding.btnCapture.setImageResource(R.drawable.bg_record_button_idle)
+            updateCaptureButtonVisual(isRecordingActive = false)
             viewBinding.btnPauseResume.visibility = View.GONE
             viewBinding.recordingDot.setBackgroundResource(R.drawable.bg_green_dot)
             viewBinding.recordingDot.visibility = View.VISIBLE
@@ -8117,7 +8316,9 @@ class MainActivity : AppCompatActivity() {
         if (vfW <= 1f || vfH <= 1f) return
         val targetX = vfW * lastFocusNormX.coerceIn(0.2f, 0.8f)
         val targetY = vfH * lastFocusNormY.coerceIn(0.2f, 0.8f)
-        triggerTapToFocusAndClearBlur(targetX, targetY, lockAfAe = false, isAutoClear = true, silent = silent)
+        // Run silently during AR Lens / Snap Magic so floating focus boxes & toast banners don't clutter the AR scene
+        val effectiveSilent = silent || cameraMode == CameraMode.AR_LENS
+        triggerTapToFocusAndClearBlur(targetX, targetY, lockAfAe = false, isAutoClear = true, silent = effectiveSilent)
     }
 
     private fun setupViewfinderGestures() {
@@ -10345,6 +10546,9 @@ class MainActivity : AppCompatActivity() {
     private data class FloatingMenuSpec(
         val id: String,
         val label: String,
+        val glyph: String = "",
+        val badge: String = "",
+        val isModified: Boolean = false,
         val isSlider: Boolean = false,
         val isAction: Boolean = false,
         val min: Int = 0,
@@ -10385,6 +10589,7 @@ class MainActivity : AppCompatActivity() {
         viewBinding.btnAspectRatio.visibility = View.GONE
         viewBinding.layoutBtnProStudio.visibility = View.GONE
         viewBinding.btnAudioMute.visibility = View.GONE
+        updateCaptureButtonVisual(isRecordingActive = false)
         refreshFloatingModeMenu()
     }
 
@@ -10394,6 +10599,7 @@ class MainActivity : AppCompatActivity() {
         // Auto-open right floating settings menu ONLY in AR mode when an effect is selected
         isFloatingMenuOpen = (cameraMode == CameraMode.AR_LENS && family != "off")
         applyActiveArFamilyState(fromUser = true)
+        updateCaptureButtonVisual(isRecordingActive = (recording != null))
         refreshFloatingModeMenu()
     }
 
@@ -10478,6 +10684,9 @@ class MainActivity : AppCompatActivity() {
                     FloatingMenuSpec(
                         id = "snap_action",
                         label = if (ov.isSnapVanishedOrDissolving()) "Reset" else "Snap!",
+                        glyph = if (ov.isSnapVanishedOrDissolving()) "↺" else "✦",
+                        badge = if (ov.isSnapVanishedOrDissolving()) "Dust" else "Armed",
+                        isModified = true,
                         isAction = true,
                         onAction = {
                             triggerSnapWipeoutAction(0.70f, 0.42f, fromManualButton = true)
@@ -10487,6 +10696,9 @@ class MainActivity : AppCompatActivity() {
                     FloatingMenuSpec(
                         id = "snap_sens",
                         label = "Sens.",
+                        glyph = "◎",
+                        badge = "${((handLandmarkerHelper?.snapPinchThreshold ?: 0.36f) * 100f).toInt().coerceIn(20, 60)}%",
+                        isModified = ((handLandmarkerHelper?.snapPinchThreshold ?: 0.36f) * 100f).toInt() != 36,
                         isSlider = true,
                         min = 20,
                         max = 60,
@@ -10500,6 +10712,9 @@ class MainActivity : AppCompatActivity() {
                     FloatingMenuSpec(
                         id = "snap_distance",
                         label = "Range",
+                        glyph = "↔",
+                        badge = "≤${(13.2f / (handLandmarkerHelper?.minNearHandScale ?: 0.15f).coerceIn(0.08f, 0.28f)).toInt().coerceIn(48, 165)}cm",
+                        isModified = true,
                         isSlider = true,
                         min = 48,
                         max = 165,
@@ -10516,6 +10731,9 @@ class MainActivity : AppCompatActivity() {
                     FloatingMenuSpec(
                         id = "snap_density",
                         label = "Density",
+                        glyph = "❖",
+                        badge = String.format("%.1fx", ov.snapDustDensity),
+                        isModified = (ov.snapDustDensity * 100f).toInt() != 135,
                         isSlider = true,
                         min = 40,
                         max = 250,
@@ -10529,6 +10747,9 @@ class MainActivity : AppCompatActivity() {
                     FloatingMenuSpec(
                         id = "snap_wind",
                         label = "Wind",
+                        glyph = "≈",
+                        badge = String.format("%.1fx", ov.snapWindSpeed),
+                        isModified = (ov.snapWindSpeed * 100f).toInt() != 130,
                         isSlider = true,
                         min = 30,
                         max = 300,
@@ -10542,6 +10763,9 @@ class MainActivity : AppCompatActivity() {
                     FloatingMenuSpec(
                         id = "snap_lock_bg",
                         label = if (ov.hasSnapCleanPlate()) "BG OK" else "Lock BG",
+                        glyph = "▣",
+                        badge = if (ov.hasSnapCleanPlate()) "Locked" else "Auto",
+                        isModified = ov.hasSnapCleanPlate(),
                         isAction = true,
                         onAction = {
                             val bmp = try { viewBinding.viewFinder.bitmap } catch (_: Throwable) { null }
@@ -10557,6 +10781,16 @@ class MainActivity : AppCompatActivity() {
                     FloatingMenuSpec(
                         id = "face_lens",
                         label = "Lens",
+                        glyph = "◈",
+                        badge = when (currentArLensName) {
+                            "cyberpunk_visor" -> "Visor"
+                            "golden_crown" -> "Crown"
+                            "scifi_hud" -> "HUD"
+                            "mesh_contour" -> "Mesh"
+                            "comic_frame" -> "Comic"
+                            else -> "Custom"
+                        },
+                        isModified = true,
                         options = listOf(
                             "cyberpunk_visor" to "Visor",
                             "golden_crown" to "Crown",
@@ -10574,6 +10808,9 @@ class MainActivity : AppCompatActivity() {
                     FloatingMenuSpec(
                         id = "face_scale",
                         label = "Size",
+                        glyph = "⤢",
+                        badge = String.format("%.1fx", calibScale),
+                        isModified = Math.abs(calibScale - 1f) > 0.03f,
                         isSlider = true,
                         min = 50,
                         max = 200,
@@ -10588,6 +10825,9 @@ class MainActivity : AppCompatActivity() {
                     FloatingMenuSpec(
                         id = "face_offset_y",
                         label = "Height",
+                        glyph = "↕",
+                        badge = "${if ((calibOffsetY * 100f).toInt() > 0) "+" else ""}${(calibOffsetY * 100f).toInt()}",
+                        isModified = (calibOffsetY * 100f).toInt() != 0,
                         isSlider = true,
                         min = -40,
                         max = 40,
@@ -10602,6 +10842,9 @@ class MainActivity : AppCompatActivity() {
                     FloatingMenuSpec(
                         id = "face_comic",
                         label = "Comic",
+                        glyph = "★",
+                        badge = if (ov.enableComicOnomatopoeia) "POW!" else "Off",
+                        isModified = ov.enableComicOnomatopoeia,
                         options = listOf("off" to "Off", "on" to "POW! SFX"),
                         activeOptionId = if (ov.enableComicOnomatopoeia) "on" else "off",
                         onOptionSelect = { id ->
@@ -10612,6 +10855,8 @@ class MainActivity : AppCompatActivity() {
                     FloatingMenuSpec(
                         id = "face_glb",
                         label = "3D GLB",
+                        glyph = "⬡",
+                        badge = "Load",
                         isAction = true,
                         onAction = { launchGlbLensPicker() }
                     )
@@ -10620,6 +10865,15 @@ class MainActivity : AppCompatActivity() {
                     FloatingMenuSpec(
                         id = "hand_style",
                         label = "Style",
+                        glyph = "✦",
+                        badge = when (ov.handPresetId) {
+                            "luxury_jewelry" -> "Luxe"
+                            "cyber_gauntlet" -> "Cyber"
+                            "arcane_orb" -> "Orb"
+                            "pyro_wand" -> "Flame"
+                            else -> "On"
+                        },
+                        isModified = true,
                         options = listOf(
                             "luxury_jewelry" to "Luxe",
                             "cyber_gauntlet" to "Cyber",
@@ -10635,6 +10889,9 @@ class MainActivity : AppCompatActivity() {
                     FloatingMenuSpec(
                         id = "hand_bones",
                         label = "Bones",
+                        glyph = "⊞",
+                        badge = if (ov.handShowSkeleton) "On" else "Off",
+                        isModified = ov.handShowSkeleton,
                         options = listOf("off" to "Hidden", "on" to "Skeleton"),
                         activeOptionId = if (ov.handShowSkeleton) "on" else "off",
                         onOptionSelect = { id ->
@@ -10647,6 +10904,15 @@ class MainActivity : AppCompatActivity() {
                     FloatingMenuSpec(
                         id = "body_style",
                         label = "Style",
+                        glyph = "✦",
+                        badge = when (ov.bodyPresetId) {
+                            "cyber_angel" -> "Wings"
+                            "hero_cape" -> "Cape"
+                            "mecha_armor" -> "Mecha"
+                            "chroma_studio" -> "Chroma"
+                            else -> "On"
+                        },
+                        isModified = true,
                         options = listOf(
                             "cyber_angel" to "Wings",
                             "hero_cape" to "Cape",
@@ -10662,6 +10928,9 @@ class MainActivity : AppCompatActivity() {
                     FloatingMenuSpec(
                         id = "body_bones",
                         label = "Bones",
+                        glyph = "⊞",
+                        badge = if (ov.bodyShowSkeleton) "On" else "Off",
+                        isModified = ov.bodyShowSkeleton,
                         options = listOf("off" to "Hidden", "on" to "Skeleton"),
                         activeOptionId = if (ov.bodyShowSkeleton) "on" else "off",
                         onOptionSelect = { id ->
@@ -10674,6 +10943,15 @@ class MainActivity : AppCompatActivity() {
                     FloatingMenuSpec(
                         id = "world_scene",
                         label = "Object",
+                        glyph = "⬡",
+                        badge = when (ov.worldPresetId) {
+                            "holo_showcase" -> "Cube"
+                            "cyber_portal" -> "Portal"
+                            "ar_measure" -> "Ruler"
+                            "glb_world_stage" -> "3D"
+                            else -> "On"
+                        },
+                        isModified = true,
                         options = listOf(
                             "holo_showcase" to "Cube",
                             "cyber_portal" to "Portal",
@@ -10690,6 +10968,9 @@ class MainActivity : AppCompatActivity() {
                     FloatingMenuSpec(
                         id = "world_scale",
                         label = "Scale",
+                        glyph = "⤢",
+                        badge = String.format("%.1fx", ov.worldObjectScale),
+                        isModified = Math.abs(ov.worldObjectScale - 1f) > 0.03f,
                         isSlider = true,
                         min = 50,
                         max = 200,
@@ -10703,6 +10984,9 @@ class MainActivity : AppCompatActivity() {
                     FloatingMenuSpec(
                         id = "world_ruler",
                         label = "Ruler",
+                        glyph = "↔",
+                        badge = if (ov.worldShowRuler) "On" else "Off",
+                        isModified = ov.worldShowRuler,
                         options = listOf("off" to "Off", "on" to "On"),
                         activeOptionId = if (ov.worldShowRuler) "on" else "off",
                         onOptionSelect = { id ->
@@ -10715,6 +10999,16 @@ class MainActivity : AppCompatActivity() {
                     FloatingMenuSpec(
                         id = "beauty_look",
                         label = "Look",
+                        glyph = "♥",
+                        badge = when (ov.faceBeautyPresetId) {
+                            "natural_glow" -> "Natural"
+                            "red_carpet" -> "Glam"
+                            "cyber_neon" -> "Cyber"
+                            "kitsune_spirit" -> "Kitsune"
+                            "golden_circuit" -> "Gold"
+                            else -> "On"
+                        },
+                        isModified = true,
                         options = listOf(
                             "natural_glow" to "Natural",
                             "red_carpet" to "Glam",
@@ -10731,6 +11025,9 @@ class MainActivity : AppCompatActivity() {
                     FloatingMenuSpec(
                         id = "beauty_smooth",
                         label = "Smooth",
+                        glyph = "✦",
+                        badge = "${(ov.skinSmoothing * 100f).toInt()}%",
+                        isModified = (ov.skinSmoothing * 100f).toInt() != 55,
                         isSlider = true,
                         min = 0,
                         max = 100,
@@ -10745,6 +11042,9 @@ class MainActivity : AppCompatActivity() {
                     FloatingMenuSpec(
                         id = "beauty_lips",
                         label = "Lips",
+                        glyph = "◉",
+                        badge = "${(ov.lipOpacity * 100f).toInt()}%",
+                        isModified = (ov.lipOpacity * 100f).toInt() != 35,
                         isSlider = true,
                         min = 0,
                         max = 100,
@@ -10759,6 +11059,9 @@ class MainActivity : AppCompatActivity() {
                     FloatingMenuSpec(
                         id = "beauty_eyes",
                         label = "Eyes",
+                        glyph = "◎",
+                        badge = "${(ov.eyelinerOpacity * 100f).toInt()}%",
+                        isModified = (ov.eyelinerOpacity * 100f).toInt() != 30,
                         isSlider = true,
                         min = 0,
                         max = 100,
@@ -10774,10 +11077,13 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // Standard Camera Modes: show ONLY that mode's relevant settings
+        // Standard Camera Modes: show ONLY that mode's relevant settings with compact glyphs & live active values
         val timerSpec = FloatingMenuSpec(
             id = "timer",
             label = "Timer",
+            glyph = "◷",
+            badge = if (countdownSeconds > 0) "${countdownSeconds}s" else "Off",
+            isModified = countdownSeconds > 0,
             options = listOf("0" to "Off", "3" to "3s", "5" to "5s", "10" to "10s"),
             activeOptionId = countdownSeconds.toString(),
             onOptionSelect = { id ->
@@ -10788,6 +11094,9 @@ class MainActivity : AppCompatActivity() {
         val ratioSpec = FloatingMenuSpec(
             id = "ratio",
             label = "Ratio",
+            glyph = "▭",
+            badge = currentAspectRatio,
+            isModified = currentAspectRatio != "4:3",
             options = listOf("4:3" to "4:3", "16:9" to "16:9", "1:1" to "1:1"),
             activeOptionId = currentAspectRatio,
             onOptionSelect = { id ->
@@ -10805,6 +11114,9 @@ class MainActivity : AppCompatActivity() {
         val evSpec = FloatingMenuSpec(
             id = "ev",
             label = "EV",
+            glyph = "☀",
+            badge = if (evCur == 0) "0.0" else String.format("%+.1f", evCur * evStep),
+            isModified = evCur != 0,
             isSlider = true,
             min = evMin,
             max = evMax,
@@ -10821,6 +11133,18 @@ class MainActivity : AppCompatActivity() {
         val filterSpec = FloatingMenuSpec(
             id = "filter",
             label = "Filter",
+            glyph = "◐",
+            badge = when (currentFilterName) {
+                "normal" -> "Norm"
+                "cinematic" -> "Cine"
+                "vintage" -> "Vint"
+                "bw" -> "B&W"
+                "hdr" -> "HDR"
+                "cyberpunk" -> "Cyber"
+                "comic_book" -> "Comic"
+                else -> "On"
+            },
+            isModified = currentFilterName != "normal",
             options = listOf(
                 "normal" to "Normal",
                 "cinematic" to "Cinema",
@@ -10839,6 +11163,17 @@ class MainActivity : AppCompatActivity() {
         val gridSpec = FloatingMenuSpec(
             id = "grid",
             label = "Grid",
+            glyph = "⊞",
+            badge = when (viewBinding.proOverlayView.currentGrid) {
+                ProOverlayView.GridType.NONE -> "Off"
+                ProOverlayView.GridType.RULE_OF_THIRDS -> "3×3"
+                ProOverlayView.GridType.GOLDEN_SPIRAL -> "Spiral"
+                ProOverlayView.GridType.GOLDEN_RATIO_PHI -> "Phi"
+                ProOverlayView.GridType.DIAGONAL_SYMMETRY -> "Cross"
+                ProOverlayView.GridType.CINEMATIC_239 -> "2.39"
+                else -> "On"
+            },
+            isModified = viewBinding.proOverlayView.currentGrid != ProOverlayView.GridType.NONE,
             options = listOf(
                 "NONE" to "Off",
                 "RULE_OF_THIRDS" to "3x3",
@@ -10854,9 +11189,20 @@ class MainActivity : AppCompatActivity() {
                 refreshFloatingModeMenu()
             }
         )
+        val activeToolsCount = listOf(
+            isAutoBlurClearEnabled,
+            isAutoClearBlurLogsEnabled,
+            viewBinding.proOverlayView.showFocusPeaking,
+            viewBinding.proOverlayView.showHistogram,
+            viewBinding.proOverlayView.showZebraStripes,
+            viewBinding.proOverlayView.showLevelGauge
+        ).count { it }
         val proToolsSpec = FloatingMenuSpec(
             id = "pro_tools",
             label = "Tools",
+            glyph = "⚙",
+            badge = if (activeToolsCount > 0) "${activeToolsCount} On" else "Off",
+            isModified = activeToolsCount > 0,
             options = listOf(
                 "auto_blur_clear" to if (isAutoBlurClearEnabled) "Auto Clear Blur ✓" else "Auto Clear Blur",
                 "auto_clear_blur_logs" to if (isAutoClearBlurLogsEnabled) "Auto-Clear Blur Logs ✓" else "Auto-Clear Blur Logs",
@@ -10896,7 +11242,10 @@ class MainActivity : AppCompatActivity() {
         )
         val micSpec = FloatingMenuSpec(
             id = "mic",
-            label = if (isAudioMuted) "Muted" else "Mic",
+            label = "Mic",
+            glyph = if (isAudioMuted) "✕" else "◉",
+            badge = if (isAudioMuted) "Off" else "On",
+            isModified = isAudioMuted,
             options = listOf("on" to "Mic On", "off" to "Muted"),
             activeOptionId = if (isAudioMuted) "off" else "on",
             onOptionSelect = { id ->
@@ -10958,22 +11307,21 @@ class MainActivity : AppCompatActivity() {
         if (isFloatingMenuOpen && showRightHandle) {
             for (spec in specs) {
                 val isSelected = (activeFloatingSettingId == spec.id)
-                val btn = TextView(this).apply {
-                    text = spec.label
-                    textSize = 10f
+                val itemBox = android.widget.LinearLayout(this).apply {
+                    orientation = android.widget.LinearLayout.VERTICAL
                     gravity = android.view.Gravity.CENTER
-                    setSingleLine(true)
-                    setPadding((4 * dp).toInt(), (10 * dp).toInt(), (4 * dp).toInt(), (10 * dp).toInt())
+                    setPadding((4 * dp).toInt(), (7 * dp).toInt(), (4 * dp).toInt(), (7 * dp).toInt())
                     setBackgroundResource(
                         if (isSelected) R.drawable.bg_cinema_button_active else R.drawable.bg_cinema_button_inactive
                     )
-                    setTextColor(Color.parseColor(if (isSelected) "#0F172A" else "#E2E8F0"))
                     layoutParams = android.widget.LinearLayout.LayoutParams(
                         android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
                         android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
                     ).apply {
                         bottomMargin = (5 * dp).toInt()
                     }
+                    isClickable = true
+                    isFocusable = true
                     setOnClickListener {
                         if (spec.isAction) {
                             spec.onAction?.invoke()
@@ -10983,19 +11331,54 @@ class MainActivity : AppCompatActivity() {
                         }
                     }
                 }
-                fm.containerFloatingMenuItems.addView(btn)
+                val titleText = if (spec.glyph.isNotEmpty()) "${spec.glyph} ${spec.label}" else spec.label
+                val tvTitle = TextView(this).apply {
+                    text = titleText
+                    textSize = 9.5f
+                    setTypeface(null, Typeface.BOLD)
+                    gravity = android.view.Gravity.CENTER
+                    setSingleLine(true)
+                    setTextColor(Color.parseColor(if (isSelected) "#0F172A" else "#F1F5F9"))
+                }
+                itemBox.addView(tvTitle)
+
+                if (spec.badge.isNotEmpty()) {
+                    val tvBadge = TextView(this).apply {
+                        text = spec.badge
+                        textSize = 8.5f
+                        typeface = Typeface.MONOSPACE
+                        gravity = android.view.Gravity.CENTER
+                        setSingleLine(true)
+                        setPadding(0, (1 * dp).toInt(), 0, 0)
+                        setTextColor(
+                            Color.parseColor(
+                                when {
+                                    isSelected -> "#0F172A"
+                                    spec.isModified -> if (isAr) "#22D3EE" else "#FACC15"
+                                    else -> "#94A3B8"
+                                }
+                            )
+                        )
+                    }
+                    itemBox.addView(tvBadge)
+                }
+                fm.containerFloatingMenuItems.addView(itemBox)
             }
         }
 
         // 3. Bottom Parameter Bar (Slider for numbers / Horizontal Option Chips for choices)
         val activeSpec = specs.find { it.id == activeFloatingSettingId && !it.isAction }
+        val paramBarOpen = isFloatingMenuOpen && activeSpec != null
+        // Auto-hide the floating zoom pill whenever a bottom parameter tray is open so they never collide
+        viewBinding.zoomControls.visibility = if (isAr || paramBarOpen) View.GONE else View.VISIBLE
+
         val paramLp = fm.layoutFloatingParamBar.layoutParams as? android.widget.FrameLayout.LayoutParams
         if (paramLp != null) {
             paramLp.bottomMargin = ((if (isAr) 64 else 12) * dp).toInt()
             fm.layoutFloatingParamBar.layoutParams = paramLp
         }
 
-        if (isFloatingMenuOpen && activeSpec != null) {
+        if (paramBarOpen && activeSpec != null) {
             fm.layoutFloatingParamBar.visibility = View.VISIBLE
             fm.tvFloatingParamTitle.text = activeSpec.label
             if (activeSpec.isSlider) {
@@ -11020,7 +11403,9 @@ class MainActivity : AppCompatActivity() {
                         activeSpec.onSliderChange?.invoke(actual)
                     }
                     override fun onStartTrackingTouch(sb: SeekBar?) {}
-                    override fun onStopTrackingTouch(sb: SeekBar?) {}
+                    override fun onStopTrackingTouch(sb: SeekBar?) {
+                        refreshFloatingModeMenu()
+                    }
                 })
             } else {
                 fm.seekFloatingParam.visibility = View.GONE

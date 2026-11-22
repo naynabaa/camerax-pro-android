@@ -229,6 +229,7 @@ class ARFaceOverlayView @JvmOverloads constructor(
     private var snapFrozenScaledH: Float = 0f
     private val snapFrozenBodyPath = Path()
     private val snapDustParticles = ArrayList<SnapDustParticle>(950)
+    private val snapBgDrawPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
     private val snapMaskInPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
         xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_IN)
     }
@@ -236,7 +237,7 @@ class ARFaceOverlayView @JvmOverloads constructor(
         style = Paint.Style.FILL
         color = Color.WHITE
         xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_IN)
-        maskFilter = BlurMaskFilter(22f, BlurMaskFilter.Blur.NORMAL)
+        maskFilter = BlurMaskFilter(26f, BlurMaskFilter.Blur.NORMAL)
     }
     private val snapFeatherGradPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
@@ -258,8 +259,9 @@ class ARFaceOverlayView @JvmOverloads constructor(
         strokeCap = Paint.Cap.ROUND
         strokeJoin = Paint.Join.ROUND
     }
+    private val snapFlakePath = Path()
 
-    // 6-Stone Infinity Gauntlet AR Hand Overlay (worn on detected hand during Snap & Wipeout)
+    // 6-Stone Infinity Gauntlet AR Hand Overlay (worn on foreground Near-Camera hand during Snap & Wipeout)
     @Volatile
     var snapGauntletEnabled: Boolean = true
         set(value) { field = value; postInvalidateOnAnimation() }
@@ -269,6 +271,11 @@ class ARFaceOverlayView @JvmOverloads constructor(
     var snapWindSpeed: Float = 1.3f
     @Volatile
     var snapMinNearHandScale: Float = 0.15f
+    private val gauntletShadowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+        color = Color.argb(88, 16, 8, 2)
+        maskFilter = BlurMaskFilter(14f, BlurMaskFilter.Blur.NORMAL)
+    }
     private val gauntletFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
     }
@@ -278,6 +285,10 @@ class ARFaceOverlayView @JvmOverloads constructor(
         strokeJoin = Paint.Join.ROUND
     }
     private val gauntletPath = Path()
+    private val gauntletFacetPath = Path()
+    private val gauntletSmoothPts = Array(21) { PointF() }
+    private var gauntletHasSmoothPts: Boolean = false
+    private var gauntletLastTrackMs: Long = 0L
     private val gauntletFingerChains = arrayOf(
         intArrayOf(1, 2, 3, 4),
         intArrayOf(5, 6, 7, 8),
@@ -570,34 +581,7 @@ class ARFaceOverlayView @JvmOverloads constructor(
         }
         snapFrozenFrontCamera = bodyIsFrontCamera
 
-        // Build automatic handheld edge-blurred background fallback if user didn't pre-lock empty room plate
-        if (!hasSnapCleanPlate() && liveFrameBmp != null && !liveFrameBmp.isRecycled) {
-            try {
-                val tinyW = 40
-                val tinyH = 56
-                val tiny = Bitmap.createScaledBitmap(liveFrameBmp, tinyW, tinyH, true)
-                val inpaint = Bitmap.createBitmap(tinyW, tinyH, Bitmap.Config.ARGB_8888)
-                val ic = Canvas(inpaint)
-                ic.drawBitmap(tiny, 0f, 0f, null)
-                val lx = (tinyW * 0.24f).toInt().coerceAtLeast(3)
-                val rx = (tinyW * 0.76f).toInt().coerceAtMost(tinyW - 3)
-                val mid = tinyW / 2
-                ic.drawBitmap(tiny, android.graphics.Rect(0, 0, lx, tinyH), android.graphics.Rect(lx - 1, 0, mid + 2, tinyH), null)
-                ic.drawBitmap(tiny, android.graphics.Rect(rx, 0, tinyW, tinyH), android.graphics.Rect(mid - 1, 0, rx + 2, tinyH), null)
-                val prevAuto = snapAutoInpaintBmp
-                snapAutoInpaintBmp = Bitmap.createScaledBitmap(inpaint, 120, 168, true)
-                tiny.recycle()
-                inpaint.recycle()
-                if (prevAuto != null && !prevAuto.isRecycled) prevAuto.recycle()
-            } catch (_: Throwable) {}
-        }
-
-        // Sample 950 layered dust particles (fine volumetric mist + organic flakes + subtle warm embers)
-        snapDustParticles.clear()
-        val sampleBmp = if (liveFrameBmp != null && !liveFrameBmp.isRecycled) {
-            try { Bitmap.createScaledBitmap(liveFrameBmp, 112, 148, true) } catch (_: Throwable) { null }
-        } else null
-
+        // Compute detected person bounding box first (used for both seamless background inpainting & dust sampling)
         val rawLm = trackedBodyLandmarks
         var minX = 0.22f
         var maxX = 0.78f
@@ -617,20 +601,222 @@ class ARFaceOverlayView @JvmOverloads constructor(
         val bodyCx = (minX + maxX) * 0.5f
         val bodyCy = (minY + maxY) * 0.48f
 
-        val count = (1100f * snapDustDensity.coerceIn(0.4f, 2.5f)).toInt().coerceIn(500, 2200)
-        for (i in 0 until count) {
+        // Build smooth high-resolution segmentation-aware background inpainting (eliminates giant pixelated mosaic blocks!)
+        if (!hasSnapCleanPlate() && liveFrameBmp != null && !liveFrameBmp.isRecycled) {
+            try {
+                val inW = 180
+                val inH = 240
+                val srcSmall = Bitmap.createScaledBitmap(liveFrameBmp, inW, inH, true)
+                val pixels = IntArray(inW * inH)
+                srcSmall.getPixels(pixels, 0, inW, 0, 0, inW, inH)
+                srcSmall.recycle()
+
+                val maskPixels: IntArray? = if (curMask != null && !curMask.isRecycled) {
+                    val mSmall = Bitmap.createScaledBitmap(curMask, inW, inH, true)
+                    val mp = IntArray(inW * inH)
+                    mSmall.getPixels(mp, 0, inW, 0, 0, inW, inH)
+                    mSmall.recycle()
+                    mp
+                } else null
+
+                val isFg = BooleanArray(inW * inH)
+                val bx0 = (minX * inW).toInt().coerceIn(2, inW - 3)
+                val bx1 = (maxX * inW).toInt().coerceIn(bx0 + 4, inW - 2)
+                val by0 = (minY * inH).toInt().coerceIn(2, inH - 3)
+                val by1 = (maxY * inH).toInt().coerceIn(by0 + 4, inH - 2)
+
+                for (y in 0 until inH) {
+                    for (x in 0 until inW) {
+                        val idx = y * inW + x
+                        if (maskPixels != null) {
+                            val mx = if (bodyIsFrontCamera) (inW - 1 - x) else x
+                            val alpha = Color.alpha(maskPixels[y * inW + mx])
+                            isFg[idx] = alpha > 48
+                        } else {
+                            val nx = (x.toFloat() / inW - bodyCx) / (spanX * 0.52f)
+                            val ny = (y.toFloat() / inH - bodyCy) / (spanY * 0.54f)
+                            isFg[idx] = (nx * nx + ny * ny) <= 1.05f
+                        }
+                    }
+                }
+                // Dilate foreground mask by 6px so zero clothing/skin halo color bleeds into the clean wall fill
+                val dilFg = BooleanArray(inW * inH)
+                val pad = 6
+                for (y in 0 until inH) {
+                    for (x in 0 until inW) {
+                        var hit = isFg[y * inW + x]
+                        if (!hit) {
+                            var dy = -pad
+                            while (dy <= pad && !hit) {
+                                val yy = (y + dy).coerceIn(0, inH - 1)
+                                var dx = -pad
+                                while (dx <= pad) {
+                                    val xx = (x + dx).coerceIn(0, inW - 1)
+                                    if (isFg[yy * inW + xx]) {
+                                        hit = true
+                                        break
+                                    }
+                                    dx += 2
+                                }
+                                dy += 2
+                            }
+                        }
+                        dilFg[y * inW + x] = hit
+                    }
+                }
+
+                // Estimate clean upper ambient wall color above the person
+                var ambR = 0L; var ambG = 0L; var ambB = 0L; var ambCnt = 0L
+                val topSampleH = (by0.coerceAtLeast(18)).coerceAtMost(inH / 3)
+                for (y in 4 until topSampleH) {
+                    for (x in 6 until (inW - 6) step 2) {
+                        val idx = y * inW + x
+                        if (!dilFg[idx]) {
+                            val c = pixels[idx]
+                            ambR += Color.red(c); ambG += Color.green(c); ambB += Color.blue(c); ambCnt++
+                        }
+                    }
+                }
+                val wallR = if (ambCnt > 0) (ambR / ambCnt).toInt() else 138
+                val wallG = if (ambCnt > 0) (ambG / ambCnt).toInt() else 138
+                val wallB = if (ambCnt > 0) (ambB / ambCnt).toInt() else 132
+
+                // Row-by-row horizontal clean-background interpolation across foreground silhouette
+                val outPixels = pixels.clone()
+                for (y in 0 until inH) {
+                    val rowOff = y * inW
+                    var x = 0
+                    while (x < inW) {
+                        if (!dilFg[rowOff + x]) {
+                            x++
+                            continue
+                        }
+                        val runStart = x
+                        while (x < inW && dilFg[rowOff + x]) x++
+                        val runEnd = x - 1
+                        val runLen = (runEnd - runStart + 1).coerceAtLeast(1)
+
+                        val hasLeft = runStart > 2
+                        val hasRight = runEnd < inW - 3
+                        var lR = wallR; var lG = wallG; var lB = wallB
+                        if (hasLeft) {
+                            var sr = 0; var sg = 0; var sb = 0; var sc = 0
+                            for (k in 1..4) {
+                                val sx = (runStart - k).coerceAtLeast(0)
+                                val c = pixels[rowOff + sx]
+                                sr += Color.red(c); sg += Color.green(c); sb += Color.blue(c); sc++
+                            }
+                            if (sc > 0) { lR = sr / sc; lG = sg / sc; lB = sb / sc }
+                        }
+                        var rR = wallR; var rG = wallG; var rB = wallB
+                        if (hasRight) {
+                            var sr = 0; var sg = 0; var sb = 0; var sc = 0
+                            for (k in 1..4) {
+                                val sx = (runEnd + k).coerceAtMost(inW - 1)
+                                val c = pixels[rowOff + sx]
+                                sr += Color.red(c); sg += Color.green(c); sb += Color.blue(c); sc++
+                            }
+                            if (sc > 0) { rR = sr / sc; rG = sg / sc; rB = sb / sc }
+                        }
+
+                        for (fx in runStart..runEnd) {
+                            val t = (fx - runStart).toFloat() / runLen.toFloat()
+                            val smoothT = t * t * (3f - 2f * t)
+                            val baseR: Float
+                            val baseG: Float
+                            val baseB: Float
+                            when {
+                                hasLeft && hasRight -> {
+                                    baseR = lR * (1f - smoothT) + rR * smoothT
+                                    baseG = lG * (1f - smoothT) + rG * smoothT
+                                    baseB = lB * (1f - smoothT) + rB * smoothT
+                                }
+                                hasLeft -> {
+                                    baseR = lR * 0.72f + wallR * 0.28f
+                                    baseG = lG * 0.72f + wallG * 0.28f
+                                    baseB = lB * 0.72f + wallB * 0.28f
+                                }
+                                hasRight -> {
+                                    baseR = rR * 0.72f + wallR * 0.28f
+                                    baseG = rG * 0.72f + wallG * 0.28f
+                                    baseB = rB * 0.72f + wallB * 0.28f
+                                }
+                                else -> {
+                                    baseR = wallR.toFloat(); baseG = wallG.toFloat(); baseB = wallB.toFloat()
+                                }
+                            }
+                            val edgeDist = Math.min(fx - runStart, runEnd - fx).toFloat() / (runLen * 0.5f).coerceAtLeast(1f)
+                            val wallMix = (edgeDist * 0.22f).coerceIn(0f, 0.22f)
+                            val grain = (((fx * 37 + y * 91) % 7) - 3)
+                            val fr = (baseR * (1f - wallMix) + wallR * wallMix + grain).toInt().coerceIn(0, 255)
+                            val fg = (baseG * (1f - wallMix) + wallG * wallMix + grain).toInt().coerceIn(0, 255)
+                            val fb = (baseB * (1f - wallMix) + wallB * wallMix + grain).toInt().coerceIn(0, 255)
+                            outPixels[rowOff + fx] = Color.argb(255, fr, fg, fb)
+                        }
+                    }
+                }
+
+                // 2-pass separable smoothing over the inpainted interior for buttery seamless room-wall blending
+                val tmpPixels = outPixels.clone()
+                for (pass in 0 until 2) {
+                    val srcArr = if (pass == 0) outPixels else tmpPixels
+                    val dstArr = if (pass == 0) tmpPixels else outPixels
+                    for (y in 2 until (inH - 2)) {
+                        for (x in 2 until (inW - 2)) {
+                            val idx = y * inW + x
+                            if (!dilFg[idx]) {
+                                dstArr[idx] = srcArr[idx]
+                                continue
+                            }
+                            var sr = 0; var sg = 0; var sb = 0
+                            for (k in -2..2) {
+                                val c = if (pass == 0) srcArr[y * inW + x + k] else srcArr[(y + k) * inW + x]
+                                sr += Color.red(c); sg += Color.green(c); sb += Color.blue(c)
+                            }
+                            dstArr[idx] = Color.argb(255, sr / 5, sg / 5, sb / 5)
+                        }
+                    }
+                }
+
+                val smoothBg = Bitmap.createBitmap(inW, inH, Bitmap.Config.ARGB_8888)
+                smoothBg.setPixels(outPixels, 0, inW, 0, 0, inW, inH)
+                val prevAuto = snapAutoInpaintBmp
+                snapAutoInpaintBmp = smoothBg
+                if (prevAuto != null && !prevAuto.isRecycled) prevAuto.recycle()
+            } catch (_: Throwable) {}
+        }
+
+        // Sample multi-scale volumetric dust & ash flakes strictly inside the subject's silhouette
+        snapDustParticles.clear()
+        val sampleBmp = if (liveFrameBmp != null && !liveFrameBmp.isRecycled) {
+            try { Bitmap.createScaledBitmap(liveFrameBmp, 128, 170, true) } catch (_: Throwable) { null }
+        } else null
+        val maskSampleBmp = if (curMask != null && !curMask.isRecycled) {
+            try { Bitmap.createScaledBitmap(curMask, 128, 170, true) } catch (_: Throwable) { null }
+        } else null
+
+        val count = (1250f * snapDustDensity.coerceIn(0.4f, 2.5f)).toInt().coerceIn(600, 2400)
+        var attempts = 0
+        while (snapDustParticles.size < count && attempts < count * 4) {
+            attempts++
             var nx = minX + Math.random().toFloat() * spanX
             var ny = minY + Math.random().toFloat() * spanY
-            val dx = (nx - bodyCx) / (spanX * 0.49f)
-            val dy = (ny - bodyCy) / (spanY * 0.53f)
-            if (dx * dx + dy * dy > 1.08f) {
-                nx = bodyCx + (nx - bodyCx) * (0.58f + Math.random().toFloat() * 0.16f)
-                ny = bodyCy + (ny - bodyCy) * (0.72f + Math.random().toFloat() * 0.12f)
+            if (maskSampleBmp != null) {
+                val mx = ((if (bodyIsFrontCamera) (1f - nx) else nx) * (maskSampleBmp.width - 1)).toInt().coerceIn(0, maskSampleBmp.width - 1)
+                val my = (ny * (maskSampleBmp.height - 1)).toInt().coerceIn(0, maskSampleBmp.height - 1)
+                if (Color.alpha(maskSampleBmp.getPixel(mx, my)) < 70) continue
+            } else {
+                val dx = (nx - bodyCx) / (spanX * 0.49f)
+                val dy = (ny - bodyCy) / (spanY * 0.53f)
+                if (dx * dx + dy * dy > 1.04f) {
+                    nx = bodyCx + (nx - bodyCx) * (0.58f + Math.random().toFloat() * 0.16f)
+                    ny = bodyCy + (ny - bodyCy) * (0.72f + Math.random().toFloat() * 0.12f)
+                }
             }
 
-            var r = 122
-            var g = 114
-            var b = 106
+            var r = 132
+            var g = 122
+            var b = 112
             if (sampleBmp != null) {
                 val px = (nx * (sampleBmp.width - 1)).toInt().coerceIn(0, sampleBmp.width - 1)
                 val py = (ny * (sampleBmp.height - 1)).toInt().coerceIn(0, sampleBmp.height - 1)
@@ -641,9 +827,9 @@ class ARFaceOverlayView @JvmOverloads constructor(
             }
             val roll = Math.random()
             val kind = when {
-                roll < 0.06 -> 2 // subtle warm ember
-                roll < 0.58 -> 0 // fine feathery dust mist
-                else -> 1        // tumbling irregular ash flake
+                roll < 0.08 -> 2 // warm glowing ember spark
+                roll < 0.52 -> 0 // volumetric feathery ash smoke puff
+                else -> 1        // tumbling jagged ash ribbon/flake
             }
             val windAxis = if (snapWindDir > 0f) (maxX - nx) / spanX else (nx - minX) / spanX
             val vertAxis = (ny - minY) / spanY
@@ -652,7 +838,11 @@ class ARFaceOverlayView @JvmOverloads constructor(
                 ((Math.cos(nx * 49.3 - ny * 31.1) * 0.5 + 0.5).toFloat() * 0.10f) +
                 Math.random().toFloat() * 0.18f
             val triggerAt = (windAxis * 0.54f + vertAxis * 0.14f + noise - 0.05f).coerceIn(0.0f, 0.92f)
-            val speed = if (kind == 0) 0.10f + Math.random().toFloat() * 0.20f else 0.07f + Math.random().toFloat() * 0.15f
+            val speed = when (kind) {
+                0 -> 0.11f + Math.random().toFloat() * 0.19f
+                2 -> 0.14f + Math.random().toFloat() * 0.22f
+                else -> 0.08f + Math.random().toFloat() * 0.16f
+            }
 
             snapDustParticles.add(
                 SnapDustParticle(
@@ -661,19 +851,19 @@ class ARFaceOverlayView @JvmOverloads constructor(
                     x = nx,
                     y = ny,
                     vx = snapWindDir * speed,
-                    vy = -0.025f - Math.random().toFloat() * 0.075f,
+                    vy = -0.032f - Math.random().toFloat() * 0.082f,
                     size = when (kind) {
-                        0 -> 2.8f + Math.random().toFloat() * 5.2f
-                        2 -> 3.0f + Math.random().toFloat() * 3.8f
-                        else -> 4.2f + Math.random().toFloat() * 8.6f
+                        0 -> 6.5f + Math.random().toFloat() * 11.5f
+                        2 -> 2.8f + Math.random().toFloat() * 3.6f
+                        else -> 3.6f + Math.random().toFloat() * 7.8f
                     },
                     rotation = (Math.random() * 360.0).toFloat(),
-                    rotSpeed = ((Math.random() - 0.5) * 190.0).toFloat(),
+                    rotSpeed = ((Math.random() - 0.5) * 210.0).toFloat(),
                     triggerAt = triggerAt,
                     seed = (Math.random() * 100.0).toFloat(),
-                    r = if (kind == 2) 245 else ((r * 0.68f + 72f * 0.32f).toInt().coerceIn(0, 255)),
-                    g = if (kind == 2) 148 else ((g * 0.68f + 68f * 0.32f).toInt().coerceIn(0, 255)),
-                    b = if (kind == 2) 46 else ((b * 0.68f + 64f * 0.32f).toInt().coerceIn(0, 255)),
+                    r = if (kind == 2) 252 else ((r * 0.60f + 86f * 0.40f).toInt().coerceIn(32, 235)),
+                    g = if (kind == 2) 168 else ((g * 0.60f + 78f * 0.40f).toInt().coerceIn(30, 225)),
+                    b = if (kind == 2) 56 else ((b * 0.60f + 70f * 0.40f).toInt().coerceIn(28, 215)),
                     kind = kind,
                     life = 0f,
                     detached = false
@@ -681,6 +871,7 @@ class ARFaceOverlayView @JvmOverloads constructor(
             )
         }
         if (sampleBmp != null && !sampleBmp.isRecycled) sampleBmp.recycle()
+        if (maskSampleBmp != null && !maskSampleBmp.isRecycled) maskSampleBmp.recycle()
         postInvalidateOnAnimation()
         return true
     }
@@ -1992,6 +2183,48 @@ class ARFaceOverlayView @JvmOverloads constructor(
         val now = System.currentTimeMillis()
         val hasReal = landmarks != null && landmarks!!.size >= 468
         val hasSimple = !hasReal && hasSimpleFace && (now - lastSimpleFaceTime < 1500L)
+
+        // When no face is visible in frame (e.g. pointing rear camera at floor/desk), keep the viewfinder clean
+        // instead of floating a static dummy crown/visor in mid-air; snap on immediately when a face enters frame.
+        val isFaceAnchoredOverlay =
+            (currentLens != ArLensMode.NONE && currentLens != ArLensMode.COMIC_FRAME) || faceBeautyEnabled
+        if (!hasReal && !hasSimple && isFaceAnchoredOverlay) {
+            if (!syncGlb) {
+                val hintText = "Point camera at a face"
+                val txtPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.parseColor("#E2E8F0")
+                    textSize = (viewW * 0.036f).coerceIn(26f, 40f)
+                    typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
+                    textAlign = Paint.Align.CENTER
+                }
+                val textW = txtPaint.measureText(hintText)
+                val padX = (viewW * 0.048f).coerceIn(30f, 54f)
+                val padY = (viewW * 0.022f).coerceIn(14f, 26f)
+                val fm = txtPaint.fontMetrics
+                val textH = fm.descent - fm.ascent
+                val pillCx = viewW * 0.5f
+                val pillCy = viewH * 0.46f
+                val pillRect = RectF(
+                    pillCx - textW * 0.5f - padX,
+                    pillCy - textH * 0.5f - padY,
+                    pillCx + textW * 0.5f + padX,
+                    pillCy + textH * 0.5f + padY
+                )
+                val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.argb(175, 10, 14, 24)
+                    style = Paint.Style.FILL
+                }
+                val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.argb(120, 34, 211, 238)
+                    style = Paint.Style.STROKE
+                    strokeWidth = 2.5f
+                }
+                canvas.drawRoundRect(pillRect, pillRect.height() * 0.5f, pillRect.height() * 0.5f, bgPaint)
+                canvas.drawRoundRect(pillRect, pillRect.height() * 0.5f, pillRect.height() * 0.5f, borderPaint)
+                canvas.drawText(hintText, pillCx, pillCy - (fm.ascent + fm.descent) * 0.5f, txtPaint)
+            }
+            return
+        }
 
         // Match PreviewView scaleType="fillCenter" aspect ratio crop so BOTH MediaPipe and FaceDetector landmarks align on tall displays (e.g. 20:9 Moto Edge)
         val inW = when {
@@ -4709,11 +4942,11 @@ class ARFaceOverlayView @JvmOverloads constructor(
             val segBmp = trackedBodySegMask?.takeIf { !it.isRecycled } ?: snapFrozenSegMask?.takeIf { !it.isRecycled }
             val isFront = if (trackedBodySegMask != null) bodyIsFrontCamera else snapFrozenFrontCamera
 
-            // Layer 1: Clean room background masked by soft feathered organic alpha wipe + blurred body silhouette
+            // Layer 1: Smooth bilinear-filtered room background masked by soft feathered organic alpha wipe
             val saveCount = canvas.saveLayer(0f, 0f, viewW, viewH, null)
             if (bgPlate != null) {
                 bodyTempRect.set(0f, 0f, viewW, viewH)
-                canvas.drawBitmap(bgPlate, null, bodyTempRect, null)
+                canvas.drawBitmap(bgPlate, null, bodyTempRect, snapBgDrawPaint)
             } else {
                 bodyFillPaint.shader = null
                 bodyFillPaint.color = Color.argb(235, 15, 23, 42)
@@ -4784,23 +5017,24 @@ class ARFaceOverlayView @JvmOverloads constructor(
             }
             canvas.restoreToCount(saveCount)
 
-            // Subtle dark charred organic specks right inside the soft feathered band (ZERO laser-cut line!)
+            // Soft organic ash-charred flaking edge specks inside the feathered band (zero hard line!)
             if (progress in 0.03f..0.94f) {
                 canvas.save()
                 canvas.clipPath(silhouettePath)
-                for (s in 0 until 36) {
+                for (s in 0 until 52) {
                     val hs1 = Math.sin(s * 27.1 + 3.1) * 18421.7
                     val ry = (hs1 - Math.floor(hs1)).toFloat()
                     val hs2 = Math.sin(s * 61.7 + 9.4) * 31921.3
                     val rx = ((hs2 - Math.floor(hs2)).toFloat()) * 2f - 1f
-                    val sx = frontX + rx * featherBand * 0.42f
+                    val sx = frontX + rx * featherBand * 0.44f
                     val sy = ry * viewH
-                    val speckR = 2.4f + ((s * 7) % 5) * 1.1f
-                    val fade = ((1f - Math.abs(rx)).coerceAtLeast(0f) * 90f).toInt().coerceIn(0, 255)
-                    snapParticlePaint.color = if (s % 7 == 0) {
-                        Color.argb((fade * 0.7f).toInt(), 180, 110, 48)
+                    val speckR = 2.6f + ((s * 7) % 6) * 1.15f
+                    val fade = ((1f - Math.abs(rx)).coerceAtLeast(0f) * 105f).toInt().coerceIn(0, 255)
+                    snapParticlePaint.shader = null
+                    snapParticlePaint.color = if (s % 6 == 0) {
+                        Color.argb((fade * 0.85f).toInt(), 218, 138, 52)
                     } else {
-                        Color.argb(fade, 38, 35, 33)
+                        Color.argb(fade, 48, 44, 40)
                     }
                     canvas.drawCircle(sx, sy, speckR, snapParticlePaint)
                 }
@@ -4808,9 +5042,11 @@ class ARFaceOverlayView @JvmOverloads constructor(
             }
         }
 
-        // 3. Simulate & render 950 layered dust particles (fine volumetric mist + tumbling ash flakes + subtle embers)
+        // 3. Simulate & render 3-layer volumetric ash smoke, jagged tumbling ash ribbons & warm embers
         if (snapDustParticles.isNotEmpty()) {
             val timeSec = nowMs * 0.001
+            val densityBoost = (0.76f + snapDustDensity.coerceIn(0.4f, 2.5f) * 0.34f).coerceIn(0.78f, 1.55f)
+            val windMult = snapWindSpeed.coerceIn(0.3f, 3.0f)
             for (i in 0 until snapDustParticles.size) {
                 val p = snapDustParticles[i]
                 if (!p.detached && progress >= p.triggerAt) {
@@ -4820,70 +5056,91 @@ class ARFaceOverlayView @JvmOverloads constructor(
                     p.life = 0.001f
                 }
                 if (p.detached && p.life < 1.05f) {
-                    val windMult = snapWindSpeed.coerceIn(0.3f, 3.0f)
-                    val gust = 1.0f + 0.38f * Math.sin(timeSec * 1.7 + p.seed).toFloat()
-                    val curlY = Math.sin(timeSec * 2.3 + p.originX * 14.0 + p.seed).toFloat() * 0.048f * windMult
+                    val gust = 1.0f + 0.42f * Math.sin(timeSec * 1.8 + p.seed).toFloat()
+                    val curlY = Math.sin(timeSec * 2.5 + p.originX * 14.0 + p.seed).toFloat() * 0.052f * windMult
                     p.x += p.vx * windMult * gust * dt
                     p.y += (p.vy * windMult + curlY) * dt
                     p.rotation += p.rotSpeed * dt
-                    p.life += dt * 0.22f // ~4.5s graceful wind drift even after body vanishes
+                    p.life += dt * 0.22f
                 }
 
                 if (!p.detached || p.life >= 1.0f) continue
-                val densityBoost = (0.72f + snapDustDensity.coerceIn(0.4f, 2.5f) * 0.36f).coerceIn(0.75f, 1.55f)
                 val alphaF = if (p.life < 0.14f) p.life / 0.14f else ((1f - (p.life - 0.14f) / 0.86f).coerceIn(0f, 1f))
                 val px = p.x * viewW
                 val py = p.y * viewH
+                snapParticlePaint.shader = null
 
                 if (p.kind == 0) {
-                    // Fine feathery volumetric ash mist
-                    val alphaInt = (alphaF * 135f * densityBoost).toInt().coerceIn(0, 255)
-                    val rMist = p.size * (0.95f + p.life * 0.58f) * (0.85f + snapDustDensity * 0.15f)
-                    snapParticlePaint.color = Color.argb(alphaInt, p.r, p.g, p.b)
-                    canvas.drawCircle(px, py, rMist, snapParticlePaint)
+                    // Volumetric layered smoky ash wisp (outer soft haze + warm charcoal core)
+                    val rOuter = p.size * (1.15f + p.life * 1.05f) * (0.85f + snapDustDensity * 0.14f)
+                    val outerAlpha = (alphaF * 44f * densityBoost).toInt().coerceIn(0, 140)
+                    snapParticlePaint.color = Color.argb(outerAlpha, p.r, p.g, p.b)
+                    canvas.drawCircle(px, py, rOuter, snapParticlePaint)
+                    val innerAlpha = (alphaF * 82f * densityBoost).toInt().coerceIn(0, 185)
+                    snapParticlePaint.color = Color.argb(innerAlpha, (p.r * 0.82f).toInt(), (p.g * 0.80f).toInt(), (p.b * 0.78f).toInt())
+                    canvas.drawCircle(px + snapWindDir * rOuter * 0.22f, py - rOuter * 0.12f, rOuter * 0.52f, snapParticlePaint)
                 } else if (p.kind == 2) {
-                    // Subtle warm charred ember speck
-                    val alphaInt = (alphaF * 215f).toInt().coerceIn(0, 255)
-                    val sz = p.size * (1f - p.life * 0.42f)
-                    snapParticlePaint.color = Color.argb(alphaInt, p.r, p.g, p.b)
-                    canvas.drawCircle(px, py, sz * 0.65f, snapParticlePaint)
+                    // Incandescent ember spark with subtle golden bloom
+                    val sz = p.size * (1f - p.life * 0.45f)
+                    val glowAlpha = (alphaF * 78f).toInt().coerceIn(0, 255)
+                    snapParticlePaint.color = Color.argb(glowAlpha, 245, 158, 11)
+                    canvas.drawCircle(px, py, sz * 2.1f, snapParticlePaint)
+                    val coreAlpha = (alphaF * 235f).toInt().coerceIn(0, 255)
+                    snapParticlePaint.color = Color.argb(coreAlpha, 254, 240, 138)
+                    canvas.drawCircle(px, py, sz * 0.68f, snapParticlePaint)
                 } else {
-                    // Tumbling jagged skin/cloth ash flake darkening naturally into soot
-                    val alphaInt = (alphaF * 215f).toInt().coerceIn(0, 255)
-                    val sz = p.size * (1f - p.life * 0.42f)
-                    val ashFade = (p.life * 0.78f).coerceAtMost(1f)
-                    val rr = (p.r * (1f - ashFade * 0.5f) + 46f * ashFade * 0.5f).toInt().coerceIn(0, 255)
-                    val gg = (p.g * (1f - ashFade * 0.5f) + 44f * ashFade * 0.5f).toInt().coerceIn(0, 255)
-                    val bb = (p.b * (1f - ashFade * 0.5f) + 42f * ashFade * 0.5f).toInt().coerceIn(0, 255)
+                    // Tapered irregular jagged ash shard darkening naturally into soot
+                    val alphaInt = (alphaF * 195f).toInt().coerceIn(0, 255)
+                    val sz = p.size * (1f - p.life * 0.38f)
+                    val ashFade = (p.life * 0.75f).coerceAtMost(1f)
+                    val rr = (p.r * (1f - ashFade * 0.48f) + 64f * ashFade * 0.48f).toInt().coerceIn(28, 255)
+                    val gg = (p.g * (1f - ashFade * 0.48f) + 60f * ashFade * 0.48f).toInt().coerceIn(26, 255)
+                    val bb = (p.b * (1f - ashFade * 0.48f) + 56f * ashFade * 0.48f).toInt().coerceIn(24, 255)
                     snapParticlePaint.color = Color.argb(alphaInt, rr, gg, bb)
                     canvas.save()
                     canvas.translate(px, py)
                     canvas.rotate(p.rotation)
-                    canvas.drawRect(-sz, -sz * 0.48f, sz, sz * 0.48f, snapParticlePaint)
+                    snapFlakePath.reset()
+                    snapFlakePath.moveTo(-sz * 1.35f, -sz * 0.15f)
+                    snapFlakePath.lineTo(-sz * 0.25f, -sz * 0.62f)
+                    snapFlakePath.lineTo(sz * 1.25f, -sz * 0.08f)
+                    snapFlakePath.lineTo(sz * 0.45f, sz * 0.56f)
+                    snapFlakePath.lineTo(-sz * 0.78f, sz * 0.40f)
+                    snapFlakePath.close()
+                    canvas.drawPath(snapFlakePath, snapParticlePaint)
                     canvas.restore()
                 }
             }
         }
 
-        // 4. Subtle brief air-ripple shockwave at finger-snap origin
+        // 4. Multi-stage 6-Infinity-Stone harmonic shockwave at finger-snap origin
         val waveElapsed = nowMs - snapShockwaveStartMs
-        if (snapShockwaveStartMs > 0L && waveElapsed in 0L..760L) {
-            val t = waveElapsed.toFloat() / 760f
+        if (snapShockwaveStartMs > 0L && waveElapsed in 0L..900L) {
+            val t = waveElapsed.toFloat() / 900f
             val ease = 1f - (1f - t) * (1f - t)
             val ox = snapOriginNormX * viewW
             val oy = snapOriginNormY * viewH
-            val maxR = Math.max(viewW, viewH) * 0.62f
+            val maxR = Math.max(viewW, viewH) * 0.65f
 
-            if (t < 0.18f) {
-                val flashAlpha = ((1f - t / 0.18f) * 62f).toInt().coerceIn(0, 255)
+            if (t < 0.16f) {
+                val flashAlpha = ((1f - t / 0.16f) * 58f).toInt().coerceIn(0, 255)
+                snapParticlePaint.shader = null
                 snapParticlePaint.color = Color.argb(flashAlpha, 254, 243, 199)
                 canvas.drawRect(0f, 0f, viewW, viewH, snapParticlePaint)
             }
 
-            val ringAlpha = ((1f - t) * 185f).toInt().coerceIn(0, 255)
-            snapEdgePaint.strokeWidth = ((1f - t) * 11f).coerceAtLeast(2f)
+            val ringAlpha = ((1f - t) * 190f).toInt().coerceIn(0, 255)
+            snapEdgePaint.strokeWidth = ((1f - t) * 10f).coerceAtLeast(1.8f)
             snapEdgePaint.color = Color.argb(ringAlpha, 250, 204, 21)
             canvas.drawCircle(ox, oy, 18f + maxR * ease, snapEdgePaint)
+
+            if (t > 0.08f) {
+                val t2 = ((t - 0.08f) / 0.92f).coerceIn(0f, 1f)
+                val ease2 = 1f - (1f - t2) * (1f - t2)
+                snapEdgePaint.strokeWidth = ((1f - t2) * 5.5f).coerceAtLeast(1.2f)
+                snapEdgePaint.color = Color.argb(((1f - t2) * 125f).toInt().coerceIn(0, 255), 168, 85, 247)
+                canvas.drawCircle(ox, oy, 12f + maxR * 0.82f * ease2, snapEdgePaint)
+            }
         }
     }
 
@@ -4898,7 +5155,10 @@ class ARFaceOverlayView @JvmOverloads constructor(
         nowMs: Long
     ) {
         val hands = trackedHands
-        if (hands.isEmpty() || (nowMs - lastHandUpdateMs) >= 1200L) return
+        if (hands.isEmpty() || (nowMs - lastHandUpdateMs) >= 900L) {
+            gauntletHasSmoothPts = false
+            return
+        }
 
         val timeSec = nowMs / 1000f
         val srcW = handInputWidth.toFloat().coerceAtLeast(1f)
@@ -4909,365 +5169,509 @@ class ARFaceOverlayView @JvmOverloads constructor(
         val dxOff = (viewW - scaledW) * 0.5f
         val dyOff = (viewH - scaledH) * 0.5f
 
+        val minGate = snapMinNearHandScale.coerceIn(0.08f, 0.28f)
+        // Strictly select ONLY the closest foreground hand inside the Near-Camera Distance Zone
+        // so the Infinity Gauntlet NEVER jumps onto distant background people's hands!
+        var bestHand: HandLandmarkerHelper.TrackedHand? = null
+        var bestScale = 0f
+        for (hIdx in hands.indices) {
+            val h = hands[hIdx]
+            if (h.landmarks.size < 21) continue
+            val lm0 = h.landmarks[0]
+            val lm9 = h.landmarks[9]
+            val lm5 = h.landmarks[5]
+            val lm17 = h.landmarks[17]
+            val normPalm = Math.hypot((lm9.x - lm0.x).toDouble(), (lm9.y - lm0.y).toDouble()).toFloat()
+            val normKnuckle = Math.hypot((lm5.x - lm17.x).toDouble(), (lm5.y - lm17.y).toDouble()).toFloat()
+            val appScale = Math.max(normPalm, normKnuckle * 1.18f)
+            if (appScale >= minGate * 0.90f && appScale <= 0.65f && appScale > bestScale) {
+                bestScale = appScale
+                bestHand = h
+            }
+        }
+        val hand = bestHand ?: run {
+            gauntletHasSmoothPts = false
+            return
+        }
+
+        // Smooth 21 landmarks with EMA to eliminate jitter while keeping crisp wrist/finger tracking
+        val rawPts = handPointPool[0]
+        for (i in 0 until 21) {
+            val lm = hand.landmarks[i]
+            val nx = if (handIsFrontCamera) (1f - lm.x) else lm.x
+            rawPts[i].set(nx * scaledW + dxOff, lm.y * scaledH + dyOff)
+        }
+        val jumpDist = if (gauntletHasSmoothPts) {
+            Math.hypot((rawPts[0].x - gauntletSmoothPts[0].x).toDouble(), (rawPts[0].y - gauntletSmoothPts[0].y).toDouble()).toFloat()
+        } else 9999f
+        if (!gauntletHasSmoothPts || (nowMs - gauntletLastTrackMs) > 280L || jumpDist > viewW * 0.30f) {
+            for (i in 0 until 21) gauntletSmoothPts[i].set(rawPts[i].x, rawPts[i].y)
+            gauntletHasSmoothPts = true
+        } else {
+            val alpha = 0.56f
+            for (i in 0 until 21) {
+                gauntletSmoothPts[i].x += (rawPts[i].x - gauntletSmoothPts[i].x) * alpha
+                gauntletSmoothPts[i].y += (rawPts[i].y - gauntletSmoothPts[i].y) * alpha
+            }
+        }
+        gauntletLastTrackMs = nowMs
+        val pts = gauntletSmoothPts
+
         val snapElapsed = if (snapShockwaveStartMs > 0L) (nowMs - snapShockwaveStartMs) else -1L
         val snapFlare = if (snapElapsed in 0L..1050L) {
             Math.pow((1.0 - snapElapsed.toDouble() / 1050.0), 1.55).toFloat()
         } else 0f
 
         val stoneCoreColors = intArrayOf(
-            Color.parseColor("#F3E8FF"), // Power
+            Color.parseColor("#F5D0FE"), // Power
             Color.parseColor("#E0F2FE"), // Space
-            Color.parseColor("#FEE2E2"), // Reality
-            Color.parseColor("#FFEDD5"), // Soul
-            Color.parseColor("#D1FAE5"), // Time
+            Color.parseColor("#FECACA"), // Reality
+            Color.parseColor("#FED7AA"), // Soul
+            Color.parseColor("#A7F3D0"), // Time
             Color.parseColor("#FEF9C3")  // Mind
         )
         val stoneMidColors = intArrayOf(
-            Color.parseColor("#A855F7"), // Power (Purple)
-            Color.parseColor("#38BDF8"), // Space (Blue)
-            Color.parseColor("#EF4444"), // Reality (Red)
-            Color.parseColor("#F97316"), // Soul (Orange)
-            Color.parseColor("#10B981"), // Time (Emerald)
-            Color.parseColor("#FACC15")  // Mind (Gold)
+            Color.parseColor("#9333EA"), // Power (Purple)
+            Color.parseColor("#0EA5E9"), // Space (Blue)
+            Color.parseColor("#DC2626"), // Reality (Red)
+            Color.parseColor("#EA580C"), // Soul (Orange)
+            Color.parseColor("#059669"), // Time (Emerald)
+            Color.parseColor("#EAB308")  // Mind (Gold)
         )
-        val stoneScaleFactors = floatArrayOf(0.072f, 0.074f, 0.070f, 0.066f, 0.068f, 0.115f)
-        val goldBackColors = intArrayOf(
-            Color.parseColor("#5C2D0A"),
-            Color.parseColor("#C27816"),
+        // Refined realistic Infinity Stone proportions (seated inside beveled sockets, never oversized cartoon balls)
+        val stoneScaleFactors = floatArrayOf(0.052f, 0.054f, 0.051f, 0.048f, 0.050f, 0.088f)
+        // Forged brushed Uru-gold metallic palettes (rich specular highlight + warm bronze depth)
+        val uruDorsalColors = intArrayOf(
+            Color.parseColor("#3E1F07"),
+            Color.parseColor("#8C5515"),
+            Color.parseColor("#D99B2A"),
             Color.parseColor("#FDE68A"),
-            Color.parseColor("#B4690E"),
-            Color.parseColor("#451A03")
+            Color.parseColor("#B67518"),
+            Color.parseColor("#472207")
         )
-        val goldPalmColors = intArrayOf(
-            Color.parseColor("#451A03"),
-            Color.parseColor("#9A5B13"),
-            Color.parseColor("#EAB308"),
-            Color.parseColor("#854D0E"),
-            Color.parseColor("#3B1604")
+        val uruPalmColors = intArrayOf(
+            Color.parseColor("#321805"),
+            Color.parseColor("#734510"),
+            Color.parseColor("#BA7F1B"),
+            Color.parseColor("#E7B84A"),
+            Color.parseColor("#8A5312"),
+            Color.parseColor("#2E1504")
         )
-        val goldStops = floatArrayOf(0f, 0.25f, 0.50f, 0.76f, 1f)
+        val uruStops = floatArrayOf(0f, 0.18f, 0.42f, 0.56f, 0.80f, 1f)
 
-        val maxHands = hands.size.coerceAtMost(2)
-        for (hIdx in 0 until maxHands) {
-            val hand = hands[hIdx]
-            if (hand.landmarks.size < 21) continue
-            val pts = handPointPool[hIdx]
-            for (i in 0 until 21) {
-                val lm = hand.landmarks[i]
-                val nx = if (handIsFrontCamera) (1f - lm.x) else lm.x
-                pts[i].set(nx * scaledW + dxOff, lm.y * scaledH + dyOff)
-            }
+        val wrist = pts[0]
+        val midMcp = pts[9]
+        val handScale = Math.hypot((midMcp.x - wrist.x).toDouble(), (midMcp.y - wrist.y).toDouble()).toFloat().coerceAtLeast(52f)
+        val palmCx = (pts[0].x * 1.05f + pts[5].x + pts[9].x * 1.15f + pts[13].x + pts[17].x) / 5.2f
+        val palmCy = (pts[0].y * 1.05f + pts[5].y + pts[9].y * 1.15f + pts[13].y + pts[17].y) / 5.2f
 
-            val wrist = pts[0]
-            val midMcp = pts[9]
-            val handScale = Math.hypot((midMcp.x - wrist.x).toDouble(), (midMcp.y - wrist.y).toDouble()).toFloat().coerceAtLeast(52f)
-            val palmCx = (pts[0].x * 1.1f + pts[5].x + pts[9].x * 1.1f + pts[13].x + pts[17].x) / 5.2f
-            val palmCy = (pts[0].y * 1.1f + pts[5].y + pts[9].y * 1.1f + pts[13].y + pts[17].y) / 5.2f
+        // Detect palm vs dorsal back-of-hand orientation
+        val ax = pts[5].x - pts[0].x
+        val ay = pts[5].y - pts[0].y
+        val bx = pts[17].x - pts[0].x
+        val by = pts[17].y - pts[0].y
+        val cross = ax * by - ay * bx
+        val isRightHand = hand.handedness.equals("Right", ignoreCase = true)
+        val isBackOfHand = if (handIsFrontCamera) {
+            if (isRightHand) cross < 0f else cross >= 0f
+        } else {
+            if (isRightHand) cross >= 0f else cross < 0f
+        }
+        val palette = if (isBackOfHand) uruDorsalColors else uruPalmColors
 
-            // Detect palm vs dorsal back-of-hand orientation
-            val ax = pts[5].x - pts[0].x
-            val ay = pts[5].y - pts[0].y
-            val bx = pts[17].x - pts[0].x
-            val by = pts[17].y - pts[0].y
-            val cross = ax * by - ay * bx
-            val isRightHand = hand.handedness.equals("Right", ignoreCase = true)
-            val isBackOfHand = if (handIsFrontCamera) {
-                if (isRightHand) cross < 0f else cross >= 0f
-            } else {
-                if (isRightHand) cross >= 0f else cross < 0f
-            }
-            val palette = if (isBackOfHand) goldBackColors else goldPalmColors
+        // Compute live Pinch Charge + Near-Camera Proximity Surge
+        val proximityCharge = ((bestScale - minGate * 0.85f) / (minGate * 0.55f)).coerceIn(0f, 1f)
+        val proximityGain = 0.48f + proximityCharge * 0.72f
+        val thumbMidRatio = Math.hypot((pts[4].x - pts[12].x).toDouble(), (pts[4].y - pts[12].y).toDouble()).toFloat() / handScale
+        val thumbIdxRatio = Math.hypot((pts[4].x - pts[8].x).toDouble(), (pts[4].y - pts[8].y).toDouble()).toFloat() / handScale
+        val minPinchRatio = Math.min(thumbMidRatio, thumbIdxRatio)
+        val pinchCharge = ((0.60f - minPinchRatio) / 0.34f).coerceIn(0f, 1f)
+        val totalPower = ((pinchCharge * 0.85f + proximityCharge * 0.30f) * proximityGain + snapFlare * 1.35f).coerceAtMost(1.65f)
 
-            // Compute live Pinch Charge (Thumb #4 <-> Middle #12 or Index #8) + Near-Camera Proximity Surge
-            val lm0 = hand.landmarks[0]
-            val lm9 = hand.landmarks[9]
-            val lm5 = hand.landmarks[5]
-            val lm17 = hand.landmarks[17]
-            val normPalm = Math.hypot((lm9.x - lm0.x).toDouble(), (lm9.y - lm0.y).toDouble()).toFloat()
-            val normKnuckle = Math.hypot((lm5.x - lm17.x).toDouble(), (lm5.y - lm17.y).toDouble()).toFloat()
-            val apparentNormScale = Math.max(normPalm, normKnuckle * 1.18f)
-            val minGate = snapMinNearHandScale.coerceIn(0.08f, 0.28f)
-            val proximityCharge = ((apparentNormScale - minGate * 0.65f) / (minGate * 0.60f)).coerceIn(0f, 1f)
-            val proximityGain = 0.38f + proximityCharge * 0.80f
+        // 1. Seamless Anatomically Contoured Forearm Vambrace & Layered Wrist Collar
+        run {
+            val fx = wrist.x - midMcp.x
+            val fy = wrist.y - midMcp.y
+            val fLen = Math.hypot(fx.toDouble(), fy.toDouble()).toFloat().coerceAtLeast(1f)
+            val ux = fx / fLen
+            val uy = fy / fLen
+            val deg = Math.toDegrees(Math.atan2(uy.toDouble(), ux.toDouble())).toFloat() - 90f
+            val cuffLen = handScale * 0.64f
+            val cuffTopW = handScale * 0.40f
+            val cuffBotW = handScale * 0.48f
 
-            val thumbMidRatio = Math.hypot((pts[4].x - pts[12].x).toDouble(), (pts[4].y - pts[12].y).toDouble()).toFloat() / handScale
-            val thumbIdxRatio = Math.hypot((pts[4].x - pts[8].x).toDouble(), (pts[4].y - pts[8].y).toDouble()).toFloat() / handScale
-            val minPinchRatio = Math.min(thumbMidRatio, thumbIdxRatio)
-            val pinchCharge = ((0.60f - minPinchRatio) / 0.34f).coerceIn(0f, 1f)
-            val totalPower = ((pinchCharge * 0.85f + proximityCharge * 0.32f) * proximityGain + snapFlare * 1.35f).coerceAtMost(1.65f)
+            canvas.save()
+            canvas.translate(wrist.x - ux * handScale * 0.06f, wrist.y - uy * handScale * 0.06f)
+            canvas.rotate(deg)
 
-            // 1. Armored Forearm / Wrist Cuff
-            run {
-                val fx = wrist.x - midMcp.x
-                val fy = wrist.y - midMcp.y
-                val deg = Math.toDegrees(Math.atan2(fy.toDouble(), fx.toDouble())).toFloat() - 90f
-                val cuffLen = handScale * 0.72f
-                val cuffTopW = handScale * 0.42f
-                val cuffBotW = handScale * 0.54f
-                canvas.save()
-                canvas.translate(wrist.x, wrist.y)
-                canvas.rotate(deg)
+            // Subtle ambient drop shadow under forearm sleeve
+            gauntletPath.reset()
+            gauntletPath.moveTo(-cuffTopW, 0f)
+            gauntletPath.quadTo(0f, -handScale * 0.08f, cuffTopW, 0f)
+            gauntletPath.lineTo(cuffBotW, cuffLen * 0.86f)
+            gauntletPath.quadTo(0f, cuffLen * 1.04f, -cuffBotW, cuffLen * 0.86f)
+            gauntletPath.close()
+            canvas.drawPath(gauntletPath, gauntletShadowPaint)
+
+            // Brushed Uru-gold metallic forearm sleeve
+            gauntletFillPaint.shader = LinearGradient(-cuffBotW, 0f, cuffBotW, 0f, palette, uruStops, Shader.TileMode.CLAMP)
+            canvas.drawPath(gauntletPath, gauntletFillPaint)
+
+            // Layered horizontal curved armor collar bands & recessed bronze seams
+            for (band in 0 until 3) {
+                val byPos = cuffLen * (0.18f + band * 0.25f)
+                val bw = cuffTopW + (cuffBotW - cuffTopW) * (0.18f + band * 0.25f)
                 gauntletPath.reset()
-                gauntletPath.moveTo(-cuffTopW, -handScale * 0.08f)
-                gauntletPath.lineTo(cuffTopW, -handScale * 0.08f)
-                gauntletPath.lineTo(cuffBotW, cuffLen * 0.82f)
-                gauntletPath.quadTo(0f, cuffLen * 1.04f, -cuffBotW, cuffLen * 0.82f)
-                gauntletPath.close()
-                gauntletFillPaint.shader = LinearGradient(-cuffBotW, 0f, cuffBotW, 0f, palette, goldStops, Shader.TileMode.CLAMP)
-                canvas.drawPath(gauntletPath, gauntletFillPaint)
-                gauntletStrokePaint.color = Color.argb(200, 69, 26, 3)
-                gauntletStrokePaint.strokeWidth = 2.6f
-                canvas.drawPath(gauntletPath, gauntletStrokePaint)
-                // Forearm V-chevron gold trim
-                gauntletPath.reset()
-                gauntletPath.moveTo(-cuffTopW * 0.90f, handScale * 0.06f)
-                gauntletPath.lineTo(0f, handScale * 0.22f)
-                gauntletPath.lineTo(cuffTopW * 0.90f, handScale * 0.06f)
-                gauntletStrokePaint.color = Color.argb(170, 254, 243, 199)
-                gauntletStrokePaint.strokeWidth = 2.8f
-                canvas.drawPath(gauntletPath, gauntletStrokePaint)
-                canvas.restore()
-            }
-
-            // 2. Articulated Metallic Gold Finger Armor Plates across all 5 fingers
-            for (fIdx in gauntletFingerChains.indices) {
-                val chain = gauntletFingerChains[fIdx]
-                val baseW = when (fIdx) {
-                    0 -> handScale * 0.105f
-                    4 -> handScale * 0.072f
-                    else -> handScale * 0.088f
-                }
-                for (seg in 0 until chain.size - 1) {
-                    val a = pts[chain[seg]]
-                    val b = pts[chain[seg + 1]]
-                    val dx = b.x - a.x
-                    val dy = b.y - a.y
-                    val segLen = Math.hypot(dx.toDouble(), dy.toDouble()).toFloat()
-                    if (segLen < 2f) continue
-                    val nx = -dy / segLen
-                    val ny = dx / segLen
-                    val ux = dx / segLen
-                    val uy = dy / segLen
-                    val pad = Math.min(4f, segLen * 0.12f)
-                    val axS = a.x - ux * pad
-                    val ayS = a.y - uy * pad
-                    val bxS = b.x + ux * pad
-                    val byS = b.y + uy * pad
-                    val wS = baseW * (1f - seg * 0.14f)
-                    val wE = baseW * (1f - (seg + 1) * 0.16f)
-
-                    gauntletPath.reset()
-                    gauntletPath.moveTo(axS + nx * wS, ayS + ny * wS)
-                    gauntletPath.lineTo(bxS + nx * wE, byS + ny * wE)
-                    gauntletPath.lineTo(bxS - nx * wE, byS - ny * wE)
-                    gauntletPath.lineTo(axS - nx * wS, ayS - ny * wS)
-                    gauntletPath.close()
-
-                    gauntletFillPaint.shader = LinearGradient(
-                        axS - nx * wS, ayS - ny * wS,
-                        axS + nx * wS, ayS + ny * wS,
-                        palette, goldStops, Shader.TileMode.CLAMP
-                    )
-                    canvas.drawPath(gauntletPath, gauntletFillPaint)
-                    gauntletStrokePaint.color = if (totalPower > 0.2f) {
-                        Color.argb((110 + totalPower * 90).toInt().coerceIn(0, 255), 253, 224, 71)
-                    } else {
-                        Color.argb(185, 69, 26, 3)
-                    }
-                    gauntletStrokePaint.strokeWidth = 1.8f
-                    canvas.drawPath(gauntletPath, gauntletStrokePaint)
-                }
-
-                // Rounded armored fingertip cap
-                val tip = pts[chain[chain.size - 1]]
-                val capR = (baseW * 0.56f).coerceAtLeast(5f)
-                gauntletFillPaint.shader = RadialGradient(
-                    tip.x - capR * 0.25f, tip.y - capR * 0.25f, capR,
-                    intArrayOf(Color.parseColor("#FEF3C7"), Color.parseColor("#D97706"), Color.parseColor("#5C2D0A")),
-                    floatArrayOf(0f, 0.55f, 1f), Shader.TileMode.CLAMP
-                )
-                canvas.drawCircle(tip.x, tip.y, capR, gauntletFillPaint)
-            }
-
-            // 3. Main Dorsal / Palm Armored Uru-Gold Hand Plate
-            run {
-                val hullIdx = intArrayOf(0, 1, 2, 5, 9, 13, 17)
-                gauntletPath.reset()
-                for (k in hullIdx.indices) {
-                    val idx = hullIdx[k]
-                    val p = pts[idx]
-                    val expand = if (idx == 0) 1.08f else if (idx == 2) 1.05f else 1.15f
-                    val hx = palmCx + (p.x - palmCx) * expand
-                    val hy = palmCy + (p.y - palmCy) * expand
-                    if (k == 0) gauntletPath.moveTo(hx, hy) else gauntletPath.lineTo(hx, hy)
-                }
-                gauntletPath.close()
-                gauntletFillPaint.shader = LinearGradient(
-                    pts[5].x, pts[5].y, pts[17].x, pts[0].y,
-                    palette, goldStops, Shader.TileMode.CLAMP
-                )
-                canvas.drawPath(gauntletPath, gauntletFillPaint)
-                gauntletStrokePaint.color = Color.argb(215, 69, 26, 3)
+                gauntletPath.moveTo(-bw * 0.94f, byPos)
+                gauntletPath.quadTo(0f, byPos + handScale * 0.09f, bw * 0.94f, byPos)
+                gauntletStrokePaint.color = Color.argb(140, 46, 21, 4)
                 gauntletStrokePaint.strokeWidth = 3.2f
                 canvas.drawPath(gauntletPath, gauntletStrokePaint)
-                // Knuckle armor bridge bar (#5 -> #9 -> #13 -> #17)
-                gauntletPath.reset()
-                gauntletPath.moveTo(pts[5].x, pts[5].y)
-                gauntletPath.lineTo(pts[9].x, pts[9].y)
-                gauntletPath.lineTo(pts[13].x, pts[13].y)
-                gauntletPath.lineTo(pts[17].x, pts[17].y)
-                gauntletStrokePaint.color = Color.argb(145, 254, 240, 138)
-                gauntletStrokePaint.strokeWidth = (handScale * 0.048f).coerceAtLeast(4f)
+                gauntletStrokePaint.color = Color.argb(135, 254, 243, 199)
+                gauntletStrokePaint.strokeWidth = 1.4f
                 canvas.drawPath(gauntletPath, gauntletStrokePaint)
             }
 
-            // Compute exact 6 Infinity Stone coordinates
-            val stoneX = floatArrayOf(
-                pts[5].x,
-                pts[9].x,
-                pts[13].x,
-                pts[17].x,
-                pts[2].x * 0.72f + pts[1].x * 0.28f,
-                palmCx
-            )
-            val stoneY = floatArrayOf(
-                pts[5].y,
-                pts[9].y,
-                pts[13].y,
-                pts[17].y,
-                pts[2].y * 0.72f + pts[1].y * 0.28f,
-                palmCy
-            )
+            // Crisp metallic rim accent
+            gauntletPath.reset()
+            gauntletPath.moveTo(-cuffTopW, 0f)
+            gauntletPath.quadTo(0f, -handScale * 0.08f, cuffTopW, 0f)
+            gauntletPath.lineTo(cuffBotW, cuffLen * 0.86f)
+            gauntletPath.quadTo(0f, cuffLen * 1.04f, -cuffBotW, cuffLen * 0.86f)
+            gauntletPath.close()
+            gauntletStrokePaint.color = Color.argb(135, 58, 28, 6)
+            gauntletStrokePaint.strokeWidth = 1.8f
+            canvas.drawPath(gauntletPath, gauntletStrokePaint)
+            canvas.restore()
+        }
 
-            // 4. Uru Energy Channels radiating from Mind Stone to all 5 knuckle/thumb stones
-            for (sIdx in 0 until 5) {
-                val mx = (palmCx + stoneX[sIdx]) * 0.5f
-                val my = (palmCy + stoneY[sIdx]) * 0.5f
-                val wob = Math.sin(timeSec * 8.0 + sIdx * 1.9).toFloat() * (if (totalPower > 0.15f) 6f * totalPower else 1.2f)
+        // 2. Sculpted Articulated Finger Gauntlet Sleeves with Overlapping Knuckle Hinges
+        for (fIdx in gauntletFingerChains.indices) {
+            val chain = gauntletFingerChains[fIdx]
+            val baseW = when (fIdx) {
+                0 -> handScale * 0.132f
+                4 -> handScale * 0.092f
+                else -> handScale * 0.108f
+            }
+            for (seg in 0 until chain.size - 1) {
+                val a = pts[chain[seg]]
+                val b = pts[chain[seg + 1]]
+                val dx = b.x - a.x
+                val dy = b.y - a.y
+                val segLen = Math.hypot(dx.toDouble(), dy.toDouble()).toFloat()
+                if (segLen < 2f) continue
+                val nx = -dy / segLen
+                val ny = dx / segLen
+                val ux = dx / segLen
+                val uy = dy / segLen
+                val pad = Math.min(6f, segLen * 0.18f)
+                val axS = a.x - ux * pad
+                val ayS = a.y - uy * pad
+                val bxS = b.x + ux * pad
+                val byS = b.y + uy * pad
+                val wS = baseW * (1f - seg * 0.13f)
+                val wE = baseW * (1f - (seg + 1) * 0.15f)
+                val midX = (axS + bxS) * 0.5f
+                val midY = (ayS + byS) * 0.5f
+
+                // Rounded anatomically contoured armor plate wrapping each phalanx
                 gauntletPath.reset()
-                gauntletPath.moveTo(palmCx, palmCy)
-                gauntletPath.quadTo(mx + wob, my - wob, stoneX[sIdx], stoneY[sIdx])
-                gauntletStrokePaint.color = if (totalPower > 0.12f) stoneMidColors[sIdx] else Color.argb(165, 69, 26, 3)
-                gauntletStrokePaint.strokeWidth = if (totalPower > 0.12f) 2.8f + totalPower * 2.4f else 2.0f
+                gauntletPath.moveTo(axS + nx * wS, ayS + ny * wS)
+                gauntletPath.quadTo(midX + nx * ((wS + wE) * 0.54f), midY + ny * ((wS + wE) * 0.54f), bxS + nx * wE, byS + ny * wE)
+                gauntletPath.quadTo(bxS + ux * (wE * 0.35f), byS + uy * (wE * 0.35f), bxS - nx * wE, byS - ny * wE)
+                gauntletPath.quadTo(midX - nx * ((wS + wE) * 0.54f), midY - ny * ((wS + wE) * 0.54f), axS - nx * wS, ayS - ny * wS)
+                gauntletPath.quadTo(axS - ux * (wS * 0.28f), ayS - uy * (wS * 0.28f), axS + nx * wS, ayS + ny * wS)
+                gauntletPath.close()
+
+                gauntletFillPaint.shader = LinearGradient(
+                    axS - nx * wS, ayS - ny * wS,
+                    axS + nx * wS, ayS + ny * wS,
+                    palette, uruStops, Shader.TileMode.CLAMP
+                )
+                canvas.drawPath(gauntletPath, gauntletFillPaint)
+
+                // Subtle specular center ridge down each finger armor segment
+                gauntletStrokePaint.color = Color.argb(95, 254, 243, 199)
+                gauntletStrokePaint.strokeWidth = (wE * 0.24f).coerceAtLeast(1.2f)
+                canvas.drawLine(a.x, a.y, b.x, b.y, gauntletStrokePaint)
+
+                // Recessed joint collar seam & subtle gold energy edge when charging
+                gauntletStrokePaint.color = if (totalPower > 0.25f) {
+                    Color.argb((75 + totalPower * 80).toInt().coerceIn(0, 210), 253, 224, 71)
+                } else {
+                    Color.argb(120, 56, 26, 6)
+                }
+                gauntletStrokePaint.strokeWidth = 1.4f
                 canvas.drawPath(gauntletPath, gauntletStrokePaint)
-            }
 
-            // 5. Render All 6 Glowing Faceted Infinity Stones
-            val stoneAlphaScale = if (isBackOfHand) 1f else 0.78f
-            for (sIdx in 0 until 6) {
-                val sx = stoneX[sIdx]
-                val sy = stoneY[sIdx]
-                val breathe = 0.88f + 0.16f * Math.sin(timeSec * 3.4 + sIdx * 1.15).toFloat()
-                val baseR = (handScale * stoneScaleFactors[sIdx]).coerceAtLeast(6f)
-                val flareBoost = 1f + pinchCharge * 0.45f + snapFlare * 1.25f
-                val glowR = (baseR * 3.4f * breathe * flareBoost).coerceAtLeast(10f)
-                val midC = stoneMidColors[sIdx]
-                val coreC = stoneCoreColors[sIdx]
-
-                // Outer cosmic bloom
-                gauntletFillPaint.shader = RadialGradient(
-                    sx, sy, glowR,
-                    intArrayOf(
-                        withAlpha(coreC, (240f * stoneAlphaScale).toInt()),
-                        withAlpha(midC, (200f * stoneAlphaScale).toInt()),
-                        withAlpha(midC, (55f * stoneAlphaScale).toInt()),
-                        Color.TRANSPARENT
-                    ),
-                    floatArrayOf(0f, 0.30f, 0.68f, 1f),
-                    Shader.TileMode.CLAMP
-                )
-                canvas.drawCircle(sx, sy, glowR, gauntletFillPaint)
-
-                // Dark antique bronze socket bezel
-                gauntletFillPaint.shader = null
-                gauntletFillPaint.color = Color.parseColor("#451A03")
-                if (sIdx == 5) {
-                    handTempRect.set(sx - baseR * 1.18f, sy - baseR * 1.38f, sx + baseR * 1.18f, sy + baseR * 1.38f)
-                    canvas.drawOval(handTempRect, gauntletFillPaint)
-                    gauntletStrokePaint.color = Color.parseColor("#FDE68A")
-                    gauntletStrokePaint.strokeWidth = 2f
-                    canvas.drawOval(handTempRect, gauntletStrokePaint)
-                } else {
-                    canvas.drawCircle(sx, sy, baseR * 1.24f, gauntletFillPaint)
-                    gauntletStrokePaint.color = Color.parseColor("#FDE68A")
-                    gauntletStrokePaint.strokeWidth = 1.8f
-                    canvas.drawCircle(sx, sy, baseR * 1.24f, gauntletStrokePaint)
-                }
-
-                // Faceted gem core
-                gauntletFillPaint.shader = RadialGradient(
-                    sx - baseR * 0.28f, sy - baseR * 0.28f, baseR * 1.1f,
-                    intArrayOf(Color.WHITE, coreC, midC, Color.parseColor("#1E1B4B")),
-                    floatArrayOf(0f, 0.32f, 0.76f, 1f),
-                    Shader.TileMode.CLAMP
-                )
-                if (sIdx == 5) {
-                    handTempRect.set(sx - baseR * 0.95f, sy - baseR * 1.14f, sx + baseR * 0.95f, sy + baseR * 1.14f)
-                    canvas.drawOval(handTempRect, gauntletFillPaint)
-                } else {
-                    canvas.drawCircle(sx, sy, baseR * 0.95f, gauntletFillPaint)
-                }
-
-                // Specular highlight glint
-                gauntletFillPaint.shader = null
-                gauntletFillPaint.color = Color.argb(215, 255, 255, 255)
-                canvas.drawCircle(sx - baseR * 0.26f, sy - baseR * 0.28f, baseR * 0.24f, gauntletFillPaint)
-
-                // Starburst flare rays during finger-snap impact
-                if (snapFlare > 0.08f) {
-                    gauntletStrokePaint.color = withAlpha(coreC, (snapFlare * 220f).toInt())
-                    gauntletStrokePaint.strokeWidth = 2.4f
-                    val rayLen = baseR * (2.2f + snapFlare * 3.2f)
-                    for (rIdx in 0 until 6) {
-                        val ang = (rIdx.toDouble() / 6.0) * Math.PI * 2.0 + timeSec * 1.8 + sIdx
-                        canvas.drawLine(
-                            sx + Math.cos(ang).toFloat() * baseR * 0.6f,
-                            sy + Math.sin(ang).toFloat() * baseR * 0.6f,
-                            sx + Math.cos(ang).toFloat() * rayLen,
-                            sy + Math.sin(ang).toFloat() * rayLen,
-                            gauntletStrokePaint
-                        )
-                    }
-                }
-            }
-
-            // 6. Pinch-Armed Cosmic Energy Arcs & Spark between Thumb #4 & Middle #12
-            if (pinchCharge > 0.18f || snapFlare > 0.1f) {
-                val snapX = (pts[4].x + pts[12].x) * 0.5f
-                val snapY = (pts[4].y + pts[12].y) * 0.5f
-                val intensity = Math.max(pinchCharge, snapFlare)
-                val arcCols = intArrayOf(
-                    Color.parseColor("#FACC15"),
-                    Color.parseColor("#A855F7"),
-                    Color.parseColor("#38BDF8"),
-                    Color.parseColor("#10B981")
-                )
-                for (aIdx in arcCols.indices) {
-                    val mx = (palmCx + snapX) * 0.5f + Math.sin(timeSec * 16.0 + aIdx * 2.1).toFloat() * 18f * intensity
-                    val my = (palmCy + snapY) * 0.5f + Math.cos(timeSec * 14.0 + aIdx * 1.7).toFloat() * 18f * intensity
+                // Curved knuckle hinge guard over intermediate joints
+                if (seg > 0) {
+                    val jw = wS * 0.96f
                     gauntletPath.reset()
-                    gauntletPath.moveTo(palmCx, palmCy)
-                    gauntletPath.quadTo(mx, my, snapX, snapY)
-                    gauntletStrokePaint.color = withAlpha(arcCols[aIdx], (intensity * 190f).toInt())
-                    gauntletStrokePaint.strokeWidth = 2f + intensity * 2f
+                    gauntletPath.moveTo(a.x - nx * jw, a.y - ny * jw)
+                    gauntletPath.quadTo(a.x + ux * (wS * 0.45f), a.y + uy * (wS * 0.45f), a.x + nx * jw, a.y + ny * jw)
+                    gauntletStrokePaint.color = Color.argb(150, 48, 22, 5)
+                    gauntletStrokePaint.strokeWidth = 2.4f
+                    canvas.drawPath(gauntletPath, gauntletStrokePaint)
+                    gauntletStrokePaint.color = Color.argb(140, 254, 240, 138)
+                    gauntletStrokePaint.strokeWidth = 1.1f
                     canvas.drawPath(gauntletPath, gauntletStrokePaint)
                 }
-                val sparkR = (16f + intensity * 28f).coerceAtLeast(10f)
-                gauntletFillPaint.shader = RadialGradient(
-                    snapX, snapY, sparkR,
-                    intArrayOf(
-                        Color.argb(245, 255, 255, 255),
-                        Color.argb((215f * intensity).toInt(), 250, 204, 21),
-                        Color.argb((85f * intensity).toInt(), 168, 85, 247),
-                        Color.TRANSPARENT
-                    ),
-                    floatArrayOf(0f, 0.35f, 0.75f, 1f),
-                    Shader.TileMode.CLAMP
-                )
-                canvas.drawCircle(snapX, snapY, sparkR, gauntletFillPaint)
             }
-            gauntletFillPaint.shader = null
+
+            // Sculpted rounded metallic fingertip cap
+            val tip = pts[chain[chain.size - 1]]
+            val capR = (baseW * 0.60f).coerceAtLeast(5f)
+            gauntletFillPaint.shader = RadialGradient(
+                tip.x - capR * 0.28f, tip.y - capR * 0.28f, capR * 1.15f,
+                intArrayOf(Color.parseColor("#FEF9C3"), Color.parseColor("#D99B2A"), Color.parseColor("#6B3B0B")),
+                floatArrayOf(0f, 0.55f, 1f), Shader.TileMode.CLAMP
+            )
+            canvas.drawCircle(tip.x, tip.y, capR, gauntletFillPaint)
         }
+
+        // 3. Anatomically Contoured Layered Uru-Gold Dorsal / Palm Breastplate
+        run {
+            val hullIdx = intArrayOf(0, 1, 2, 5, 9, 13, 17)
+            val hxArr = FloatArray(hullIdx.size)
+            val hyArr = FloatArray(hullIdx.size)
+            for (k in hullIdx.indices) {
+                val idx = hullIdx[k]
+                val p = pts[idx]
+                val expand = when (idx) {
+                    0 -> 1.06f
+                    1, 2 -> 1.08f
+                    else -> 1.16f
+                }
+                hxArr[k] = palmCx + (p.x - palmCx) * expand
+                hyArr[k] = palmCy + (p.y - palmCy) * expand
+            }
+            // Build smooth closed quadratic spline around the hand contour (no sharp clipart polygon corners!)
+            gauntletPath.reset()
+            val nHull = hullIdx.size
+            val startMx = (hxArr[nHull - 1] + hxArr[0]) * 0.5f
+            val startMy = (hyArr[nHull - 1] + hyArr[0]) * 0.5f
+            gauntletPath.moveTo(startMx, startMy)
+            for (k in 0 until nHull) {
+                val next = (k + 1) % nHull
+                val mx = (hxArr[k] + hxArr[next]) * 0.5f
+                val my = (hyArr[k] + hyArr[next]) * 0.5f
+                gauntletPath.quadTo(hxArr[k], hyArr[k], mx, my)
+            }
+            gauntletPath.close()
+
+            // Ambient contact shadow beneath main dorsal plate
+            canvas.drawPath(gauntletPath, gauntletShadowPaint)
+
+            // Main forged metallic gradient plate
+            gauntletFillPaint.shader = LinearGradient(
+                pts[5].x, pts[5].y, pts[17].x, pts[0].y,
+                palette, uruStops, Shader.TileMode.CLAMP
+            )
+            canvas.drawPath(gauntletPath, gauntletFillPaint)
+            gauntletStrokePaint.color = Color.argb(145, 52, 23, 5)
+            gauntletStrokePaint.strokeWidth = 2.0f
+            canvas.drawPath(gauntletPath, gauntletStrokePaint)
+
+            // Raised inner beveled dorsal shield inset for layered 3D armor depth
+            gauntletPath.reset()
+            for (k in 0 until nHull) {
+                val ix = palmCx + (hxArr[k] - palmCx) * 0.74f
+                val iy = palmCy + (hyArr[k] - palmCy) * 0.74f
+                val next = (k + 1) % nHull
+                val ix2 = palmCx + (hxArr[next] - palmCx) * 0.74f
+                val iy2 = palmCy + (hyArr[next] - palmCy) * 0.74f
+                val mx = (ix + ix2) * 0.5f
+                val my = (iy + iy2) * 0.5f
+                if (k == 0) {
+                    val lastX = palmCx + (hxArr[nHull - 1] - palmCx) * 0.74f
+                    val lastY = palmCy + (hyArr[nHull - 1] - palmCy) * 0.74f
+                    gauntletPath.moveTo((lastX + ix) * 0.5f, (lastY + iy) * 0.5f)
+                }
+                gauntletPath.quadTo(ix, iy, mx, my)
+            }
+            gauntletPath.close()
+            gauntletStrokePaint.color = Color.argb(115, 254, 243, 199)
+            gauntletStrokePaint.strokeWidth = 1.6f
+            canvas.drawPath(gauntletPath, gauntletStrokePaint)
+
+            // Sculpted curved knuckle armor ridge (#5 -> #9 -> #13 -> #17)
+            gauntletPath.reset()
+            gauntletPath.moveTo(pts[5].x, pts[5].y)
+            gauntletPath.quadTo(pts[9].x, pts[9].y, pts[13].x, pts[13].y)
+            gauntletPath.lineTo(pts[17].x, pts[17].y)
+            gauntletStrokePaint.color = Color.argb(105, 58, 28, 6)
+            gauntletStrokePaint.strokeWidth = (handScale * 0.064f).coerceAtLeast(5f)
+            canvas.drawPath(gauntletPath, gauntletStrokePaint)
+            gauntletStrokePaint.color = Color.argb(135, 254, 240, 138)
+            gauntletStrokePaint.strokeWidth = (handScale * 0.024f).coerceAtLeast(2f)
+            canvas.drawPath(gauntletPath, gauntletStrokePaint)
+        }
+
+        // Compute exact 6 Infinity Stone coordinates
+        val stoneX = floatArrayOf(
+            pts[5].x,
+            pts[9].x,
+            pts[13].x,
+            pts[17].x,
+            pts[2].x * 0.72f + pts[1].x * 0.28f,
+            palmCx
+        )
+        val stoneY = floatArrayOf(
+            pts[5].y,
+            pts[9].y,
+            pts[13].y,
+            pts[17].y,
+            pts[2].y * 0.72f + pts[1].y * 0.28f,
+            palmCy
+        )
+
+        // 4. Recessed Filigree Uru Energy Veins radiating from Mind Stone to all 5 knuckle/thumb sockets
+        for (sIdx in 0 until 5) {
+            val mx = (palmCx + stoneX[sIdx]) * 0.5f
+            val my = (palmCy + stoneY[sIdx]) * 0.5f
+            val wob = Math.sin(timeSec * 7.5 + sIdx * 1.9).toFloat() * (if (totalPower > 0.20f) 4.5f * totalPower else 0.8f)
+            gauntletPath.reset()
+            gauntletPath.moveTo(palmCx, palmCy)
+            gauntletPath.quadTo(mx + wob, my - wob, stoneX[sIdx], stoneY[sIdx])
+            // Dark engraved metallic channel groove
+            gauntletStrokePaint.color = Color.argb(125, 48, 22, 5)
+            gauntletStrokePaint.strokeWidth = 3.0f
+            canvas.drawPath(gauntletPath, gauntletStrokePaint)
+            // Living stone energy pulse inside the groove
+            if (totalPower > 0.14f) {
+                gauntletStrokePaint.color = withAlpha(stoneMidColors[sIdx], ((totalPower * 155f).toInt()).coerceIn(35, 220))
+                gauntletStrokePaint.strokeWidth = 1.6f + totalPower * 1.4f
+                canvas.drawPath(gauntletPath, gauntletStrokePaint)
+            }
+        }
+
+        // 5. Recessed Beveled Sockets + Polygonal Faceted Glowing Infinity Stones
+        val stoneAlphaScale = if (isBackOfHand) 1f else 0.72f
+        for (sIdx in 0 until 6) {
+            val sx = stoneX[sIdx]
+            val sy = stoneY[sIdx]
+            val breathe = 0.90f + 0.12f * Math.sin(timeSec * 3.2 + sIdx * 1.15).toFloat()
+            val baseR = (handScale * stoneScaleFactors[sIdx]).coerceAtLeast(5.5f)
+            val flareBoost = 0.85f + proximityCharge * 0.35f + pinchCharge * 0.45f + snapFlare * 1.25f
+            val glowR = (baseR * 2.95f * breathe * flareBoost).coerceAtLeast(10f)
+            val midC = stoneMidColors[sIdx]
+            val coreC = stoneCoreColors[sIdx]
+            val isMind = (sIdx == 5)
+            val rx = if (isMind) baseR * 1.05f else baseR
+            val ry = if (isMind) baseR * 1.28f else baseR * 1.08f
+
+            // Soft atmospheric crystal bloom aura
+            gauntletFillPaint.shader = RadialGradient(
+                sx, sy, glowR,
+                intArrayOf(
+                    withAlpha(coreC, (195f * stoneAlphaScale).toInt()),
+                    withAlpha(midC, (145f * stoneAlphaScale).toInt()),
+                    withAlpha(midC, (38f * stoneAlphaScale).toInt()),
+                    Color.TRANSPARENT
+                ),
+                floatArrayOf(0f, 0.28f, 0.65f, 1f),
+                Shader.TileMode.CLAMP
+            )
+            canvas.drawCircle(sx, sy, glowR, gauntletFillPaint)
+
+            // Outer raised burnished gold bezel ring
+            gauntletFillPaint.shader = LinearGradient(
+                sx - rx * 1.3f, sy - ry * 1.3f, sx + rx * 1.3f, sy + ry * 1.3f,
+                intArrayOf(Color.parseColor("#FDE68A"), Color.parseColor("#9A5B13"), Color.parseColor("#3B1604")),
+                floatArrayOf(0f, 0.5f, 1f), Shader.TileMode.CLAMP
+            )
+            handTempRect.set(sx - rx * 1.28f, sy - ry * 1.28f, sx + rx * 1.28f, sy + ry * 1.28f)
+            canvas.drawOval(handTempRect, gauntletFillPaint)
+
+            // Recessed dark bronze cavity
+            gauntletFillPaint.shader = null
+            gauntletFillPaint.color = Color.parseColor("#2A1203")
+            handTempRect.set(sx - rx * 1.06f, sy - ry * 1.06f, sx + rx * 1.06f, sy + ry * 1.06f)
+            canvas.drawOval(handTempRect, gauntletFillPaint)
+
+            // Faceted crystal gem body (multi-stop internal luminescence)
+            gauntletFillPaint.shader = RadialGradient(
+                sx - rx * 0.25f, sy - ry * 0.28f, Math.max(rx, ry) * 1.15f,
+                intArrayOf(Color.WHITE, coreC, midC, Color.parseColor("#1E1B4B")),
+                floatArrayOf(0f, 0.28f, 0.72f, 1f),
+                Shader.TileMode.CLAMP
+            )
+            handTempRect.set(sx - rx * 0.92f, sy - ry * 0.92f, sx + rx * 0.92f, sy + ry * 0.92f)
+            canvas.drawOval(handTempRect, gauntletFillPaint)
+
+            // Internal crystal diamond facet lines
+            gauntletFacetPath.reset()
+            gauntletFacetPath.moveTo(sx, sy - ry * 0.76f)
+            gauntletFacetPath.lineTo(sx + rx * 0.62f, sy)
+            gauntletFacetPath.lineTo(sx, sy + ry * 0.76f)
+            gauntletFacetPath.lineTo(sx - rx * 0.62f, sy)
+            gauntletFacetPath.close()
+            gauntletFillPaint.shader = null
+            gauntletFillPaint.color = Color.argb(65, 255, 255, 255)
+            canvas.drawPath(gauntletFacetPath, gauntletFillPaint)
+            gauntletStrokePaint.color = Color.argb(120, 255, 255, 255)
+            gauntletStrokePaint.strokeWidth = 1.0f
+            canvas.drawPath(gauntletFacetPath, gauntletStrokePaint)
+
+            // Crisp specular crystal highlight glint
+            gauntletFillPaint.color = Color.argb(230, 255, 255, 255)
+            canvas.drawCircle(sx - rx * 0.28f, sy - ry * 0.30f, baseR * 0.20f, gauntletFillPaint)
+
+            // Starburst flare rays during finger-snap impact
+            if (snapFlare > 0.08f) {
+                gauntletStrokePaint.color = withAlpha(coreC, (snapFlare * 225f).toInt())
+                gauntletStrokePaint.strokeWidth = 2.2f
+                val rayLen = baseR * (2.4f + snapFlare * 3.5f)
+                for (rIdx in 0 until 6) {
+                    val ang = (rIdx.toDouble() / 6.0) * Math.PI * 2.0 + timeSec * 1.8 + sIdx
+                    canvas.drawLine(
+                        sx + Math.cos(ang).toFloat() * baseR * 0.6f,
+                        sy + Math.sin(ang).toFloat() * baseR * 0.6f,
+                        sx + Math.cos(ang).toFloat() * rayLen,
+                        sy + Math.sin(ang).toFloat() * rayLen,
+                        gauntletStrokePaint
+                    )
+                }
+            }
+        }
+
+        // 6. Pinch-Armed Cosmic Energy Arcs & Spark between Thumb #4 & Middle #12
+        if (pinchCharge > 0.22f || snapFlare > 0.1f) {
+            val snapX = (pts[4].x + pts[12].x) * 0.5f
+            val snapY = (pts[4].y + pts[12].y) * 0.5f
+            val intensity = Math.max(pinchCharge, snapFlare)
+            val arcCols = intArrayOf(
+                Color.parseColor("#FACC15"),
+                Color.parseColor("#A855F7"),
+                Color.parseColor("#38BDF8"),
+                Color.parseColor("#10B981")
+            )
+            for (aIdx in arcCols.indices) {
+                val mx = (palmCx + snapX) * 0.5f + Math.sin(timeSec * 16.0 + aIdx * 2.1).toFloat() * 16f * intensity
+                val my = (palmCy + snapY) * 0.5f + Math.cos(timeSec * 14.0 + aIdx * 1.7).toFloat() * 16f * intensity
+                gauntletPath.reset()
+                gauntletPath.moveTo(palmCx, palmCy)
+                gauntletPath.quadTo(mx, my, snapX, snapY)
+                gauntletStrokePaint.color = withAlpha(arcCols[aIdx], (intensity * 185f).toInt())
+                gauntletStrokePaint.strokeWidth = 1.8f + intensity * 1.8f
+                canvas.drawPath(gauntletPath, gauntletStrokePaint)
+            }
+            val sparkR = (14f + intensity * 26f).coerceAtLeast(10f)
+            gauntletFillPaint.shader = RadialGradient(
+                snapX, snapY, sparkR,
+                intArrayOf(
+                    Color.argb(245, 255, 255, 255),
+                    Color.argb((210f * intensity).toInt(), 250, 204, 21),
+                    Color.argb((80f * intensity).toInt(), 168, 85, 247),
+                    Color.TRANSPARENT
+                ),
+                floatArrayOf(0f, 0.35f, 0.75f, 1f),
+                Shader.TileMode.CLAMP
+            )
+            canvas.drawCircle(snapX, snapY, sparkR, gauntletFillPaint)
+        }
+        gauntletFillPaint.shader = null
     }
 
     private fun parseSafeColor(hex: String, fallback: Int): Int {
