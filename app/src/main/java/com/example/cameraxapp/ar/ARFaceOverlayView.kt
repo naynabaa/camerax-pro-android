@@ -5172,7 +5172,7 @@ class ARFaceOverlayView @JvmOverloads constructor(
         val minGate = snapMinNearHandScale.coerceIn(0.08f, 0.28f)
         // Strictly select ONLY the closest foreground hand inside the Near-Camera Distance Zone
         // so the Infinity Gauntlet NEVER jumps onto distant background people's hands!
-        var bestHand: HandLandmarkerHelper.TrackedHand? = null
+        var bestHand: OverlayHandData? = null
         var bestScale = 0f
         for (hIdx in hands.indices) {
             val h = hands[hIdx]
