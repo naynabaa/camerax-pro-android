@@ -1,0 +1,268 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/floatingModeMenuRoot"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:elevation="32dp">
+
+    <!-- 1. Right-Side Collapsible Shutter-Arrow Mode Menu -->
+    <LinearLayout
+        android:id="@+id/floatingRightMenuWrapper"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="end|center_vertical"
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
+
+        <!-- Shutter Chevron Handle (Opens / Closes Right Floating Bar) -->
+        <TextView
+            android:id="@+id/btnFloatingMenuArrow"
+            android:layout_width="28dp"
+            android:layout_height="56dp"
+            android:gravity="center"
+            android:text="◀"
+            android:textColor="#FACC15"
+            android:textSize="13sp"
+            android:textStyle="bold"
+            android:background="@drawable/bg_pro_drawer"
+            android:clickable="true"
+            android:focusable="true"
+            android:contentDescription="Toggle Mode Settings Menu" />
+
+        <!-- Mode-Specific Vertical Settings Rail -->
+        <ScrollView
+            android:id="@+id/scrollFloatingMenuItems"
+            android:layout_width="68dp"
+            android:layout_height="wrap_content"
+            android:maxHeight="280dp"
+            android:scrollbars="none"
+            android:background="@drawable/bg_pro_drawer"
+            android:paddingVertical="6dp"
+            android:paddingHorizontal="4dp"
+            android:visibility="gone">
+
+            <LinearLayout
+                android:id="@+id/containerFloatingMenuItems"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:gravity="center_horizontal" />
+        </ScrollView>
+    </LinearLayout>
+
+    <!-- 2. Bottom Parameter Bar (Slider for numbers / Horizontal Option Chips for choices) -->
+    <LinearLayout
+        android:id="@+id/layoutFloatingParamBar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:layout_marginHorizontal="12dp"
+        android:layout_marginBottom="68dp"
+        android:orientation="vertical"
+        android:paddingHorizontal="12dp"
+        android:paddingVertical="10dp"
+        android:background="@drawable/bg_pro_drawer"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <TextView
+                android:id="@+id/tvFloatingParamTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Setting"
+                android:textColor="#F8FAFC"
+                android:textSize="12sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tvFloatingParamValue"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:text=""
+                android:textColor="#FACC15"
+                android:textSize="11sp"
+                android:fontFamily="monospace"
+                android:textStyle="bold" />
+
+            <View
+                android:layout_width="0dp"
+                android:layout_height="1dp"
+                android:layout_weight="1" />
+
+            <TextView
+                android:id="@+id/btnFloatingParamReset"
+                android:layout_width="wrap_content"
+                android:layout_height="26dp"
+                android:gravity="center"
+                android:paddingHorizontal="8dp"
+                android:layout_marginEnd="6dp"
+                android:text="Reset"
+                android:textColor="#CBD5E1"
+                android:textSize="10sp"
+                android:textStyle="bold"
+                android:background="@drawable/bg_cinema_button_inactive"
+                android:visibility="gone" />
+
+            <TextView
+                android:id="@+id/btnFloatingParamClose"
+                android:layout_width="26dp"
+                android:layout_height="26dp"
+                android:gravity="center"
+                android:text="✕"
+                android:textColor="#CBD5E1"
+                android:textSize="11sp"
+                android:textStyle="bold"
+                android:background="@drawable/bg_cinema_button_inactive" />
+        </LinearLayout>
+
+        <!-- Numeric Slider Control -->
+        <SeekBar
+            android:id="@+id/seekFloatingParam"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:progressTint="#FACC15"
+            android:thumbTint="#FACC15"
+            android:visibility="gone" />
+
+        <!-- Non-Numeric Option Chips -->
+        <HorizontalScrollView
+            android:id="@+id/scrollFloatingParamOptions"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:scrollbars="none"
+            android:visibility="gone">
+
+            <LinearLayout
+                android:id="@+id/containerFloatingParamOptions"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical" />
+        </HorizontalScrollView>
+    </LinearLayout>
+
+    <!-- 3. Swipeable AR Effects Strip (Visible ONLY in AR Mode, right above Mode Strip) -->
+    <LinearLayout
+        android:id="@+id/layoutArSwipeStrip"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:layout_marginHorizontal="12dp"
+        android:layout_marginBottom="8dp"
+        android:paddingHorizontal="8dp"
+        android:paddingVertical="6dp"
+        android:background="@drawable/bg_pro_drawer"
+        android:visibility="gone">
+
+        <HorizontalScrollView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:scrollbars="none">
+
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <TextView
+                    android:id="@+id/btnArFamilyOff"
+                    android:layout_width="wrap_content"
+                    android:layout_height="38dp"
+                    android:gravity="center"
+                    android:paddingHorizontal="12dp"
+                    android:layout_marginEnd="6dp"
+                    android:text="Off"
+                    android:textColor="#CBD5E1"
+                    android:textSize="11sp"
+                    android:textStyle="bold"
+                    android:background="@drawable/bg_cinema_button_inactive" />
+
+                <TextView
+                    android:id="@+id/btnArFamilySnapMagic"
+                    android:layout_width="wrap_content"
+                    android:layout_height="38dp"
+                    android:gravity="center"
+                    android:paddingHorizontal="12dp"
+                    android:layout_marginEnd="6dp"
+                    android:text="Snap Magic"
+                    android:textColor="#FDE047"
+                    android:textSize="11sp"
+                    android:textStyle="bold"
+                    android:background="@drawable/bg_cinema_button_inactive" />
+
+                <TextView
+                    android:id="@+id/btnArFamilyFace"
+                    android:layout_width="wrap_content"
+                    android:layout_height="38dp"
+                    android:gravity="center"
+                    android:paddingHorizontal="12dp"
+                    android:layout_marginEnd="6dp"
+                    android:text="Face AR"
+                    android:textColor="#CBD5E1"
+                    android:textSize="11sp"
+                    android:textStyle="bold"
+                    android:background="@drawable/bg_cinema_button_inactive" />
+
+                <TextView
+                    android:id="@+id/btnArFamilyHand"
+                    android:layout_width="wrap_content"
+                    android:layout_height="38dp"
+                    android:gravity="center"
+                    android:paddingHorizontal="12dp"
+                    android:layout_marginEnd="6dp"
+                    android:text="Hand AR"
+                    android:textColor="#CBD5E1"
+                    android:textSize="11sp"
+                    android:textStyle="bold"
+                    android:background="@drawable/bg_cinema_button_inactive" />
+
+                <TextView
+                    android:id="@+id/btnArFamilyBody"
+                    android:layout_width="wrap_content"
+                    android:layout_height="38dp"
+                    android:gravity="center"
+                    android:paddingHorizontal="12dp"
+                    android:layout_marginEnd="6dp"
+                    android:text="Body AR"
+                    android:textColor="#CBD5E1"
+                    android:textSize="11sp"
+                    android:textStyle="bold"
+                    android:background="@drawable/bg_cinema_button_inactive" />
+
+                <TextView
+                    android:id="@+id/btnArFamilyWorld"
+                    android:layout_width="wrap_content"
+                    android:layout_height="38dp"
+                    android:gravity="center"
+                    android:paddingHorizontal="12dp"
+                    android:layout_marginEnd="6dp"
+                    android:text="World AR"
+                    android:textColor="#CBD5E1"
+                    android:textSize="11sp"
+                    android:textStyle="bold"
+                    android:background="@drawable/bg_cinema_button_inactive" />
+
+                <TextView
+                    android:id="@+id/btnArFamilyBeauty"
+                    android:layout_width="wrap_content"
+                    android:layout_height="38dp"
+                    android:gravity="center"
+                    android:paddingHorizontal="12dp"
+                    android:text="Beauty"
+                    android:textColor="#CBD5E1"
+                    android:textSize="11sp"
+                    android:textStyle="bold"
+                    android:background="@drawable/bg_cinema_button_inactive" />
+            </LinearLayout>
+        </HorizontalScrollView>
+    </LinearLayout>
+</FrameLayout>

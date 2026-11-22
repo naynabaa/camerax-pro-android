@@ -131,12 +131,13 @@
             app:tint="#CCCCCC"
             android:contentDescription="Creative Filters" />
 
-        <!-- Dedicated Framing Guide & Grid Button (Direct on-screen access) -->
+        <!-- Dedicated Framing Guide & Grid Button (Moved into Right Floating Mode Menu) -->
         <FrameLayout
             android:id="@+id/layoutBtnGuide"
             android:layout_width="36dp"
             android:layout_height="36dp"
-            android:layout_marginStart="8dp">
+            android:layout_marginStart="8dp"
+            android:visibility="gone">
 
             <ImageButton
                 android:id="@+id/btnGuide"
@@ -158,12 +159,13 @@
                 android:visibility="gone" />
         </FrameLayout>
 
-        <!-- Self-Timer (Circle Icon, Photo Mode Only) -->
+        <!-- Self-Timer (Moved into Right Floating Mode Menu) -->
         <FrameLayout
             android:id="@+id/layoutBtnTimer"
             android:layout_width="36dp"
             android:layout_height="36dp"
-            android:layout_marginStart="8dp">
+            android:layout_marginStart="8dp"
+            android:visibility="gone">
 
             <ImageButton
                 android:id="@+id/btnTimer"
@@ -187,7 +189,7 @@
                 android:visibility="gone" />
         </FrameLayout>
 
-        <!-- Auto Trigger Interval Loop (Circle Icon with Repeat, Video Mode Only) -->
+        <!-- Auto Trigger Interval Loop (Moved into Right Floating Mode Menu) -->
         <ImageButton
             android:id="@+id/btnAutoLoop"
             android:layout_width="36dp"
@@ -204,7 +206,7 @@
             android:layout_height="1dp"
             android:layout_weight="1" />
 
-        <!-- Sensor Aspect Ratio (Sleek Monospace Pill: 4:3 / 16:9 / 1:1) -->
+        <!-- Sensor Aspect Ratio (Moved into Right Floating Mode Menu) -->
         <TextView
             android:id="@+id/btnAspectRatio"
             android:layout_width="wrap_content"
@@ -216,6 +218,7 @@
             android:textSize="11sp"
             android:fontFamily="monospace"
             android:textStyle="bold"
+            android:visibility="gone"
             android:background="@drawable/bg_circle_icon_button"
             android:contentDescription="Camera Aspect Ratio" />
 
@@ -230,12 +233,13 @@
             app:tint="#CCCCCC"
             android:contentDescription="Clean Viewfinder (Hide All Overlays)" />
 
-        <!-- Unified Pro Tool Shelf Button (Sliders Icon with Active Yellow Dot) -->
+        <!-- Unified Pro Tool Shelf Button (Moved into Right Floating Mode Menu) -->
         <FrameLayout
             android:id="@+id/layoutBtnProStudio"
             android:layout_width="36dp"
             android:layout_height="36dp"
-            android:layout_marginStart="8dp">
+            android:layout_marginStart="8dp"
+            android:visibility="gone">
 
             <ImageButton
                 android:id="@+id/btnProStudio"
@@ -257,7 +261,7 @@
                 android:visibility="gone" />
         </FrameLayout>
 
-        <!-- Audio Mute Button (Circle Icon) -->
+        <!-- Audio Mute Button (Moved into Right Floating Mode Menu) -->
         <ImageButton
             android:id="@+id/btnAudioMute"
             android:layout_width="36dp"
@@ -266,6 +270,7 @@
             android:background="@drawable/bg_circle_icon_button"
             android:src="@drawable/ic_volume_up"
             app:tint="#CCCCCC"
+            android:visibility="gone"
             android:contentDescription="Microphone Mute" />
     </LinearLayout>
 
@@ -940,7 +945,7 @@
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintBottom_toBottomOf="parent" />
 
-    <!-- Dedicated AR Lens Mode Dock (Docked cleanly ABOVE modeScrollView & bottomControls so Shutter/Record is NEVER covered) -->
+    <!-- Dedicated AR Lens Mode Dock (Legacy hidden fallback) -->
     <include
         android:id="@+id/arLensModeDock"
         layout="@layout/layout_ar_lens_mode_dock"
@@ -950,6 +955,17 @@
         android:layout_marginEnd="12dp"
         android:layout_marginBottom="8dp"
         android:visibility="gone"
+        app:layout_constraintBottom_toTopOf="@id/modeScrollView"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+    <!-- Unified Right-Side Floating Mode Menu + Bottom Parameter Bar + AR Swipe Strip -->
+    <include
+        android:id="@+id/floatingModeMenu"
+        layout="@layout/layout_floating_mode_menu"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        app:layout_constraintTop_toBottomOf="@id/proModeBar"
         app:layout_constraintBottom_toTopOf="@id/modeScrollView"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />

@@ -54,6 +54,13 @@ class HandLandmarkerHelper(
         setupHandLandmarker()
     }
 
+    // Configurable Finger-Snap Sensitivity Thresholds (tuned from ArCalibrationModal to prevent false positives)
+    @Volatile var snapEnabled: Boolean = true
+    @Volatile var snapPinchThreshold: Float = 0.36f
+    @Volatile var snapReleaseThreshold: Float = 0.50f
+    @Volatile var snapMaxWindowMs: Long = 680L
+    @Volatile var snapCooldownMs: Long = 1800L
+
     private var lastSnapPinchTimeMs: Long = 0L
     private var lastSnapEmittedTimeMs: Long = 0L
 
@@ -99,22 +106,24 @@ class HandLandmarkerHelper(
                             val handedLabel = allHanded.getOrNull(hIdx)?.firstOrNull()?.categoryName() ?: "Right"
                             var gesture = classifyGesture(pts)
 
-                            // Real 21-Point Avengers Finger-Snap Detector (Thumb Tip #4 + Middle Tip #12 pinch -> rapid snap release)
-                            val wrist = pts[0]
-                            val palmSize = hypot((pts[9].x - wrist.x).toDouble(), (pts[9].y - wrist.y).toDouble()).toFloat().coerceAtLeast(0.04f)
-                            val thumbMiddleDist = hypot((pts[4].x - pts[12].x).toDouble(), (pts[4].y - pts[12].y).toDouble()).toFloat() / palmSize
-                            val middleToWrist = hypot((pts[12].x - wrist.x).toDouble(), (pts[12].y - wrist.y).toDouble()).toFloat() / palmSize
-                            if (thumbMiddleDist < 0.36f) {
-                                lastSnapPinchTimeMs = nowMs
-                            } else if (
-                                lastSnapPinchTimeMs > 0L &&
-                                (nowMs - lastSnapPinchTimeMs) in 30L..700L &&
-                                (nowMs - lastSnapEmittedTimeMs) > 1200L &&
-                                (thumbMiddleDist > 0.48f || middleToWrist < 1.15f)
-                            ) {
-                                gesture = "FINGER_SNAP"
-                                lastSnapPinchTimeMs = 0L
-                                lastSnapEmittedTimeMs = nowMs
+                            // Real 21-Point Avengers Finger-Snap Detector using configurable sensitivity thresholds
+                            if (snapEnabled) {
+                                val wrist = pts[0]
+                                val palmSize = hypot((pts[9].x - wrist.x).toDouble(), (pts[9].y - wrist.y).toDouble()).toFloat().coerceAtLeast(0.04f)
+                                val thumbMiddleDist = hypot((pts[4].x - pts[12].x).toDouble(), (pts[4].y - pts[12].y).toDouble()).toFloat() / palmSize
+                                val middleToWrist = hypot((pts[12].x - wrist.x).toDouble(), (pts[12].y - wrist.y).toDouble()).toFloat() / palmSize
+                                if (thumbMiddleDist <= snapPinchThreshold) {
+                                    lastSnapPinchTimeMs = nowMs
+                                } else if (
+                                    lastSnapPinchTimeMs > 0L &&
+                                    (nowMs - lastSnapPinchTimeMs) in 35L..snapMaxWindowMs &&
+                                    (nowMs - lastSnapEmittedTimeMs) >= snapCooldownMs &&
+                                    (thumbMiddleDist >= snapReleaseThreshold || middleToWrist < 1.12f)
+                                ) {
+                                    gesture = "FINGER_SNAP"
+                                    lastSnapPinchTimeMs = 0L
+                                    lastSnapEmittedTimeMs = nowMs
+                                }
                             }
 
                             hands.add(TrackedHand(pts, gesture, handedLabel))

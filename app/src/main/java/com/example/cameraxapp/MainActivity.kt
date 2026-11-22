@@ -330,17 +330,22 @@ class MainActivity : AppCompatActivity() {
         val telemetryText: String = ""
     )
     private val injectedCustomLenses = mutableListOf<CustomLensDef>(
-        
+        CustomLensDef("lens_neon_cat_ears", "Neon Feline Ears", "forehead", "cat_ears", "#ec4899", "#38bdf8", "", "", 1f, 0f, 0f, 0f, true, "NEKO.SYS // V2.0"),
+        CustomLensDef("lens_celestial_halo", "Celestial Halo", "forehead", "halo_tiara", "#fbbf24", "#ffffff", "", "", 1f, 0f, 0f, 0f, true, "AURA LEVEL // 9999"),
+        CustomLensDef("lens_cyber_respirator", "Cyber Mask 2077", "mouth", "cyber_mask", "#06b6d4", "#f43f5e", "", "", 1f, 0f, 0f, 0f, true, "O2 FILTER // 100%")
     )
     private data class CustomFontDef(
         val id: String, val name: String, val family: String, val category: String,
         val colorHex: String, val glowHex: String, val sampleText: String, val italic: Boolean
     )
     private val injectedFonts = listOf<CustomFontDef>(
-        CustomFontDef("font_cyber_orbitron", "Cyber Orbitron", "Orbitron", "scifi", "#38BDF8", "#0284C7", "CAMERAX PRO · 4K 60FPS", false),
-        CustomFontDef("font_tech_mono", "Technical Mono", "JetBrains Mono", "monospace", "#FACC15", "#CA8A04", "REC // ISO 400 · f/1.8", false),
-        CustomFontDef("font_retro_pixel", "Retro Arcade", "VT323", "retro", "#34D399", "#059669", "VHS 1994 // CH-03", false),
-        CustomFontDef("font_cinema_serif", "Editorial Cinema", "Cinzel", "cinematic", "#F8FAFC", "#94A3B8", "ANAMORPHIC 2.39:1", true)
+        CustomFontDef("font_jetbrains_mono", "Cyber HUD Monospace", "\"JetBrains Mono\", monospace", "monospace", "#38bdf8", "#0284c7", "CAMERAX PRO · 60FPS · RAW", false),
+        CustomFontDef("font_orbitron", "Orbitron Sci-Fi", "\"Orbitron\", sans-serif", "scifi", "#22d3ee", "#06b6d4", "TARGET LOCK // 99.8% · ACTIVE", false),
+        CustomFontDef("font_vt323", "90s Camcorder VHS", "\"VT323\", monospace", "retro", "#4ade80", "#16a34a", "PLAY ▶ REC · 00:14:28 · SP", false),
+        CustomFontDef("font_chakra_petch", "Tactical Mecha", "\"Chakra Petch\", sans-serif", "tactical", "#fbbf24", "#d97706", "MIL-STD // 810G · APERTURE F/1.8", false),
+        CustomFontDef("font_cinzel", "Cinematic Anamorphic", "\"Cinzel\", serif", "cinematic", "#f8fafc", "#94a3b8", "PANAVISION · 2.39:1 · SCENE 04", false),
+        CustomFontDef("font_space_grotesk", "Studio Clean Minimal", "\"Space Grotesk\", sans-serif", "editorial", "#ffffff", "#64748b", "STUDIO MASTER · 4K UHD · 10-BIT", false),
+        CustomFontDef("font_black_ops", "Black Ops Stencil", "\"Black Ops One\", cursive", "tactical", "#f43f5e", "#be123c", "DEFCON 1 · THERMAL OPTIC ENGAGED", false)
     )
     private var activeFontIndex = injectedFonts.indexOfFirst { it.id == "font_jetbrains_mono" }.coerceAtLeast(0)
     private val dynamicFilterChips = mutableListOf<Pair<TextView, String>>()
@@ -862,6 +867,7 @@ class MainActivity : AppCompatActivity() {
         setupProEnhancementControls()
         setupArCalibrationControls()
         setupArLensModeDock()
+        setupFloatingModeMenu()
         selectCreativeCategory(CreativeTarget.FILTERS, fromUser = false)
         updateShootingEffectButtons()
         updateActiveInstrumentsCount()
@@ -5863,12 +5869,14 @@ class MainActivity : AppCompatActivity() {
             viewBinding.btnCleanScreen.setImageResource(R.drawable.ic_eye_off)
             viewBinding.btnCleanScreen.setColorFilter(Color.parseColor("#E2E8F0"))
             viewBinding.arLensModeDock.root.visibility = View.GONE
+            viewBinding.floatingModeMenu.root.visibility = View.GONE
             // silent (no popup)
         } else {
             viewBinding.btnCleanScreen.setImageResource(R.drawable.ic_eye)
             viewBinding.btnCleanScreen.setColorFilter(Color.parseColor("#CCCCCC"))
-            if (cameraMode == CameraMode.AR_LENS && recording == null) {
-                viewBinding.arLensModeDock.root.visibility = View.VISIBLE
+            viewBinding.arLensModeDock.root.visibility = View.GONE
+            if (recording == null) {
+                viewBinding.floatingModeMenu.root.visibility = View.VISIBLE
             }
             // silent (no popup)
         }
@@ -7381,29 +7389,37 @@ class MainActivity : AppCompatActivity() {
         val isVideoType = mode == CameraMode.VIDEO || mode == CameraMode.SLOW_MO
         viewBinding.recordingTimer.visibility = View.VISIBLE
         viewBinding.zoomControls.visibility = if (mode == CameraMode.AR_LENS) View.GONE else View.VISIBLE
+        // Top bar simplicity: Flash always visible; Effects ONLY in Photo/Video modes (hidden in AR); other settings live in right floating bar
+        viewBinding.btnFilter.visibility = if (mode == CameraMode.AR_LENS) View.GONE else View.VISIBLE
+        viewBinding.layoutBtnGuide.visibility = View.GONE
+        viewBinding.layoutBtnTimer.visibility = View.GONE
+        viewBinding.btnAutoLoop.visibility = View.GONE
+        viewBinding.btnAspectRatio.visibility = View.GONE
+        viewBinding.layoutBtnProStudio.visibility = View.GONE
+        viewBinding.btnAudioMute.visibility = View.GONE
+        viewBinding.arLensModeDock.root.visibility = View.GONE
+
         if (mode == CameraMode.AR_LENS) {
             viewBinding.effectsStudioDrawer.root.visibility = View.GONE
             viewBinding.proStudioDrawer.root.visibility = View.GONE
             viewBinding.layoutGuideFloatingBar.visibility = View.GONE
-            viewBinding.arLensModeDock.root.visibility = View.VISIBLE
             viewBinding.btnCapture.setImageResource(R.drawable.bg_shutter_button)
             viewBinding.btnPauseResume.visibility = View.GONE
-            viewBinding.layoutBtnTimer.visibility = View.VISIBLE
-            viewBinding.btnAutoLoop.visibility = View.GONE
             viewBinding.recordingDot.setBackgroundResource(R.drawable.bg_green_dot)
             viewBinding.recordingDot.visibility = View.VISIBLE
             viewBinding.tvRecordingStatus.text = "AR LENS"
             viewBinding.tvRecordingStatus.setTextColor(Color.parseColor("#E879F9"))
             viewBinding.chronometer.text = "TAP PHOTO · HOLD 0.5S VID"
             viewBinding.chronometer.setTextColor(Color.parseColor("#F0ABFC"))
-            val restoreLens = if (lastActiveArLensName == "none") "cyberpunk_visor" else lastActiveArLensName
-            setArLens(restoreLens, showNotice = false)
+            // Auto-open right floating settings menu ONLY in AR mode when an effect is active
+            activeFloatingSettingId = null
+            isFloatingMenuOpen = (activeArFamily != "off")
+            applyActiveArFamilyState(fromUser = false)
             syncArDockFromCalibration()
+            refreshFloatingModeMenu()
         } else if (!isVideoType) {
             viewBinding.btnCapture.setImageResource(R.drawable.bg_shutter_button)
             viewBinding.btnPauseResume.visibility = View.GONE
-            viewBinding.layoutBtnTimer.visibility = if (mode == CameraMode.PANORAMA) View.GONE else View.VISIBLE
-            viewBinding.btnAutoLoop.visibility = View.GONE
             viewBinding.recordingDot.setBackgroundResource(R.drawable.bg_green_dot)
             viewBinding.recordingDot.visibility = View.VISIBLE
             if (mode == CameraMode.PANORAMA) {
@@ -7427,10 +7443,12 @@ class MainActivity : AppCompatActivity() {
                 viewBinding.chronometer.text = "12MP 4:3"
                 viewBinding.chronometer.setTextColor(Color.parseColor("#94A3B8"))
             }
+            // Non-AR modes keep right floating bar collapsed by default
+            activeFloatingSettingId = null
+            isFloatingMenuOpen = false
+            refreshFloatingModeMenu()
         } else {
             viewBinding.btnCapture.setImageResource(R.drawable.bg_record_button_idle)
-            viewBinding.layoutBtnTimer.visibility = View.GONE
-            viewBinding.btnAutoLoop.visibility = View.VISIBLE
             viewBinding.btnPauseResume.visibility = View.GONE
             viewBinding.recordingDot.setBackgroundResource(R.drawable.bg_green_dot)
             viewBinding.recordingDot.visibility = View.VISIBLE
@@ -7439,6 +7457,10 @@ class MainActivity : AppCompatActivity() {
             viewBinding.chronometer.text = "00:00:00"
             viewBinding.chronometer.setTextColor(Color.parseColor("#FFFFFF"))
             updateAutoLoopHud()
+            // Non-AR modes keep right floating bar collapsed by default
+            activeFloatingSettingId = null
+            isFloatingMenuOpen = false
+            refreshFloatingModeMenu()
         }
 
         if (!isVideoType && videoOnlyEffectIds.contains(currentShootingEffect)) {
@@ -8068,6 +8090,11 @@ class MainActivity : AppCompatActivity() {
                     isPointInView(viewBinding.proStudioDrawer.root, ev.rawX, ev.rawY) ||
                     isPointInView(viewBinding.arLensModeDock.root, ev.rawX, ev.rawY) ||
                     isPointInView(viewBinding.arCalibrationDrawer, ev.rawX, ev.rawY) ||
+                    isPointInView(viewBinding.floatingModeMenu.floatingRightMenuWrapper, ev.rawX, ev.rawY) ||
+                    (viewBinding.floatingModeMenu.layoutFloatingParamBar.visibility == View.VISIBLE &&
+                        isPointInView(viewBinding.floatingModeMenu.layoutFloatingParamBar, ev.rawX, ev.rawY)) ||
+                    (viewBinding.floatingModeMenu.layoutArSwipeStrip.visibility == View.VISIBLE &&
+                        isPointInView(viewBinding.floatingModeMenu.layoutArSwipeStrip, ev.rawX, ev.rawY)) ||
                     (viewBinding.effectsStudioDrawer.root.visibility == View.VISIBLE && (
                         isPointInView(viewBinding.effectsStudioDrawer.layoutEffectsHeader, ev.rawX, ev.rawY) ||
                         isPointInView(viewBinding.effectsStudioDrawer.layoutEffectsSubItems, ev.rawX, ev.rawY)
@@ -9884,18 +9911,23 @@ class MainActivity : AppCompatActivity() {
         val isSnapArmed = ov.isSnapWipeoutArmed()
         dock.btnDockBodyLockBg.visibility = if (isSnapArmed) View.VISIBLE else View.GONE
         dock.btnDockBodySnapNow.visibility = if (isSnapArmed) View.VISIBLE else View.GONE
+        dock.btnDockBodyGauntlet.visibility = if (isSnapArmed) View.VISIBLE else View.GONE
         if (isSnapArmed) {
             dock.btnDockBodyLockBg.text = if (ov.hasSnapCleanPlate()) "BG LOCKED" else "LOCK BG"
             dock.btnDockBodyLockBg.setBackgroundResource(if (ov.hasSnapCleanPlate()) R.drawable.bg_cinema_button_active else R.drawable.bg_cinema_button_inactive)
             dock.btnDockBodyLockBg.setTextColor(Color.parseColor(if (ov.hasSnapCleanPlate()) "#0F172A" else "#34D399"))
             val vanished = ov.isSnapVanishedOrDissolving()
-            dock.btnDockBodySnapNow.text = if (vanished) "UNSNAP" else "SNAP!"
+            dock.btnDockBodySnapNow.text = if (vanished) "RESET" else "SNAP!"
+            val gauntletOn = ov.snapGauntletEnabled
+            dock.btnDockBodyGauntlet.text = if (gauntletOn) "GLOVE ON" else "GLOVE OFF"
+            dock.btnDockBodyGauntlet.setBackgroundResource(if (gauntletOn) R.drawable.bg_cinema_button_active else R.drawable.bg_cinema_button_inactive)
+            dock.btnDockBodyGauntlet.setTextColor(Color.parseColor(if (gauntletOn) "#0F172A" else "#FBBF24"))
             dock.tvArShutterHint.text = if (ov.hasSnapCleanPlate()) "SNAP FINGERS OR TAP SNAP!" else "LOCK EMPTY BG FIRST, THEN SNAP!"
         }
         isSyncingArDockSliders = false
     }
 
-    private fun triggerSnapWipeoutAction(originX: Float = 0.70f, originY: Float = 0.42f) {
+    private fun triggerSnapWipeoutAction(originX: Float = 0.70f, originY: Float = 0.42f, fromManualButton: Boolean = false) {
         val ov = viewBinding.arFaceOverlayView
         if (!ov.isSnapWipeoutArmed()) {
             ov.applyBodyArPreset("snap_wipeout")
@@ -9905,16 +9937,21 @@ class MainActivity : AppCompatActivity() {
         } else {
             HapticFeedbackConstants.LONG_PRESS
         }
-        window.decorView.performHapticFeedback(hapticConst)
         if (ov.isSnapVanishedOrDissolving()) {
-            ov.triggerSnapReform()
-            playCameraCue(ToneGenerator.TONE_PROP_BEEP2, 70)
-            showHudNotice("UNSNAP! Reforming from wind dust...")
-        } else {
-            val liveBmp = try { viewBinding.viewFinder.bitmap } catch (_: Throwable) { null }
-            ov.triggerSnapWipeout(originX, originY, liveBmp)
+            // Strictly one-time wipeout: finger snaps never reverse! Manual button performs clean instant reset.
+            if (fromManualButton) {
+                window.decorView.performHapticFeedback(hapticConst)
+                ov.resetSnapWipeout()
+                showHudNotice("SNAP WIPEOUT RESET · Ready for next take")
+                syncArDockFromCalibration()
+            }
+            return
+        }
+        window.decorView.performHapticFeedback(hapticConst)
+        val liveBmp = try { viewBinding.viewFinder.bitmap } catch (_: Throwable) { null }
+        if (ov.triggerSnapWipeout(originX, originY, liveBmp)) {
             playCameraCue(ToneGenerator.TONE_PROP_ACK, 55)
-            showHudNotice("SNAP! Wiping out in slow wind dust...")
+            showHudNotice("SNAP! Feathered wind dust wipeout...")
         }
         syncArDockFromCalibration()
     }
@@ -10000,7 +10037,13 @@ class MainActivity : AppCompatActivity() {
             syncArDockFromCalibration()
         }
         dock.btnDockBodySnapNow.setOnClickListener {
-            triggerSnapWipeoutAction(0.70f, 0.42f)
+            triggerSnapWipeoutAction(0.70f, 0.42f, fromManualButton = true)
+        }
+        dock.btnDockBodyGauntlet.setOnClickListener {
+            val ov = viewBinding.arFaceOverlayView
+            ov.snapGauntletEnabled = !ov.snapGauntletEnabled
+            showHudNotice(if (ov.snapGauntletEnabled) "6-Stone Infinity Gauntlet EQUIPPED!" else "Infinity Gauntlet hidden (bare hand)")
+            syncArDockFromCalibration()
         }
         dock.btnDockBodySkel.setOnClickListener {
             val ov = viewBinding.arFaceOverlayView
@@ -10068,6 +10111,698 @@ class MainActivity : AppCompatActivity() {
 
         selectArDockTab(ArDockTab.LENSES, fromUser = false)
         syncArDockFromCalibration()
+    }
+
+    // =========================================================================
+    // SIMPLIFIED RIGHT-SIDE FLOATING MODE MENU + BOTTOM PARAMETER BAR + AR STRIP
+    // =========================================================================
+    private var isFloatingMenuOpen: Boolean = false
+    private var activeFloatingSettingId: String? = null
+    private var activeArFamily: String = "face"
+
+    private data class FloatingMenuSpec(
+        val id: String,
+        val label: String,
+        val isSlider: Boolean = false,
+        val isAction: Boolean = false,
+        val min: Int = 0,
+        val max: Int = 100,
+        val defaultVal: Int = 0,
+        val currentVal: Int = 0,
+        val formatVal: ((Int) -> String)? = null,
+        val onSliderChange: ((Int) -> Unit)? = null,
+        val options: List<Pair<String, String>> = emptyList(),
+        val activeOptionId: String = "",
+        val onOptionSelect: ((String) -> Unit)? = null,
+        val onAction: (() -> Unit)? = null
+    )
+
+    private fun setupFloatingModeMenu() {
+        val fm = viewBinding.floatingModeMenu
+        fm.btnFloatingMenuArrow.setOnClickListener {
+            isFloatingMenuOpen = !isFloatingMenuOpen
+            if (!isFloatingMenuOpen) activeFloatingSettingId = null
+            refreshFloatingModeMenu()
+        }
+        fm.btnFloatingParamClose.setOnClickListener {
+            activeFloatingSettingId = null
+            refreshFloatingModeMenu()
+        }
+        fm.btnArFamilyOff.setOnClickListener { selectArFamily("off") }
+        fm.btnArFamilySnapMagic.setOnClickListener { selectArFamily("snap_magic") }
+        fm.btnArFamilyFace.setOnClickListener { selectArFamily("face") }
+        fm.btnArFamilyHand.setOnClickListener { selectArFamily("hand") }
+        fm.btnArFamilyBody.setOnClickListener { selectArFamily("body") }
+        fm.btnArFamilyWorld.setOnClickListener { selectArFamily("world") }
+        fm.btnArFamilyBeauty.setOnClickListener { selectArFamily("beauty") }
+
+        // Keep top bar clean on initial launch
+        viewBinding.layoutBtnGuide.visibility = View.GONE
+        viewBinding.layoutBtnTimer.visibility = View.GONE
+        viewBinding.btnAutoLoop.visibility = View.GONE
+        viewBinding.btnAspectRatio.visibility = View.GONE
+        viewBinding.layoutBtnProStudio.visibility = View.GONE
+        viewBinding.btnAudioMute.visibility = View.GONE
+        refreshFloatingModeMenu()
+    }
+
+    private fun selectArFamily(family: String) {
+        activeArFamily = family
+        activeFloatingSettingId = null
+        // Auto-open right floating settings menu ONLY in AR mode when an effect is selected
+        isFloatingMenuOpen = (cameraMode == CameraMode.AR_LENS && family != "off")
+        applyActiveArFamilyState(fromUser = true)
+        refreshFloatingModeMenu()
+    }
+
+    private fun applyActiveArFamilyState(fromUser: Boolean) {
+        val ov = viewBinding.arFaceOverlayView
+        when (activeArFamily) {
+            "off" -> {
+                setArLens("none", showNotice = false)
+                ov.applyHandArPreset("off")
+                ov.applyBodyArPreset("off")
+                ov.applyWorldArPreset("off")
+                ov.applyFaceBeautyPreset("off")
+                syncWorldArLifecycleAndPower()
+                if (fromUser) showHudNotice("AR Effects Off")
+            }
+            "snap_magic" -> {
+                // All-in-one Snap Magic: 6-Stone Infinity Gauntlet + Finger-Snap Detection + Feathered Dust Wipeout
+                setArLens("none", showNotice = false)
+                ov.applyHandArPreset("off")
+                ov.applyWorldArPreset("off")
+                ov.applyFaceBeautyPreset("off")
+                ov.snapGauntletEnabled = true
+                ov.applyBodyArPreset("snap_wipeout")
+                syncWorldArLifecycleAndPower()
+                if (fromUser) showHudNotice("Snap Magic Ready — Wear Gauntlet & Snap Fingers")
+            }
+            "face" -> {
+                ov.applyHandArPreset("off")
+                ov.applyBodyArPreset("off")
+                ov.applyWorldArPreset("off")
+                ov.applyFaceBeautyPreset("off")
+                syncWorldArLifecycleAndPower()
+                val restore = if (lastActiveArLensName == "none") "cyberpunk_visor" else lastActiveArLensName
+                if (currentArLensName == "none") setArLens(restore, showNotice = false)
+                if (fromUser) showHudNotice("Face AR Active")
+            }
+            "hand" -> {
+                setArLens("none", showNotice = false)
+                ov.applyBodyArPreset("off")
+                ov.applyWorldArPreset("off")
+                ov.applyFaceBeautyPreset("off")
+                if (!ov.handArEnabled) ov.applyHandArPreset("cyber_gauntlet")
+                syncWorldArLifecycleAndPower()
+                if (fromUser) showHudNotice("Hand AR Active")
+            }
+            "body" -> {
+                setArLens("none", showNotice = false)
+                ov.applyHandArPreset("off")
+                ov.applyWorldArPreset("off")
+                ov.applyFaceBeautyPreset("off")
+                if (!ov.bodyArEnabled || ov.isSnapWipeoutArmed()) ov.applyBodyArPreset("cyber_angel")
+                syncWorldArLifecycleAndPower()
+                if (fromUser) showHudNotice("Body AR Active")
+            }
+            "world" -> {
+                setArLens("none", showNotice = false)
+                ov.applyHandArPreset("off")
+                ov.applyBodyArPreset("off")
+                ov.applyFaceBeautyPreset("off")
+                if (!ov.worldArEnabled) ov.applyWorldArPreset("holo_showcase")
+                syncWorldArLifecycleAndPower()
+                if (fromUser) showHudNotice("World AR Active")
+            }
+            "beauty" -> {
+                setArLens("none", showNotice = false)
+                ov.applyHandArPreset("off")
+                ov.applyBodyArPreset("off")
+                ov.applyWorldArPreset("off")
+                if (!ov.faceBeautyEnabled) ov.applyFaceBeautyPreset("natural_glow")
+                syncWorldArLifecycleAndPower()
+                if (fromUser) showHudNotice("Beauty AR Active")
+            }
+        }
+    }
+
+    private fun buildFloatingMenuSpecs(): List<FloatingMenuSpec> {
+        val ov = viewBinding.arFaceOverlayView
+        if (cameraMode == CameraMode.AR_LENS) {
+            return when (activeArFamily) {
+                "off" -> emptyList()
+                "snap_magic" -> listOf(
+                    FloatingMenuSpec(
+                        id = "snap_action",
+                        label = if (ov.isSnapVanishedOrDissolving()) "Reset" else "Snap!",
+                        isAction = true,
+                        onAction = {
+                            triggerSnapWipeoutAction(0.70f, 0.42f, fromManualButton = true)
+                            refreshFloatingModeMenu()
+                        }
+                    ),
+                    FloatingMenuSpec(
+                        id = "snap_sens",
+                        label = "Sens.",
+                        isSlider = true,
+                        min = 20,
+                        max = 60,
+                        defaultVal = 36,
+                        currentVal = ((handLandmarkerHelper?.snapPinchThreshold ?: 0.36f) * 100f).toInt().coerceIn(20, 60),
+                        formatVal = { v -> "$v%" },
+                        onSliderChange = { v ->
+                            handLandmarkerHelper?.snapPinchThreshold = v / 100f
+                        }
+                    ),
+                    FloatingMenuSpec(
+                        id = "snap_density",
+                        label = "Density",
+                        isSlider = true,
+                        min = 40,
+                        max = 250,
+                        defaultVal = 135,
+                        currentVal = (ov.snapDustDensity * 100f).toInt().coerceIn(40, 250),
+                        formatVal = { v -> String.format("%.2fx", v / 100f) },
+                        onSliderChange = { v ->
+                            ov.snapDustDensity = v / 100f
+                        }
+                    ),
+                    FloatingMenuSpec(
+                        id = "snap_wind",
+                        label = "Wind",
+                        isSlider = true,
+                        min = 30,
+                        max = 300,
+                        defaultVal = 130,
+                        currentVal = (ov.snapWindSpeed * 100f).toInt().coerceIn(30, 300),
+                        formatVal = { v -> String.format("%.1fx", v / 100f) },
+                        onSliderChange = { v ->
+                            ov.snapWindSpeed = v / 100f
+                        }
+                    ),
+                    FloatingMenuSpec(
+                        id = "snap_lock_bg",
+                        label = if (ov.hasSnapCleanPlate()) "BG OK" else "Lock BG",
+                        isAction = true,
+                        onAction = {
+                            val bmp = try { viewBinding.viewFinder.bitmap } catch (_: Throwable) { null }
+                            if (bmp != null) {
+                                ov.setSnapCleanPlate(bmp)
+                                showHudNotice("Clean background locked for Snap Magic")
+                                refreshFloatingModeMenu()
+                            }
+                        }
+                    )
+                )
+                "face" -> listOf(
+                    FloatingMenuSpec(
+                        id = "face_lens",
+                        label = "Lens",
+                        options = listOf(
+                            "cyberpunk_visor" to "Visor",
+                            "golden_crown" to "Crown",
+                            "scifi_hud" to "HUD",
+                            "mesh_contour" to "Mesh",
+                            "comic_frame" to "Comic"
+                        ),
+                        activeOptionId = currentArLensName,
+                        onOptionSelect = { id ->
+                            setArLens(id, showNotice = false)
+                            lastActiveArLensName = id
+                            refreshFloatingModeMenu()
+                        }
+                    ),
+                    FloatingMenuSpec(
+                        id = "face_scale",
+                        label = "Size",
+                        isSlider = true,
+                        min = 50,
+                        max = 200,
+                        defaultVal = 100,
+                        currentVal = (calibScale * 100f).toInt().coerceIn(50, 200),
+                        formatVal = { v -> String.format("%.2fx", v / 100f) },
+                        onSliderChange = { v ->
+                            calibScale = v / 100f
+                            pushArCalibrationToOverlay()
+                        }
+                    ),
+                    FloatingMenuSpec(
+                        id = "face_offset_y",
+                        label = "Height",
+                        isSlider = true,
+                        min = -40,
+                        max = 40,
+                        defaultVal = 0,
+                        currentVal = (calibOffsetY * 100f).toInt().coerceIn(-40, 40),
+                        formatVal = { v -> "${if (v > 0) "+" else ""}$v" },
+                        onSliderChange = { v ->
+                            calibOffsetY = v / 100f
+                            pushArCalibrationToOverlay()
+                        }
+                    ),
+                    FloatingMenuSpec(
+                        id = "face_comic",
+                        label = "Comic",
+                        options = listOf("off" to "Off", "on" to "POW! SFX"),
+                        activeOptionId = if (ov.enableComicOnomatopoeia) "on" else "off",
+                        onOptionSelect = { id ->
+                            ov.enableComicOnomatopoeia = (id == "on")
+                            refreshFloatingModeMenu()
+                        }
+                    ),
+                    FloatingMenuSpec(
+                        id = "face_glb",
+                        label = "3D GLB",
+                        isAction = true,
+                        onAction = { launchGlbLensPicker() }
+                    )
+                )
+                "hand" -> listOf(
+                    FloatingMenuSpec(
+                        id = "hand_style",
+                        label = "Style",
+                        options = listOf(
+                            "luxury_jewelry" to "Luxe",
+                            "cyber_gauntlet" to "Cyber",
+                            "arcane_orb" to "Orb",
+                            "pyro_wand" to "Flame"
+                        ),
+                        activeOptionId = ov.handPresetId,
+                        onOptionSelect = { id ->
+                            ov.applyHandArPreset(id)
+                            refreshFloatingModeMenu()
+                        }
+                    ),
+                    FloatingMenuSpec(
+                        id = "hand_bones",
+                        label = "Bones",
+                        options = listOf("off" to "Hidden", "on" to "Skeleton"),
+                        activeOptionId = if (ov.handShowSkeleton) "on" else "off",
+                        onOptionSelect = { id ->
+                            ov.handShowSkeleton = (id == "on")
+                            refreshFloatingModeMenu()
+                        }
+                    )
+                )
+                "body" -> listOf(
+                    FloatingMenuSpec(
+                        id = "body_style",
+                        label = "Style",
+                        options = listOf(
+                            "cyber_angel" to "Wings",
+                            "hero_cape" to "Cape",
+                            "mecha_armor" to "Mecha",
+                            "chroma_studio" to "Chroma"
+                        ),
+                        activeOptionId = ov.bodyPresetId,
+                        onOptionSelect = { id ->
+                            ov.applyBodyArPreset(id)
+                            refreshFloatingModeMenu()
+                        }
+                    ),
+                    FloatingMenuSpec(
+                        id = "body_bones",
+                        label = "Bones",
+                        options = listOf("off" to "Hidden", "on" to "Skeleton"),
+                        activeOptionId = if (ov.bodyShowSkeleton) "on" else "off",
+                        onOptionSelect = { id ->
+                            ov.bodyShowSkeleton = (id == "on")
+                            refreshFloatingModeMenu()
+                        }
+                    )
+                )
+                "world" -> listOf(
+                    FloatingMenuSpec(
+                        id = "world_scene",
+                        label = "Object",
+                        options = listOf(
+                            "holo_showcase" to "Cube",
+                            "cyber_portal" to "Portal",
+                            "ar_measure" to "Ruler",
+                            "glb_world_stage" to "3D Stage"
+                        ),
+                        activeOptionId = ov.worldPresetId,
+                        onOptionSelect = { id ->
+                            ov.applyWorldArPreset(id)
+                            syncWorldArLifecycleAndPower()
+                            refreshFloatingModeMenu()
+                        }
+                    ),
+                    FloatingMenuSpec(
+                        id = "world_scale",
+                        label = "Scale",
+                        isSlider = true,
+                        min = 50,
+                        max = 200,
+                        defaultVal = 100,
+                        currentVal = (ov.worldObjectScale * 100f).toInt().coerceIn(50, 200),
+                        formatVal = { v -> String.format("%.2fx", v / 100f) },
+                        onSliderChange = { v ->
+                            ov.worldObjectScale = v / 100f
+                        }
+                    ),
+                    FloatingMenuSpec(
+                        id = "world_ruler",
+                        label = "Ruler",
+                        options = listOf("off" to "Off", "on" to "On"),
+                        activeOptionId = if (ov.worldShowRuler) "on" else "off",
+                        onOptionSelect = { id ->
+                            ov.worldShowRuler = (id == "on")
+                            refreshFloatingModeMenu()
+                        }
+                    )
+                )
+                else -> listOf(
+                    FloatingMenuSpec(
+                        id = "beauty_look",
+                        label = "Look",
+                        options = listOf(
+                            "natural_glow" to "Natural",
+                            "red_carpet" to "Glam",
+                            "cyber_neon" to "Cyber",
+                            "kitsune_spirit" to "Kitsune",
+                            "golden_circuit" to "Gold"
+                        ),
+                        activeOptionId = ov.faceBeautyPresetId,
+                        onOptionSelect = { id ->
+                            ov.applyFaceBeautyPreset(id)
+                            refreshFloatingModeMenu()
+                        }
+                    ),
+                    FloatingMenuSpec(
+                        id = "beauty_smooth",
+                        label = "Smooth",
+                        isSlider = true,
+                        min = 0,
+                        max = 100,
+                        defaultVal = 55,
+                        currentVal = (ov.skinSmoothing * 100f).toInt().coerceIn(0, 100),
+                        formatVal = { v -> "$v%" },
+                        onSliderChange = { v ->
+                            ov.faceBeautyEnabled = true
+                            ov.skinSmoothing = v / 100f
+                        }
+                    ),
+                    FloatingMenuSpec(
+                        id = "beauty_lips",
+                        label = "Lips",
+                        isSlider = true,
+                        min = 0,
+                        max = 100,
+                        defaultVal = 35,
+                        currentVal = (ov.lipOpacity * 100f).toInt().coerceIn(0, 100),
+                        formatVal = { v -> "$v%" },
+                        onSliderChange = { v ->
+                            ov.faceBeautyEnabled = true
+                            ov.lipOpacity = v / 100f
+                        }
+                    ),
+                    FloatingMenuSpec(
+                        id = "beauty_eyes",
+                        label = "Eyes",
+                        isSlider = true,
+                        min = 0,
+                        max = 100,
+                        defaultVal = 30,
+                        currentVal = (ov.eyelinerOpacity * 100f).toInt().coerceIn(0, 100),
+                        formatVal = { v -> "$v%" },
+                        onSliderChange = { v ->
+                            ov.faceBeautyEnabled = true
+                            ov.eyelinerOpacity = v / 100f
+                        }
+                    )
+                )
+            }
+        }
+
+        // Standard Camera Modes: show ONLY that mode's relevant settings
+        val timerSpec = FloatingMenuSpec(
+            id = "timer",
+            label = "Timer",
+            options = listOf("0" to "Off", "3" to "3s", "5" to "5s", "10" to "10s"),
+            activeOptionId = countdownSeconds.toString(),
+            onOptionSelect = { id ->
+                countdownSeconds = id.toIntOrNull() ?: 0
+                refreshFloatingModeMenu()
+            }
+        )
+        val ratioSpec = FloatingMenuSpec(
+            id = "ratio",
+            label = "Ratio",
+            options = listOf("4:3" to "4:3", "16:9" to "16:9", "1:1" to "1:1"),
+            activeOptionId = currentAspectRatio,
+            onOptionSelect = { id ->
+                currentAspectRatio = id
+                viewBinding.btnAspectRatio.text = id
+                viewBinding.proOverlayView.sensorAspectRatio = id
+                refreshFloatingModeMenu()
+            }
+        )
+        val evState = camera?.cameraInfo?.exposureState
+        val evMin = evState?.exposureCompensationRange?.lower ?: -6
+        val evMax = evState?.exposureCompensationRange?.upper ?: 6
+        val evCur = evState?.exposureCompensationIndex ?: 0
+        val evStep = evState?.exposureCompensationStep?.toFloat() ?: 0.33f
+        val evSpec = FloatingMenuSpec(
+            id = "ev",
+            label = "EV",
+            isSlider = true,
+            min = evMin,
+            max = evMax,
+            defaultVal = 0,
+            currentVal = evCur.coerceIn(evMin, evMax),
+            formatVal = { v ->
+                val evVal = v * evStep
+                String.format("%+.1f EV", evVal)
+            },
+            onSliderChange = { v ->
+                camera?.cameraControl?.setExposureCompensationIndex(v)
+            }
+        )
+        val filterSpec = FloatingMenuSpec(
+            id = "filter",
+            label = "Filter",
+            options = listOf(
+                "normal" to "Normal",
+                "cinematic" to "Cinema",
+                "vintage" to "Vintage",
+                "bw" to "B&W",
+                "hdr" to "HDR",
+                "cyberpunk" to "Cyber",
+                "comic_book" to "Comic"
+            ),
+            activeOptionId = currentFilterName,
+            onOptionSelect = { id ->
+                setFilterPreset(id, showNotice = false)
+                refreshFloatingModeMenu()
+            }
+        )
+        val gridSpec = FloatingMenuSpec(
+            id = "grid",
+            label = "Grid",
+            options = listOf(
+                "NONE" to "Off",
+                "RULE_OF_THIRDS" to "3x3",
+                "GOLDEN_SPIRAL" to "Spiral",
+                "GOLDEN_RATIO_PHI" to "Phi",
+                "DIAGONAL_SYMMETRY" to "Cross",
+                "CINEMATIC_239" to "Cinema"
+            ),
+            activeOptionId = viewBinding.proOverlayView.currentGrid.name,
+            onOptionSelect = { id ->
+                val target = try { ProOverlayView.GridType.valueOf(id) } catch (_: Throwable) { ProOverlayView.GridType.NONE }
+                setGridMode(target)
+                refreshFloatingModeMenu()
+            }
+        )
+        val proToolsSpec = FloatingMenuSpec(
+            id = "pro_tools",
+            label = "Tools",
+            options = listOf(
+                "peaking" to if (viewBinding.proOverlayView.showFocusPeaking) "Peaking ✓" else "Peaking",
+                "hist" to if (viewBinding.proOverlayView.showHistogram) "Histogram ✓" else "Histogram",
+                "zebra" to if (viewBinding.proOverlayView.showZebraStripes) "Zebra ✓" else "Zebra",
+                "level" to if (viewBinding.proOverlayView.showLevelGauge) "Level ✓" else "Level",
+                "drawer" to "All Pro…"
+            ),
+            activeOptionId = "",
+            onOptionSelect = { id ->
+                when (id) {
+                    "peaking" -> viewBinding.proOverlayView.showFocusPeaking = !viewBinding.proOverlayView.showFocusPeaking
+                    "hist" -> viewBinding.proOverlayView.showHistogram = !viewBinding.proOverlayView.showHistogram
+                    "zebra" -> viewBinding.proOverlayView.showZebraStripes = !viewBinding.proOverlayView.showZebraStripes
+                    "level" -> viewBinding.proOverlayView.showLevelGauge = !viewBinding.proOverlayView.showLevelGauge
+                    "drawer" -> {
+                        activeFloatingSettingId = null
+                        toggleProDrawer()
+                    }
+                }
+                refreshFloatingModeMenu()
+            }
+        )
+        val micSpec = FloatingMenuSpec(
+            id = "mic",
+            label = if (isAudioMuted) "Muted" else "Mic",
+            options = listOf("on" to "Mic On", "off" to "Muted"),
+            activeOptionId = if (isAudioMuted) "off" else "on",
+            onOptionSelect = { id ->
+                val wantMuted = (id == "off")
+                if (wantMuted != isAudioMuted) toggleAudioMute()
+                refreshFloatingModeMenu()
+            }
+        )
+
+        return when (cameraMode) {
+            CameraMode.PHOTO -> listOf(timerSpec, ratioSpec, evSpec, filterSpec, gridSpec, proToolsSpec)
+            CameraMode.PORTRAIT -> listOf(timerSpec, ratioSpec, evSpec, filterSpec, gridSpec)
+            CameraMode.NIGHT -> listOf(evSpec, timerSpec, filterSpec, gridSpec)
+            CameraMode.VIDEO -> listOf(ratioSpec, evSpec, micSpec, filterSpec, gridSpec, proToolsSpec)
+            CameraMode.SLOW_MO -> listOf(evSpec, micSpec, filterSpec, gridSpec)
+            CameraMode.PANORAMA -> listOf(evSpec, gridSpec, filterSpec)
+            CameraMode.AR_LENS -> emptyList()
+        }
+    }
+
+    private fun refreshFloatingModeMenu() {
+        val fm = viewBinding.floatingModeMenu
+        val isAr = (cameraMode == CameraMode.AR_LENS)
+        val dp = resources.displayMetrics.density
+
+        // 1. AR Swipeable Strip (visible ONLY in AR Mode)
+        fm.layoutArSwipeStrip.visibility = if (isAr) View.VISIBLE else View.GONE
+        if (isAr) {
+            val arButtons = listOf(
+                fm.btnArFamilyOff to "off",
+                fm.btnArFamilySnapMagic to "snap_magic",
+                fm.btnArFamilyFace to "face",
+                fm.btnArFamilyHand to "hand",
+                fm.btnArFamilyBody to "body",
+                fm.btnArFamilyWorld to "world",
+                fm.btnArFamilyBeauty to "beauty"
+            )
+            for ((btn, famId) in arButtons) {
+                val active = (activeArFamily == famId)
+                btn.setBackgroundResource(
+                    if (active) R.drawable.bg_cinema_button_active else R.drawable.bg_cinema_button_inactive
+                )
+                btn.setTextColor(
+                    Color.parseColor(
+                        if (active) "#0F172A" else if (famId == "snap_magic") "#FDE047" else "#CBD5E1"
+                    )
+                )
+            }
+        }
+
+        // 2. Right Floating Arrow & Mode-Specific Vertical Bar
+        val specs = buildFloatingMenuSpecs()
+        val showRightHandle = (!isAr || activeArFamily != "off") && specs.isNotEmpty()
+        fm.floatingRightMenuWrapper.visibility = if (showRightHandle) View.VISIBLE else View.GONE
+        fm.btnFloatingMenuArrow.text = if (isFloatingMenuOpen) "▶" else "◀"
+        fm.scrollFloatingMenuItems.visibility = if (isFloatingMenuOpen && showRightHandle) View.VISIBLE else View.GONE
+
+        fm.containerFloatingMenuItems.removeAllViews()
+        if (isFloatingMenuOpen && showRightHandle) {
+            for (spec in specs) {
+                val isSelected = (activeFloatingSettingId == spec.id)
+                val btn = TextView(this).apply {
+                    text = spec.label
+                    textSize = 10f
+                    gravity = android.view.Gravity.CENTER
+                    setSingleLine(true)
+                    setPadding((4 * dp).toInt(), (10 * dp).toInt(), (4 * dp).toInt(), (10 * dp).toInt())
+                    setBackgroundResource(
+                        if (isSelected) R.drawable.bg_cinema_button_active else R.drawable.bg_cinema_button_inactive
+                    )
+                    setTextColor(Color.parseColor(if (isSelected) "#0F172A" else "#E2E8F0"))
+                    layoutParams = android.widget.LinearLayout.LayoutParams(
+                        android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                        android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+                    ).apply {
+                        bottomMargin = (5 * dp).toInt()
+                    }
+                    setOnClickListener {
+                        if (spec.isAction) {
+                            spec.onAction?.invoke()
+                        } else {
+                            activeFloatingSettingId = if (activeFloatingSettingId == spec.id) null else spec.id
+                            refreshFloatingModeMenu()
+                        }
+                    }
+                }
+                fm.containerFloatingMenuItems.addView(btn)
+            }
+        }
+
+        // 3. Bottom Parameter Bar (Slider for numbers / Horizontal Option Chips for choices)
+        val activeSpec = specs.find { it.id == activeFloatingSettingId && !it.isAction }
+        val paramLp = fm.layoutFloatingParamBar.layoutParams as? android.widget.FrameLayout.LayoutParams
+        if (paramLp != null) {
+            paramLp.bottomMargin = ((if (isAr) 64 else 12) * dp).toInt()
+            fm.layoutFloatingParamBar.layoutParams = paramLp
+        }
+
+        if (isFloatingMenuOpen && activeSpec != null) {
+            fm.layoutFloatingParamBar.visibility = View.VISIBLE
+            fm.tvFloatingParamTitle.text = activeSpec.label
+            if (activeSpec.isSlider) {
+                fm.seekFloatingParam.visibility = View.VISIBLE
+                fm.scrollFloatingParamOptions.visibility = View.GONE
+                val span = (activeSpec.max - activeSpec.min).coerceAtLeast(1)
+                fm.seekFloatingParam.setOnSeekBarChangeListener(null)
+                fm.seekFloatingParam.max = span
+                fm.seekFloatingParam.progress = (activeSpec.currentVal - activeSpec.min).coerceIn(0, span)
+                fm.tvFloatingParamValue.text = activeSpec.formatVal?.invoke(activeSpec.currentVal) ?: activeSpec.currentVal.toString()
+                fm.btnFloatingParamReset.visibility = if (activeSpec.currentVal != activeSpec.defaultVal) View.VISIBLE else View.GONE
+                fm.btnFloatingParamReset.setOnClickListener {
+                    activeSpec.onSliderChange?.invoke(activeSpec.defaultVal)
+                    refreshFloatingModeMenu()
+                }
+                fm.seekFloatingParam.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                    override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
+                        if (!fromUser) return
+                        val actual = activeSpec.min + progress
+                        fm.tvFloatingParamValue.text = activeSpec.formatVal?.invoke(actual) ?: actual.toString()
+                        fm.btnFloatingParamReset.visibility = if (actual != activeSpec.defaultVal) View.VISIBLE else View.GONE
+                        activeSpec.onSliderChange?.invoke(actual)
+                    }
+                    override fun onStartTrackingTouch(sb: SeekBar?) {}
+                    override fun onStopTrackingTouch(sb: SeekBar?) {}
+                })
+            } else {
+                fm.seekFloatingParam.visibility = View.GONE
+                fm.btnFloatingParamReset.visibility = View.GONE
+                fm.tvFloatingParamValue.text = ""
+                fm.scrollFloatingParamOptions.visibility = View.VISIBLE
+                fm.containerFloatingParamOptions.removeAllViews()
+                for ((optId, optLabel) in activeSpec.options) {
+                    val isOptActive = (activeSpec.activeOptionId == optId)
+                    val chip = TextView(this).apply {
+                        text = optLabel
+                        textSize = 11f
+                        gravity = android.view.Gravity.CENTER
+                        setSingleLine(true)
+                        setPadding((12 * dp).toInt(), (8 * dp).toInt(), (12 * dp).toInt(), (8 * dp).toInt())
+                        setBackgroundResource(
+                            if (isOptActive) R.drawable.bg_cinema_button_active else R.drawable.bg_cinema_button_inactive
+                        )
+                        setTextColor(Color.parseColor(if (isOptActive) "#0F172A" else "#E2E8F0"))
+                        layoutParams = android.widget.LinearLayout.LayoutParams(
+                            android.widget.LinearLayout.LayoutParams.WRAP_CONTENT,
+                            android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+                        ).apply {
+                            marginEnd = (6 * dp).toInt()
+                        }
+                        setOnClickListener {
+                            activeSpec.onOptionSelect?.invoke(optId)
+                        }
+                    }
+                    fm.containerFloatingParamOptions.addView(chip)
+                }
+            }
+        } else {
+            fm.layoutFloatingParamBar.visibility = View.GONE
+        }
     }
 
     private fun toggleArBatchMode() {
