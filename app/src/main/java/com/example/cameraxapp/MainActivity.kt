@@ -108,6 +108,7 @@ import com.example.cameraxapp.ar.ARFaceOverlayView
 import com.example.cameraxapp.audio.ComicSoundEffectsHelper
 import com.example.cameraxapp.font.CameraFontHelper
 import com.google.mediapipe.tasks.vision.facelandmarker.FaceLandmarkerResult
+import android.content.res.Configuration
 import android.provider.OpenableColumns
 import java.io.File
 import java.io.FileOutputStream
@@ -917,12 +918,73 @@ class MainActivity : AppCompatActivity() {
         isLastActionCreative = false
         viewBinding.modeScrollView.post { centerModeTab(cameraMode, smooth = false) }
         syncStylizeLoopState()
+        applyOrientationLayout(resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE)
 
         if (allPermissionsGranted()) {
             startCamera()
         } else {
             requestPermissions()
         }
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        val isLandscape = (newConfig.orientation == Configuration.ORIENTATION_LANDSCAPE)
+        val displayRot = try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                display?.rotation ?: Surface.ROTATION_0
+            } else {
+                @Suppress("DEPRECATION")
+                windowManager.defaultDisplay.rotation
+            }
+        } catch (_: Throwable) {
+            Surface.ROTATION_0
+        }
+        try {
+            imageCapture?.targetRotation = displayRot
+            videoCapture?.targetRotation = displayRot
+            imageAnalysis?.targetRotation = displayRot
+        } catch (e: Exception) {
+            Log.w(TAG, "Target rotation sync skipped", e)
+        }
+        applyOrientationLayout(isLandscape)
+        viewBinding.modeScrollView.post { centerModeTab(cameraMode, smooth = false) }
+        viewBinding.proOverlayView.postInvalidate()
+    }
+
+    private fun applyOrientationLayout(isLandscape: Boolean) {
+        val dp = resources.displayMetrics.density
+        // Compact top bar margin & padding in Landscape so full 16:9 viewfinder stays unobstructed
+        (viewBinding.proModeBar.layoutParams as? androidx.constraintlayout.widget.ConstraintLayout.LayoutParams)?.let { lp ->
+            lp.topMargin = ((if (isLandscape) 8 else 28) * dp).toInt()
+            viewBinding.proModeBar.layoutParams = lp
+        }
+        viewBinding.proModeBar.setPadding(
+            ((if (isLandscape) 18 else 14) * dp).toInt(),
+            ((if (isLandscape) 4 else 10) * dp).toInt(),
+            ((if (isLandscape) 18 else 14) * dp).toInt(),
+            ((if (isLandscape) 4 else 10) * dp).toInt()
+        )
+        // Compact bottom shutter deck, mode carousel & zoom pill in Landscape so nothing clips off short heights
+        (viewBinding.bottomControls.layoutParams as? androidx.constraintlayout.widget.ConstraintLayout.LayoutParams)?.let { lp ->
+            lp.height = ((if (isLandscape) 74 else 100) * dp).toInt()
+            viewBinding.bottomControls.layoutParams = lp
+        }
+        viewBinding.bottomControls.setPadding(
+            ((if (isLandscape) 36 else 28) * dp).toInt(),
+            0,
+            ((if (isLandscape) 36 else 28) * dp).toInt(),
+            ((if (isLandscape) 6 else 16) * dp).toInt()
+        )
+        (viewBinding.modeScrollView.layoutParams as? androidx.constraintlayout.widget.ConstraintLayout.LayoutParams)?.let { lp ->
+            lp.height = ((if (isLandscape) 36 else 48) * dp).toInt()
+            viewBinding.modeScrollView.layoutParams = lp
+        }
+        (viewBinding.zoomControls.layoutParams as? androidx.constraintlayout.widget.ConstraintLayout.LayoutParams)?.let { lp ->
+            lp.bottomMargin = ((if (isLandscape) 4 else 12) * dp).toInt()
+            viewBinding.zoomControls.layoutParams = lp
+        }
+        refreshFloatingModeMenu()
     }
 
     override fun onResume() {
@@ -2224,7 +2286,8 @@ class MainActivity : AppCompatActivity() {
                                 imageProxy = imageProxy,
                                 isFrontFacing = isFront,
                                 gyroDeltaYawDeg = deltaYaw,
-                                gyroPitchDriftDeg = pitchDrift
+                                gyroPitchDriftDeg = pitchDrift,
+                                rollDeg = viewBinding.proOverlayView.rollAngleDegrees
                             )
                             panoramaDirection = align.panDirection
 
@@ -2306,7 +2369,9 @@ class MainActivity : AppCompatActivity() {
                                     pitchDriftDeg = pitchDrift,
                                     sliceCount = newCount,
                                     direction = align.panDirection,
-                                    paceNorm = align.paceNorm
+                                    paceNorm = align.paceNorm,
+                                    edgeTargetProgress = align.edgeTargetProgress,
+                                    isAlignedAndLevel = align.isAlignedAndLevel
                                 )
                                 if (didAutoCapture) {
                                     window.decorView.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
@@ -4752,7 +4817,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun setArLens(lens: String, showNotice: Boolean = true) {
+    private fun setArLens(lens: String, showNotice: Boolean = true, syncFloatingMenu: Boolean = true) {
         if (lens != "none" && ::ecoPowerManager.isInitialized && ecoPowerManager.isArDisabled) {
             showHudNotice(
                 "ECO MODE (${ecoPowerManager.currentPolicy.batteryPercent}%): AR disabled to save battery",
@@ -4833,6 +4898,15 @@ class MainActivity : AppCompatActivity() {
         syncOverlayToVideoProcessor()
         updateLensButtons(lens)
         updateArDockStatusLabel()
+        if (syncFloatingMenu && cameraMode == CameraMode.AR_LENS) {
+            if (lens != "none") {
+                activeArFamily = "face"
+            } else if (activeArFamily == "face") {
+                activeArFamily = "off"
+                activeFloatingSettingId = null
+            }
+            refreshFloatingModeMenu()
+        }
         if (isAutoAdaptEnabled && lens != "none" && lens != prevLens) {
             val recommendedFront = lens in setOf("mesh_contour", "cyberpunk_visor", "golden_crown", "comic_frame") ||
                 mappedMode == ARFaceOverlayView.ArLensMode.GLB_3D ||
@@ -10952,7 +11026,7 @@ class MainActivity : AppCompatActivity() {
         val ov = viewBinding.arFaceOverlayView
         when (activeArFamily) {
             "off" -> {
-                setArLens("none", showNotice = false)
+                setArLens("none", showNotice = false, syncFloatingMenu = false)
                 ov.applyHandArPreset("off")
                 ov.applyBodyArPreset("off")
                 ov.applyWorldArPreset("off")
@@ -10962,7 +11036,7 @@ class MainActivity : AppCompatActivity() {
             }
             "snap_magic" -> {
                 // All-in-one Snap Magic: 6-Stone Infinity Gauntlet + Finger-Snap Detection + Feathered Dust Wipeout
-                setArLens("none", showNotice = false)
+                setArLens("none", showNotice = false, syncFloatingMenu = false)
                 ov.applyHandArPreset("off")
                 ov.applyWorldArPreset("off")
                 ov.applyFaceBeautyPreset("off")
@@ -10978,11 +11052,11 @@ class MainActivity : AppCompatActivity() {
                 ov.applyFaceBeautyPreset("off")
                 syncWorldArLifecycleAndPower()
                 val restore = if (lastActiveArLensName == "none") "cyberpunk_visor" else lastActiveArLensName
-                if (currentArLensName == "none") setArLens(restore, showNotice = false)
+                if (currentArLensName == "none") setArLens(restore, showNotice = false, syncFloatingMenu = false)
                 if (fromUser) showHudNotice("Face AR Active")
             }
             "hand" -> {
-                setArLens("none", showNotice = false)
+                setArLens("none", showNotice = false, syncFloatingMenu = false)
                 ov.applyBodyArPreset("off")
                 ov.applyWorldArPreset("off")
                 ov.applyFaceBeautyPreset("off")
@@ -10991,7 +11065,7 @@ class MainActivity : AppCompatActivity() {
                 if (fromUser) showHudNotice("Hand AR Active")
             }
             "body" -> {
-                setArLens("none", showNotice = false)
+                setArLens("none", showNotice = false, syncFloatingMenu = false)
                 ov.applyHandArPreset("off")
                 ov.applyWorldArPreset("off")
                 ov.applyFaceBeautyPreset("off")
@@ -11000,7 +11074,7 @@ class MainActivity : AppCompatActivity() {
                 if (fromUser) showHudNotice("Body AR Active")
             }
             "world" -> {
-                setArLens("none", showNotice = false)
+                setArLens("none", showNotice = false, syncFloatingMenu = false)
                 ov.applyHandArPreset("off")
                 ov.applyBodyArPreset("off")
                 ov.applyFaceBeautyPreset("off")
@@ -11009,7 +11083,7 @@ class MainActivity : AppCompatActivity() {
                 if (fromUser) showHudNotice("World AR Active")
             }
             "beauty" -> {
-                setArLens("none", showNotice = false)
+                setArLens("none", showNotice = false, syncFloatingMenu = false)
                 ov.applyHandArPreset("off")
                 ov.applyBodyArPreset("off")
                 ov.applyWorldArPreset("off")
@@ -11128,24 +11202,32 @@ class MainActivity : AppCompatActivity() {
                         label = "Lens",
                         glyph = "◈",
                         badge = when (currentArLensName) {
+                            "none" -> "Off"
                             "cyberpunk_visor" -> "Visor"
                             "golden_crown" -> "Crown"
                             "scifi_hud" -> "HUD"
                             "mesh_contour" -> "Mesh"
                             "comic_frame" -> "Comic"
-                            else -> "Custom"
+                            else -> {
+                                val customName = injectedCustomLenses.find { it.id == currentArLensName }?.name
+                                if (!customName.isNullOrBlank()) {
+                                    customName.split(" ").lastOrNull()?.take(7) ?: customName.take(7)
+                                } else {
+                                    "Custom"
+                                }
+                            }
                         },
-                        isModified = true,
+                        isModified = currentArLensName != "none",
                         options = listOf(
+                            "mesh_contour" to "Mesh",
                             "cyberpunk_visor" to "Visor",
                             "golden_crown" to "Crown",
                             "scifi_hud" to "HUD",
-                            "mesh_contour" to "Mesh",
                             "comic_frame" to "Comic"
-                        ),
+                        ) + injectedCustomLenses.map { it.id to it.name.take(12) },
                         activeOptionId = currentArLensName,
                         onOptionSelect = { id ->
-                            setArLens(id, showNotice = false)
+                            setArLens(id, showNotice = false, syncFloatingMenu = false)
                             lastActiveArLensName = id
                             refreshFloatingModeMenu()
                         }
@@ -11763,8 +11845,10 @@ class MainActivity : AppCompatActivity() {
                 fm.btnArFamilyWorld to "world",
                 fm.btnArFamilyBeauty to "beauty"
             )
+            var activeArBtn: TextView? = null
             for ((btn, famId) in arButtons) {
                 val active = (activeArFamily == famId)
+                if (active) activeArBtn = btn
                 btn.setBackgroundResource(
                     if (active) R.drawable.bg_cinema_button_active else R.drawable.bg_cinema_button_inactive
                 )
@@ -11773,6 +11857,12 @@ class MainActivity : AppCompatActivity() {
                         if (active) "#0F172A" else if (famId == "snap_magic") "#FDE047" else "#CBD5E1"
                     )
                 )
+            }
+            activeArBtn?.let { targetBtn ->
+                fm.scrollArFamilyStrip.post {
+                    val scrollTarget = (targetBtn.left + targetBtn.width / 2) - (fm.scrollArFamilyStrip.width / 2)
+                    fm.scrollArFamilyStrip.smoothScrollTo(scrollTarget.coerceAtLeast(0), 0)
+                }
             }
         }
 

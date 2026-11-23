@@ -301,8 +301,10 @@ class ProOverlayView @JvmOverloads constructor(
             invalidate()
         }
     var panoramaAeLocked: Boolean = false
+    var panoramaEdgeTargetProgress: Float = 0f
+    var panoramaIsAlignedAndLevel: Boolean = false
     private val panoramaThumbStrip = mutableListOf<android.graphics.Bitmap>()
-    private var panoramaCloneGhostBmp: android.graphics.Bitmap? = null
+    private var panoramaLastEdgeBmp: android.graphics.Bitmap? = null
     private var lastPanoramaRailRect = RectF()
 
     fun clearPanoramaPreviewStrip() {
@@ -310,8 +312,10 @@ class ProOverlayView @JvmOverloads constructor(
             if (!b.isRecycled) b.recycle()
         }
         panoramaThumbStrip.clear()
-        panoramaCloneGhostBmp?.takeIf { !it.isRecycled }?.recycle()
-        panoramaCloneGhostBmp = null
+        panoramaLastEdgeBmp?.takeIf { !it.isRecycled }?.recycle()
+        panoramaLastEdgeBmp = null
+        panoramaEdgeTargetProgress = 0f
+        panoramaIsAlignedAndLevel = false
         postInvalidate()
     }
 
@@ -325,10 +329,9 @@ class ProOverlayView @JvmOverloads constructor(
                 if (!oldest.isRecycled) oldest.recycle()
             }
             panoramaThumbStrip.add(thumb)
-            if (panoramaCloneMode) {
-                panoramaCloneGhostBmp?.takeIf { !it.isRecycled }?.recycle()
-                panoramaCloneGhostBmp = android.graphics.Bitmap.createScaledBitmap(src, 180, 240, true)
-            }
+            // Always cache the latest slice for the subtle Safe-Edge Ghost Seam Strip (both Standard & Clone Pano!)
+            panoramaLastEdgeBmp?.takeIf { !it.isRecycled }?.recycle()
+            panoramaLastEdgeBmp = android.graphics.Bitmap.createScaledBitmap(src, 180, 240, true)
             postInvalidateOnAnimation()
         } catch (_: Throwable) {}
     }
@@ -338,6 +341,7 @@ class ProOverlayView @JvmOverloads constructor(
         return lastPanoramaRailRect.contains(x, y)
     }
 
+    @JvmOverloads
     fun updatePanoramaAnalysis(
         guidance: String,
         progress: Float,
@@ -349,7 +353,9 @@ class ProOverlayView @JvmOverloads constructor(
         pitchDriftDeg: Float,
         sliceCount: Int,
         direction: Int,
-        paceNorm: Float = 0.25f
+        paceNorm: Float = 0.25f,
+        edgeTargetProgress: Float = 0f,
+        isAlignedAndLevel: Boolean = false
     ) {
         panoramaGuidance = guidance
         panoramaProgress = progress.coerceIn(0f, 1f)
@@ -362,6 +368,8 @@ class ProOverlayView @JvmOverloads constructor(
         panoramaSliceCount = sliceCount
         panoramaDirection = direction
         panoramaPaceNorm = paceNorm.coerceIn(0f, 1f)
+        panoramaEdgeTargetProgress = edgeTargetProgress.coerceIn(0f, 1.35f)
+        panoramaIsAlignedAndLevel = isAlignedAndLevel
         if (isPanoramaModeActive && !isCleanScreen) {
             postInvalidateOnAnimation()
         }
@@ -2866,83 +2874,237 @@ class ProOverlayView @JvmOverloads constructor(
             filterSecondaryPaint.shader = null
         }
 
-        // 5. Real-Time 4-Way Panorama Sweep Rail, Live Growing Filmstrip, Pace Speedometer & Clone-Me Ghost
+        // 5. Option 3 Safe-Edge Panorama Guide: Clear Center Viewfinder + Inset Tilting Edge Line +
+        //    Fixed/Live Alignment Circles + Subtle 17% Edge-Ghost Strip + Compact Top Mini-Filmstrip
         if (isPanoramaModeActive) {
             val isVert = (panoramaSweepDir == "UP" || panoramaSweepDir == "DOWN")
-            val isReverse = (panoramaSweepDir == "LEFT" || panoramaSweepDir == "DOWN")
+            val isLandscape = (w > h)
+            val rollDeg = rollAngleDegrees.coerceIn(-25f, 25f)
+            val rollLevel = Math.abs(rollDeg) <= 2.2f
+            val driftLevel = if (!isVert) {
+                Math.abs(panoramaPitchDriftDeg) <= 3.8f && Math.abs(panoramaAlignDy) <= 0.06f
+            } else {
+                Math.abs(panoramaYawDeg) <= 4.2f && Math.abs(panoramaAlignDx) <= 0.065f
+            }
+            val isLevel = rollLevel && driftLevel
 
-            // Clone-Me translucent ghost overlay along the leading edge so subject can step into next pose cleanly
-            if (panoramaCloneMode && isPanoramaCapturing && panoramaCloneGhostBmp != null && !panoramaCloneGhostBmp!!.isRecycled) {
-                val gPaint = Paint(Paint.FILTER_BITMAP_FLAG).apply { alpha = 88 }
-                val ghostRect = if (!isVert) {
-                    if (panoramaSweepDir == "RIGHT") RectF(0f, 0f, w * 0.34f, h)
-                    else RectF(w * 0.66f, 0f, w, h)
-                } else {
-                    if (panoramaSweepDir == "UP") RectF(0f, h * 0.66f, w, h)
-                    else RectF(0f, 0f, w, h * 0.34f)
+            // 5A. Subtle Translucent Edge-Ghost Strip (~17% alpha in Standard Pano, ~32% in Clone Pano)
+            // Placed along the trailing/stitching edge so users can visually line up walls & horizons cleanly!
+            val edgeBmp = panoramaLastEdgeBmp
+            if (isPanoramaCapturing && edgeBmp != null && !edgeBmp.isRecycled) {
+                val ghostAlpha = if (panoramaCloneMode) 86 else 44
+                val gPaint = Paint(Paint.FILTER_BITMAP_FLAG).apply { alpha = ghostAlpha }
+                val stripFrac = if (panoramaCloneMode) 0.30f else 0.17f
+                val srcRect = when (panoramaSweepDir) {
+                    "RIGHT" -> Rect((edgeBmp.width * (1f - stripFrac)).toInt(), 0, edgeBmp.width, edgeBmp.height)
+                    "LEFT" -> Rect(0, 0, (edgeBmp.width * stripFrac).toInt().coerceAtLeast(1), edgeBmp.height)
+                    "UP" -> Rect(0, 0, edgeBmp.width, (edgeBmp.height * stripFrac).toInt().coerceAtLeast(1))
+                    else -> Rect(0, (edgeBmp.height * (1f - stripFrac)).toInt(), edgeBmp.width, edgeBmp.height)
                 }
-                canvas.drawBitmap(panoramaCloneGhostBmp!!, null, ghostRect, gPaint)
-                val seamGuidePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                    color = Color.parseColor("#B3A855F7")
+                val dstRect = when (panoramaSweepDir) {
+                    "RIGHT" -> RectF(0f, 0f, w * stripFrac, h)
+                    "LEFT" -> RectF(w * (1f - stripFrac), 0f, w, h)
+                    "UP" -> RectF(0f, h * (1f - stripFrac), w, h)
+                    else -> RectF(0f, 0f, w, h * stripFrac)
+                }
+                canvas.drawBitmap(edgeBmp, srcRect, dstRect, gPaint)
+
+                // Soft dashed seam boundary beside the ghost strip
+                val ghostSeamPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.parseColor(if (panoramaCloneMode) "#C084FC" else "#9938BDF8")
                     style = Paint.Style.STROKE
-                    strokeWidth = dpToPx(1.5f)
+                    strokeWidth = dpToPx(1.2f)
+                    pathEffect = DashPathEffect(floatArrayOf(dpToPx(5f), dpToPx(4f)), 0f)
                 }
-                if (!isVert) {
-                    val sx = if (panoramaSweepDir == "RIGHT") w * 0.34f else w * 0.66f
-                    canvas.drawLine(sx, h * 0.18f, sx, h * 0.82f, seamGuidePaint)
-                } else {
-                    val sy = if (panoramaSweepDir == "UP") h * 0.66f else h * 0.34f
-                    canvas.drawLine(w * 0.15f, sy, w * 0.85f, sy, seamGuidePaint)
+                when (panoramaSweepDir) {
+                    "RIGHT" -> canvas.drawLine(w * stripFrac, h * 0.16f, w * stripFrac, h * 0.80f, ghostSeamPaint)
+                    "LEFT" -> canvas.drawLine(w * (1f - stripFrac), h * 0.16f, w * (1f - stripFrac), h * 0.80f, ghostSeamPaint)
+                    "UP" -> canvas.drawLine(w * 0.12f, h * (1f - stripFrac), w * 0.88f, h * (1f - stripFrac), ghostSeamPaint)
+                    else -> canvas.drawLine(w * 0.12f, h * stripFrac, w * 0.88f, h * stripFrac, ghostSeamPaint)
                 }
             }
 
+            // 5B. Inset Safe-Edge Seam Line (~15% from active leading edge) + Fixed Target Circle + Live Gliding Circle
+            // Leaves the entire center of the viewfinder 100% unobstructed!
+            val edgeInsetFrac = if (isLandscape) 0.13f else 0.15f
+            val targetX = when (panoramaSweepDir) {
+                "RIGHT" -> w * (1f - edgeInsetFrac)
+                "LEFT" -> w * edgeInsetFrac
+                else -> w * 0.5f
+            }
+            val targetY = when (panoramaSweepDir) {
+                "UP" -> h * (if (isLandscape) 0.24f else 0.22f)
+                "DOWN" -> h * (if (isLandscape) 0.72f else 0.72f)
+                else -> h * 0.50f
+            }
+
+            val edgeColorHex = when {
+                panoramaGuidance == "AUTO_CAPTURED" || panoramaGuidance == "CLONE_READY" -> "#22D3EE"
+                panoramaIsAlignedAndLevel && isPanoramaCapturing -> "#10B981"
+                !rollLevel || panoramaGuidance == "SLOW_DOWN" -> "#F59E0B"
+                isLevel -> "#10B981"
+                else -> "#38BDF8"
+            }
+            val edgeLinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.parseColor(edgeColorHex)
+                style = Paint.Style.STROKE
+                strokeWidth = dpToPx(if (panoramaIsAlignedAndLevel) 2.6f else 1.9f)
+                strokeCap = Paint.Cap.ROUND
+                alpha = if (isPanoramaCapturing) 235 else 190
+            }
+
+            // Draw Safe-Edge Line tilting subtly with live wrist roll around the target anchor
+            val tiltClampDeg = rollDeg.coerceIn(-16f, 16f)
+            canvas.save()
+            canvas.rotate(-tiltClampDeg, targetX, targetY)
             if (!isVert) {
-                val bandH = h * 0.21f
-                filterGradingPaint.color = Color.parseColor(if (isPanoramaCapturing) "#88000000" else "#54000000")
-                canvas.drawRect(0f, 0f, w, bandH, filterGradingPaint)
-                canvas.drawRect(0f, h - bandH, w, h, filterGradingPaint)
+                val halfLen = h * (if (isLandscape) 0.24f else 0.20f)
+                canvas.drawLine(targetX, targetY - halfLen, targetX, targetY + halfLen, edgeLinePaint)
+                // Small horizontal level ticks at center of the safe-edge line
+                canvas.drawLine(targetX - dpToPx(8f), targetY, targetX - dpToPx(17f), targetY, edgeLinePaint)
+                canvas.drawLine(targetX + dpToPx(8f), targetY, targetX + dpToPx(17f), targetY, edgeLinePaint)
+            } else {
+                val halfLen = w * (if (isLandscape) 0.22f else 0.28f)
+                canvas.drawLine(targetX - halfLen, targetY, targetX + halfLen, targetY, edgeLinePaint)
+                canvas.drawLine(targetX, targetY - dpToPx(8f), targetX, targetY - dpToPx(17f), edgeLinePaint)
+                canvas.drawLine(targetX, targetY + dpToPx(8f), targetX, targetY + dpToPx(17f), edgeLinePaint)
             }
+            canvas.restore()
 
-            val railLeft = if (!isVert) w * 0.08f else w * 0.42f
-            val railRight = if (!isVert) w * 0.92f else w * 0.58f
-            val railTop = if (!isVert) h * 0.435f else h * 0.175f
-            val railBottom = if (!isVert) h * 0.565f else h * 0.745f
-            val railW = railRight - railLeft
-            val railH = railBottom - railTop
-            val railMidX = (railLeft + railRight) * 0.5f
-            val railMidY = (railTop + railBottom) * 0.5f
-            lastPanoramaRailRect.set(railLeft - dpToPx(12f), railTop - dpToPx(18f), railRight + dpToPx(12f), railBottom + dpToPx(18f))
-
-            // Subtle dark rail backdrop
-            val railBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = Color.parseColor("#8C020617")
+            // Fixed Edge Target Circle on the Safe-Edge Line
+            val ringRadius = dpToPx(15.5f)
+            val targetRingFill = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.parseColor("#4D020617")
                 style = Paint.Style.FILL
             }
-            canvas.drawRoundRect(RectF(railLeft, railTop, railRight, railBottom), dpToPx(8f), dpToPx(8f), railBgPaint)
+            val targetRingStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.parseColor(edgeColorHex)
+                style = Paint.Style.STROKE
+                strokeWidth = dpToPx(2.4f)
+            }
+            canvas.drawCircle(targetX, targetY, ringRadius, targetRingFill)
+            canvas.drawCircle(targetX, targetY, ringRadius, targetRingStroke)
 
-            // Live Growing Mini-Filmstrip Preview inside the rail!
+            // Live Moving Circle gliding toward the Edge Target Ring as user pans to the next angle
+            val progressToEdge = if (isPanoramaCapturing) {
+                panoramaEdgeTargetProgress.coerceIn(0f, 1.15f)
+            } else {
+                // Standby gentle animated cue showing the pan direction into the edge circle
+                0.35f + (Math.sin(timeSec * 3.0).toFloat() * 0.22f + 0.22f)
+            }
+            val travelDist = dpToPx(if (isLandscape) 66f else 78f)
+            val crossOffsetPx = if (!isVert) {
+                ((panoramaPitchDriftDeg + (-panoramaAlignDy * 36f)) * dpToPx(2.0f)).coerceIn(-dpToPx(34f), dpToPx(34f))
+            } else {
+                ((panoramaYawDeg + (panoramaAlignDx * 36f)) * dpToPx(2.0f)).coerceIn(-dpToPx(34f), dpToPx(34f))
+            }
+            val liveX = when (panoramaSweepDir) {
+                "RIGHT" -> targetX - travelDist * (1f - progressToEdge)
+                "LEFT" -> targetX + travelDist * (1f - progressToEdge)
+                else -> targetX + crossOffsetPx
+            }
+            val liveY = when (panoramaSweepDir) {
+                "UP" -> targetY + travelDist * (1f - progressToEdge)
+                "DOWN" -> targetY - travelDist * (1f - progressToEdge)
+                else -> targetY + crossOffsetPx
+            }
+
+            // Dotted guide connector from Live Circle -> Fixed Edge Target Circle
+            val connectorPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.parseColor("#88E2E8F0")
+                style = Paint.Style.STROKE
+                strokeWidth = dpToPx(1.4f)
+                pathEffect = DashPathEffect(floatArrayOf(dpToPx(4f), dpToPx(4f)), 0f)
+            }
+            canvas.drawLine(liveX, liveY, targetX, targetY, connectorPaint)
+
+            val liveDotFill = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.parseColor(
+                    when {
+                        panoramaGuidance == "AUTO_CAPTURED" -> "#22D3EE"
+                        panoramaIsAlignedAndLevel && isPanoramaCapturing -> "#10B981"
+                        !isLevel || panoramaGuidance == "SLOW_DOWN" -> "#F59E0B"
+                        else -> if (panoramaCloneMode) "#E879F9" else "#FACC15"
+                    }
+                )
+                style = Paint.Style.FILL
+            }
+            val liveDotBorder = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.WHITE
+                style = Paint.Style.STROKE
+                strokeWidth = dpToPx(1.8f)
+            }
+            val liveRadius = dpToPx(if (panoramaIsAlignedAndLevel) 11f else 9.5f)
+            canvas.drawCircle(liveX, liveY, liveRadius, liveDotFill)
+            canvas.drawCircle(liveX, liveY, liveRadius, liveDotBorder)
+
+            // Directional chevron arrow inside the fixed edge target ring
+            val dirChevPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.WHITE
+                style = Paint.Style.STROKE
+                strokeWidth = dpToPx(2.2f)
+                strokeCap = Paint.Cap.ROUND
+                strokeJoin = Paint.Join.ROUND
+            }
+            val cSize = dpToPx(5.5f)
+            val chevPath = Path()
+            when (panoramaSweepDir) {
+                "RIGHT" -> {
+                    chevPath.moveTo(targetX - cSize * 0.45f, targetY - cSize)
+                    chevPath.lineTo(targetX + cSize * 0.55f, targetY)
+                    chevPath.lineTo(targetX - cSize * 0.45f, targetY + cSize)
+                }
+                "LEFT" -> {
+                    chevPath.moveTo(targetX + cSize * 0.45f, targetY - cSize)
+                    chevPath.lineTo(targetX - cSize * 0.55f, targetY)
+                    chevPath.lineTo(targetX + cSize * 0.45f, targetY + cSize)
+                }
+                "UP" -> {
+                    chevPath.moveTo(targetX - cSize, targetY + cSize * 0.45f)
+                    chevPath.lineTo(targetX, targetY - cSize * 0.55f)
+                    chevPath.lineTo(targetX + cSize, targetY + cSize * 0.45f)
+                }
+                else -> {
+                    chevPath.moveTo(targetX - cSize, targetY - cSize * 0.45f)
+                    chevPath.lineTo(targetX, targetY + cSize * 0.55f)
+                    chevPath.lineTo(targetX + cSize, targetY - cSize * 0.45f)
+                }
+            }
+            canvas.drawPath(chevPath, dirChevPaint)
+
+            // 5C. Compact Upper Mini-Filmstrip Dock (Tucked near top so center viewfinder stays 100% open;
+            //     tappable in standby to cycle RIGHT -> LEFT -> UP -> DOWN!)
+            val stripW = (w * (if (isLandscape) 0.44f else 0.72f)).coerceAtMost(dpToPx(290f))
+            val stripH = dpToPx(if (isLandscape) 34f else 38f)
+            val stripLeft = (w - stripW) * 0.5f
+            val stripTop = if (isLandscape) dpToPx(54f) else h * 0.135f
+            val stripRight = stripLeft + stripW
+            val stripBottom = stripTop + stripH
+            lastPanoramaRailRect.set(
+                stripLeft - dpToPx(12f),
+                stripTop - dpToPx(14f),
+                stripRight + dpToPx(12f),
+                stripBottom + dpToPx(14f)
+            )
+
+            val railBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.parseColor("#A6020617")
+                style = Paint.Style.FILL
+            }
+            canvas.drawRoundRect(RectF(stripLeft, stripTop, stripRight, stripBottom), dpToPx(10f), dpToPx(10f), railBgPaint)
+
             val fillFrac = if (isPanoramaCapturing) panoramaProgress.coerceIn(0f, 1f) else 0f
             if (isPanoramaCapturing && panoramaThumbStrip.isNotEmpty()) {
                 canvas.save()
-                canvas.clipRect(railLeft + 2f, railTop + 2f, railRight - 2f, railBottom - 2f)
+                canvas.clipRect(stripLeft + 2f, stripTop + 2f, stripRight - 2f, stripBottom - 2f)
                 val maxSlices = if (panoramaCloneMode) 6 else 14
-                val thumbPaint = Paint(Paint.FILTER_BITMAP_FLAG).apply { alpha = 225 }
-                if (!isVert) {
-                    val slotW = (railW / maxSlices.toFloat()).coerceAtLeast(dpToPx(18f))
-                    for (idx in panoramaThumbStrip.indices) {
-                        val bmp = panoramaThumbStrip[idx]
-                        if (bmp.isRecycled) continue
-                        val x0 = if (panoramaSweepDir == "LEFT") (railRight - (idx + 1) * slotW) else (railLeft + idx * slotW)
-                        canvas.drawBitmap(bmp, null, RectF(x0, railTop + 2f, x0 + slotW + 2f, railBottom - 2f), thumbPaint)
-                    }
-                } else {
-                    val slotH = (railH / maxSlices.toFloat()).coerceAtLeast(dpToPx(22f))
-                    for (idx in panoramaThumbStrip.indices) {
-                        val bmp = panoramaThumbStrip[idx]
-                        if (bmp.isRecycled) continue
-                        val y0 = if (panoramaSweepDir == "UP") (railBottom - (idx + 1) * slotH) else (railTop + idx * slotH)
-                        canvas.drawBitmap(bmp, null, RectF(railLeft + 2f, y0, railRight - 2f, y0 + slotH + 2f), thumbPaint)
-                    }
+                val thumbPaint = Paint(Paint.FILTER_BITMAP_FLAG).apply { alpha = 230 }
+                val slotW = (stripW / maxSlices.toFloat()).coerceAtLeast(dpToPx(16f))
+                for (idx in panoramaThumbStrip.indices) {
+                    val bmp = panoramaThumbStrip[idx]
+                    if (bmp.isRecycled) continue
+                    val x0 = if (panoramaSweepDir == "LEFT") (stripRight - (idx + 1) * slotW) else (stripLeft + idx * slotW)
+                    canvas.drawBitmap(bmp, null, RectF(x0, stripTop + 2f, x0 + slotW + 1.5f, stripBottom - 2f), thumbPaint)
                 }
                 canvas.restore()
             } else if (fillFrac > 0.005f) {
@@ -2950,155 +3112,30 @@ class ProOverlayView @JvmOverloads constructor(
                     color = Color.parseColor("#3810B981")
                     style = Paint.Style.FILL
                 }
-                if (!isVert) {
-                    val startX = if (!isReverse) railLeft else (railRight - railW * fillFrac)
-                    val endX = if (!isReverse) (railLeft + railW * fillFrac) else railRight
-                    canvas.drawRect(startX, railTop, endX, railBottom, fillPaint)
-                } else {
-                    val startY = if (panoramaSweepDir == "DOWN") railTop else (railBottom - railH * fillFrac)
-                    val endY = if (panoramaSweepDir == "DOWN") (railTop + railH * fillFrac) else railBottom
-                    canvas.drawRect(railLeft, startY, railRight, endY, fillPaint)
-                }
+                val startX = if (panoramaSweepDir == "LEFT") (stripRight - stripW * fillFrac) else stripLeft
+                val endX = if (panoramaSweepDir == "LEFT") stripRight else (stripLeft + stripW * fillFrac)
+                canvas.drawRoundRect(RectF(startX, stripTop, endX, stripBottom), dpToPx(9f), dpToPx(9f), fillPaint)
             }
 
-            // Rail border
             val boxPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 style = Paint.Style.STROKE
-                strokeWidth = dpToPx(1.8f)
+                strokeWidth = dpToPx(1.6f)
                 color = Color.parseColor(
                     when {
                         panoramaCloneMode && isPanoramaCapturing -> "#C084FC"
+                        isPanoramaCapturing && isLevel -> "#10B981"
                         isPanoramaCapturing -> "#FACC15"
                         panoramaTinyPlanetMode -> "#A855F7"
                         else -> "#CC38BDF8"
                     }
                 )
             }
-            canvas.drawRoundRect(RectF(railLeft, railTop, railRight, railBottom), dpToPx(8f), dpToPx(8f), boxPaint)
+            canvas.drawRoundRect(RectF(stripLeft, stripTop, stripRight, stripBottom), dpToPx(10f), dpToPx(10f), boxPaint)
 
-            // Center horizon/plumb reference line
-            val centerLinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                style = Paint.Style.STROKE
-                strokeWidth = dpToPx(1.2f)
-                color = Color.parseColor("#99FFFFFF")
-            }
-            if (!isVert) {
-                canvas.drawLine(railLeft + dpToPx(10f), railMidY, railRight - dpToPx(10f), railMidY, centerLinePaint)
-            } else {
-                canvas.drawLine(railMidX, railTop + dpToPx(10f), railMidX, railBottom - dpToPx(10f), centerLinePaint)
-            }
-
-            // Active sweep cursor + drift indicator
-            val effectiveProgress = if (isPanoramaCapturing) {
-                val maxS = if (panoramaCloneMode) 6f else 14f
-                Math.max(fillFrac, (panoramaSliceCount / maxS).coerceIn(0f, 1f))
-            } else 0.5f
-
-            val driftPx = if (!isVert) {
-                ((panoramaPitchDriftDeg + (-panoramaAlignDy * 40f)) * dpToPx(2.2f)).coerceIn(-railH * 0.42f, railH * 0.42f)
-            } else {
-                ((panoramaYawDeg + (panoramaAlignDx * 40f)) * dpToPx(2.2f)).coerceIn(-railW * 0.42f, railW * 0.42f)
-            }
-            val isLevel = if (!isVert) {
-                Math.abs(panoramaPitchDriftDeg) <= 4.2f && Math.abs(panoramaAlignDy) <= 0.065f
-            } else {
-                Math.abs(panoramaYawDeg) <= 4.8f && Math.abs(panoramaAlignDx) <= 0.07f
-            }
-
-            val cursorX = if (!isVert) {
-                if (isPanoramaCapturing) {
-                    if (panoramaSweepDir == "LEFT") railRight - railW * effectiveProgress else railLeft + railW * effectiveProgress
-                } else railMidX
-            } else railMidX + driftPx
-
-            val cursorY = if (!isVert) {
-                railMidY + driftPx
-            } else {
-                if (isPanoramaCapturing) {
-                    if (panoramaSweepDir == "UP") railBottom - railH * effectiveProgress else railTop + railH * effectiveProgress
-                } else railMidY
-            }
-
-            // Glowing directional arrow (tappable in standby to cycle RIGHT -> LEFT -> UP -> DOWN!)
-            val arrowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                style = Paint.Style.STROKE
-                strokeWidth = dpToPx(2.8f)
-                strokeCap = Paint.Cap.ROUND
-                strokeJoin = Paint.Join.ROUND
-                color = Color.parseColor(
-                    when (panoramaGuidance) {
-                        "SLOW_DOWN" -> "#F59E0B"
-                        "AUTO_CAPTURED", "CLONE_READY" -> "#10B981"
-                        else -> if (panoramaCloneMode) "#E879F9" else "#38BDF8"
-                    }
-                )
-            }
-            val chev = dpToPx(9.5f)
-            val pulse = dpToPx((Math.sin(timeSec * 4.5).toFloat() * 4f))
-            val arrowPath = Path()
-            when (panoramaSweepDir) {
-                "RIGHT" -> {
-                    val ax = (cursorX + dpToPx(20f) + pulse).coerceIn(railLeft + dpToPx(18f), railRight - dpToPx(12f))
-                    for (s in 0..1) {
-                        val xTip = (ax + s * dpToPx(9f)).coerceAtMost(railRight - dpToPx(8f))
-                        arrowPath.moveTo(xTip - chev * 0.85f, cursorY - chev * 0.72f)
-                        arrowPath.lineTo(xTip, cursorY)
-                        arrowPath.lineTo(xTip - chev * 0.85f, cursorY + chev * 0.72f)
-                    }
-                    canvas.drawLine(cursorX + dpToPx(7f), cursorY, ax, cursorY, arrowPaint)
-                }
-                "LEFT" -> {
-                    val ax = (cursorX - dpToPx(20f) - pulse).coerceIn(railLeft + dpToPx(12f), railRight - dpToPx(18f))
-                    for (s in 0..1) {
-                        val xTip = (ax - s * dpToPx(9f)).coerceAtLeast(railLeft + dpToPx(8f))
-                        arrowPath.moveTo(xTip + chev * 0.85f, cursorY - chev * 0.72f)
-                        arrowPath.lineTo(xTip, cursorY)
-                        arrowPath.lineTo(xTip + chev * 0.85f, cursorY + chev * 0.72f)
-                    }
-                    canvas.drawLine(cursorX - dpToPx(7f), cursorY, ax, cursorY, arrowPaint)
-                }
-                "UP" -> {
-                    val ay = (cursorY - dpToPx(20f) - pulse).coerceIn(railTop + dpToPx(12f), railBottom - dpToPx(18f))
-                    for (s in 0..1) {
-                        val yTip = (ay - s * dpToPx(9f)).coerceAtLeast(railTop + dpToPx(8f))
-                        arrowPath.moveTo(cursorX - chev * 0.72f, yTip + chev * 0.85f)
-                        arrowPath.lineTo(cursorX, yTip)
-                        arrowPath.lineTo(cursorX + chev * 0.72f, yTip + chev * 0.85f)
-                    }
-                    canvas.drawLine(cursorX, cursorY - dpToPx(7f), cursorX, ay, arrowPaint)
-                }
-                else -> { // DOWN
-                    val ay = (cursorY + dpToPx(20f) + pulse).coerceIn(railTop + dpToPx(18f), railBottom - dpToPx(12f))
-                    for (s in 0..1) {
-                        val yTip = (ay + s * dpToPx(9f)).coerceAtMost(railBottom - dpToPx(8f))
-                        arrowPath.moveTo(cursorX - chev * 0.72f, yTip - chev * 0.85f)
-                        arrowPath.lineTo(cursorX, yTip)
-                        arrowPath.lineTo(cursorX + chev * 0.72f, yTip - chev * 0.85f)
-                    }
-                    canvas.drawLine(cursorX, cursorY + dpToPx(7f), cursorX, ay, arrowPaint)
-                }
-            }
-            canvas.drawPath(arrowPath, arrowPaint)
-
-            // Cursor dot
-            val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = Color.parseColor(
-                    when {
-                        panoramaGuidance == "AUTO_CAPTURED" || panoramaGuidance == "CLONE_READY" -> "#22D3EE"
-                        panoramaGuidance == "SLOW_DOWN" -> "#F59E0B"
-                        isPanoramaCapturing && isLevel -> "#10B981"
-                        isPanoramaCapturing -> "#F59E0B"
-                        else -> "#FACC15"
-                    }
-                )
-                style = Paint.Style.FILL
-            }
-            canvas.drawCircle(cursorX, cursorY, dpToPx(6.5f), dotPaint)
-
-            // Status Header & Tap-to-Flip Hint
+            // Status Header inside/above Compact Top Strip
             val panoLabelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = Color.parseColor("#F8FAFC")
-                textSize = dpToPx(10.5f)
+                textSize = dpToPx(9.5f)
                 typeface = Typeface.MONOSPACE
                 isFakeBoldText = true
                 textAlign = Paint.Align.CENTER
@@ -3114,36 +3151,37 @@ class ProOverlayView @JvmOverloads constructor(
             val modePrefix = when {
                 panoramaCloneMode -> "CLONE PANO"
                 panoramaTinyPlanetMode -> "TINY PLANET"
-                else -> "AUTO-PANO"
+                else -> "SAFE-EDGE PANO"
             }
             val statusLine = if (isPanoramaCapturing) {
-                val guideText = when (panoramaGuidance) {
-                    "TILT_UP" -> "TILT UP ▲"
-                    "TILT_DOWN" -> "TILT DOWN ▼"
-                    "TILT_LEFT" -> "TILT LEFT ◀"
-                    "TILT_RIGHT" -> "TILT RIGHT ▶"
-                    "SLOW_DOWN" -> "SLOW DOWN"
-                    "AUTO_CAPTURED" -> "SLICE LOCKED ✓"
-                    "CLONE_READY" -> "TAP SHUTTER FOR CLONE"
-                    "PAN_LEFT" -> "PAN LEFT ←"
-                    "PAN_UP" -> "PAN UP ↑"
-                    "PAN_DOWN" -> "PAN DOWN ↓"
-                    else -> "PAN RIGHT →"
+                val guideText = when {
+                    panoramaGuidance == "AUTO_CAPTURED" -> "SHARP SNAP ✓"
+                    panoramaGuidance == "CLONE_READY" -> "TAP SHUTTER FOR CLONE"
+                    panoramaGuidance == "SLOW_DOWN" -> "SLOW DOWN"
+                    !rollLevel -> "LEVEL ${String.format(java.util.Locale.US, "%+.1f°", rollDeg)}"
+                    panoramaGuidance == "TILT_UP" -> "AIM UP ▲"
+                    panoramaGuidance == "TILT_DOWN" -> "AIM DOWN ▼"
+                    panoramaGuidance == "TILT_LEFT" -> "AIM LEFT ◀"
+                    panoramaGuidance == "TILT_RIGHT" -> "AIM RIGHT ▶"
+                    panoramaIsAlignedAndLevel -> "HOLD STEADY · LOCKING"
+                    panoramaSweepDir == "LEFT" -> "ALIGN LEFT ←"
+                    panoramaSweepDir == "UP" -> "ALIGN UP ↑"
+                    panoramaSweepDir == "DOWN" -> "ALIGN DOWN ↓"
+                    else -> "ALIGN RIGHT →"
                 }
                 "$modePrefix · ${panoramaSliceCount}/$maxF · $guideText"
             } else {
                 "$modePrefix $dirGlyph · TAP BAR TO FLIP DIRECTION"
             }
-            val labelY = if (!isVert) railTop - dpToPx(12f) else railTop - dpToPx(14f)
-            canvas.drawText(statusLine, w * 0.5f, labelY, panoLabelPaint)
+            canvas.drawText(statusLine, w * 0.5f, stripTop + stripH * 0.62f, panoLabelPaint)
 
-            // Live Pace Speedometer Bar + AE Lock Pill beneath the rail during capture
+            // Compact Pace Speedometer + Roll Level + AE Lock Pill directly beneath the Top Strip
             if (isPanoramaCapturing) {
-                val barW = dpToPx(150f)
-                val barH = dpToPx(5f)
+                val barW = dpToPx(136f)
+                val barH = dpToPx(4.5f)
                 val barLeft = (w - barW) * 0.5f
-                val barTop = railBottom + dpToPx(10f)
-                val trackP = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#660F172A") }
+                val barTop = stripBottom + dpToPx(7f)
+                val trackP = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#880F172A") }
                 canvas.drawRoundRect(RectF(barLeft, barTop, barLeft + barW, barTop + barH), barH * 0.5f, barH * 0.5f, trackP)
                 val paceColor = when {
                     panoramaPaceNorm >= 0.75f -> "#EF4444"
@@ -3158,17 +3196,17 @@ class ProOverlayView @JvmOverloads constructor(
                     fillP
                 )
                 val subPaint = Paint(panoLabelPaint).apply {
-                    color = Color.parseColor("#CBD5E1")
-                    textSize = dpToPx(9f)
+                    color = Color.parseColor(if (rollLevel) "#6EE7B7" else "#FDE68A")
+                    textSize = dpToPx(8.5f)
                 }
                 val aeTxt = if (panoramaAeLocked) "AE LOCK · " else ""
+                val levelTxt = if (rollLevel) "LEVEL 0°" else String.format(java.util.Locale.US, "TILT %+.1f°", rollDeg)
                 val paceTxt = when {
                     panoramaPaceNorm >= 0.75f -> "TOO FAST"
                     panoramaPaceNorm >= 0.52f -> "STEADY"
-                    else -> "SMOOTH PACE"
+                    else -> "SHARP PACE"
                 }
-                val cloneHint = if (panoramaCloneMode) " · LONG-PRESS STOP" else " · AUTO-LEVEL"
-                canvas.drawText("$aeTxt$paceTxt$cloneHint", w * 0.5f, barTop + dpToPx(16f), subPaint)
+                canvas.drawText("$aeTxt$paceTxt · $levelTxt", w * 0.5f, barTop + dpToPx(14f), subPaint)
             }
             needsAnim = true
         }

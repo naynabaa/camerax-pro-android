@@ -88,7 +88,9 @@ class PanoramaStitcher {
         val pitchDriftDeg: Float,
         val deltaYawDeg: Float,
         val panDirection: Int,
-        val paceNorm: Float = 0.25f
+        val paceNorm: Float = 0.25f,
+        val edgeTargetProgress: Float = 0f,
+        val isAlignedAndLevel: Boolean = false
     )
 
     // Pre-allocated luma grids for zero-GC 30-60 FPS ImageAnalysis overlap tracking
@@ -159,7 +161,8 @@ class PanoramaStitcher {
         imageProxy: ImageProxy,
         isFrontFacing: Boolean,
         gyroDeltaYawDeg: Float,
-        gyroPitchDriftDeg: Float
+        gyroPitchDriftDeg: Float,
+        rollDeg: Float = 0f
     ): AlignmentResult {
         extractLumaGrid(imageProxy, isFrontFacing)
         val vertical = isVerticalSweep()
@@ -190,7 +193,9 @@ class PanoramaStitcher {
                 pitchDriftDeg = 0f,
                 deltaYawDeg = 0f,
                 panDirection = expectedDir,
-                paceNorm = 0.2f
+                paceNorm = 0.2f,
+                edgeTargetProgress = 0f,
+                isAlignedAndLevel = true
             )
         }
 
@@ -324,14 +329,30 @@ class PanoramaStitcher {
         val rawPace = ((instVel * 1.45f) + (if (overlapRatio < 0.50f) 0.45f else 0f)).coerceIn(0.05f, 1.0f)
         smoothedPace = smoothedPace * 0.72f + rawPace * 0.28f
 
-        val cooldownElapsed = (now - lastCaptureTimeMs) >= (if (cloneModeEnabled) 900L else 260L)
-        // In Clone-Me mode, user taps shutter (or pauses with ~52% overlap) so the subject has time to move!
+        val cooldownElapsed = (now - lastCaptureTimeMs) >= (if (cloneModeEnabled) 900L else 280L)
+        // Edge-target progress: 0.0 right after previous slice, 1.0 when live circle lands inside edge target ring
+        val targetShiftStep = if (cloneModeEnabled) 0.42f else 0.30f
+        val edgeTargetProgress = (effectiveShiftAbs / targetShiftStep).coerceIn(0f, 1.30f)
+
+        // Motion-Blur & Level Gate: wait for low angular velocity & level wrist inside alignment window
+        val rollIsLevel = abs(rollDeg) <= 2.4f
+        val crossIsLevel = if (!vertical) {
+            abs(gyroPitchDriftDeg) <= 3.8f && abs(opticalCrossDrift) <= 0.060f
+        } else {
+            abs(gyroDeltaYawDeg) <= 4.2f && abs(opticalCrossDrift) <= 0.065f
+        }
+        val steadyForSharpSnap = smoothedPace <= 0.58f
+        val inTargetWindow = (confidence >= 0.14f && overlapRatio <= 0.72f) || (gyroPrimaryDelta >= 7.6f)
+        val overshootFallback = (confidence >= 0.12f && overlapRatio <= 0.50f) || (gyroPrimaryDelta >= 12.2f)
+        val isAlignedAndLevel = (edgeTargetProgress in 0.80f..1.20f) && rollIsLevel && crossIsLevel && smoothedPace <= 0.64f
+
+        // In Clone-Me mode, user taps shutter so the subject has time to move!
         val targetSliceTrigger = if (cloneModeEnabled) {
             false
         } else {
             cooldownElapsed && (
-                (confidence >= 0.14f && overlapRatio <= 0.70f) ||
-                (gyroPrimaryDelta >= 7.8f)
+                (inTargetWindow && steadyForSharpSnap && (rollIsLevel || overlapRatio <= 0.62f)) ||
+                overshootFallback
             )
         }
 
@@ -387,7 +408,9 @@ class PanoramaStitcher {
             pitchDriftDeg = gyroPitchDriftDeg,
             deltaYawDeg = gyroDeltaYawDeg,
             panDirection = panDirection,
-            paceNorm = smoothedPace
+            paceNorm = smoothedPace,
+            edgeTargetProgress = edgeTargetProgress,
+            isAlignedAndLevel = isAlignedAndLevel
         )
     }
 
@@ -478,27 +501,45 @@ class PanoramaStitcher {
         }
         val slicePaint = Paint(Paint.FILTER_BITMAP_FLAG)
 
+        var cumulativeGain = 1.0f
         for (i in ordered.indices) {
             val bmp = ordered[i].bitmap
             val drawX = xPositions[i]
             val drawY = yPositions[i]
 
             if (i == 0) {
+                slicePaint.colorFilter = null
                 canvas.drawBitmap(bmp, drawX, drawY, slicePaint)
             } else {
                 val overlapPx = ((xPositions[i - 1] + ordered[i - 1].bitmap.width) - drawX)
                     .coerceIn(28f, bmp.width * 0.80f)
+                val stepGain = computeOverlapGainRatio(ordered[i - 1].bitmap, bmp, overlapPx.roundToInt(), isVertical = false)
+                // Gently track exposure gain while pulling slowly toward 1.0f to prevent long-sweep drift
+                cumulativeGain = (cumulativeGain * stepGain * 0.88f + 0.12f).coerceIn(0.82f, 1.22f)
+                val gainPaint = Paint(Paint.FILTER_BITMAP_FLAG).apply {
+                    if (abs(cumulativeGain - 1.0f) > 0.015f) {
+                        val cm = android.graphics.ColorMatrix(
+                            floatArrayOf(
+                                cumulativeGain, 0f, 0f, 0f, 0f,
+                                0f, cumulativeGain, 0f, 0f, 0f,
+                                0f, 0f, cumulativeGain, 0f, 0f,
+                                0f, 0f, 0f, 1f, 0f
+                            )
+                        )
+                        colorFilter = android.graphics.ColorMatrixColorFilter(cm)
+                    }
+                }
                 val seamCenter = overlapPx * 0.50f
                 val featherHalf = min(
                     overlapPx * 0.44f,
-                    (overlapPx * (if (cloneModeEnabled) 0.24f else 0.16f)).coerceIn(14f, 42f)
+                    (overlapPx * (if (cloneModeEnabled) 0.24f else 0.18f)).coerceIn(16f, 46f)
                 )
                 val gradStart = (seamCenter - featherHalf).coerceAtLeast(0f)
                 val gradEnd = (seamCenter + featherHalf).coerceAtMost(overlapPx)
 
                 val featherSlice = Bitmap.createBitmap(bmp.width, bmp.height, Bitmap.Config.ARGB_8888)
                 val fCanvas = Canvas(featherSlice)
-                fCanvas.drawBitmap(bmp, 0f, 0f, slicePaint)
+                fCanvas.drawBitmap(bmp, 0f, 0f, gainPaint)
 
                 if (gradStart > 0.5f) {
                     fCanvas.drawRect(0f, 0f, gradStart, bmp.height.toFloat(), clearPaint)
@@ -582,23 +623,40 @@ class PanoramaStitcher {
         }
         val slicePaint = Paint(Paint.FILTER_BITMAP_FLAG)
 
+        var cumulativeGain = 1.0f
         for (i in ordered.indices) {
             val bmp = ordered[i].bitmap
             val drawX = xPositions[i]
             val drawY = yPositions[i]
             if (i == 0) {
+                slicePaint.colorFilter = null
                 canvas.drawBitmap(bmp, drawX, drawY, slicePaint)
             } else {
                 val overlapPx = ((yPositions[i - 1] + ordered[i - 1].bitmap.height) - drawY)
                     .coerceIn(28f, bmp.height * 0.80f)
+                val stepGain = computeOverlapGainRatio(ordered[i - 1].bitmap, bmp, overlapPx.roundToInt(), isVertical = true)
+                cumulativeGain = (cumulativeGain * stepGain * 0.88f + 0.12f).coerceIn(0.82f, 1.22f)
+                val gainPaint = Paint(Paint.FILTER_BITMAP_FLAG).apply {
+                    if (abs(cumulativeGain - 1.0f) > 0.015f) {
+                        val cm = android.graphics.ColorMatrix(
+                            floatArrayOf(
+                                cumulativeGain, 0f, 0f, 0f, 0f,
+                                0f, cumulativeGain, 0f, 0f, 0f,
+                                0f, 0f, cumulativeGain, 0f, 0f,
+                                0f, 0f, 0f, 1f, 0f
+                            )
+                        )
+                        colorFilter = android.graphics.ColorMatrixColorFilter(cm)
+                    }
+                }
                 val seamCenter = overlapPx * 0.50f
-                val featherHalf = min(overlapPx * 0.42f, (overlapPx * 0.18f).coerceIn(14f, 36f))
+                val featherHalf = min(overlapPx * 0.42f, (overlapPx * 0.19f).coerceIn(16f, 40f))
                 val gradStart = (seamCenter - featherHalf).coerceAtLeast(0f)
                 val gradEnd = (seamCenter + featherHalf).coerceAtMost(overlapPx)
 
                 val featherSlice = Bitmap.createBitmap(bmp.width, bmp.height, Bitmap.Config.ARGB_8888)
                 val fCanvas = Canvas(featherSlice)
-                fCanvas.drawBitmap(bmp, 0f, 0f, slicePaint)
+                fCanvas.drawBitmap(bmp, 0f, 0f, gainPaint)
                 if (gradStart > 0.5f) {
                     fCanvas.drawRect(0f, 0f, bmp.width.toFloat(), gradStart, clearPaint)
                 }
@@ -635,6 +693,58 @@ class PanoramaStitcher {
             canvasBmp
         }
         return sharpenPanoramaBitmap(trimmed)
+    }
+
+    /**
+     * Computes a clamped brightness ratio between the overlapping seam band of two adjacent slices
+     * so exposure differences vanish cleanly across stitched joins.
+     */
+    private fun computeOverlapGainRatio(prevBmp: Bitmap, currBmp: Bitmap, overlapPx: Int, isVertical: Boolean): Float {
+        if (overlapPx < 16 || prevBmp.isRecycled || currBmp.isRecycled) return 1.0f
+        var prevSum = 0.0
+        var currSum = 0.0
+        var samples = 0
+        if (!isVertical) {
+            val bandW = overlapPx.coerceAtMost(min(prevBmp.width, currBmp.width))
+            val prevStartX = (prevBmp.width - bandW).coerceAtLeast(0)
+            val stepX = max(4, bandW / 14)
+            val minH = min(prevBmp.height, currBmp.height)
+            val stepY = max(8, minH / 18)
+            var y = minH / 8
+            while (y < (minH * 7) / 8) {
+                var dx = 0
+                while (dx < bandW) {
+                    val pPrev = prevBmp.getPixel(prevStartX + dx, y)
+                    val pCurr = currBmp.getPixel(dx, y)
+                    prevSum += (Color.red(pPrev) * 0.299 + Color.green(pPrev) * 0.587 + Color.blue(pPrev) * 0.114)
+                    currSum += (Color.red(pCurr) * 0.299 + Color.green(pCurr) * 0.587 + Color.blue(pCurr) * 0.114)
+                    samples++
+                    dx += stepX
+                }
+                y += stepY
+            }
+        } else {
+            val bandH = overlapPx.coerceAtMost(min(prevBmp.height, currBmp.height))
+            val prevStartY = (prevBmp.height - bandH).coerceAtLeast(0)
+            val stepY = max(4, bandH / 14)
+            val minW = min(prevBmp.width, currBmp.width)
+            val stepX = max(8, minW / 18)
+            var x = minW / 8
+            while (x < (minW * 7) / 8) {
+                var dy = 0
+                while (dy < bandH) {
+                    val pPrev = prevBmp.getPixel(x, prevStartY + dy)
+                    val pCurr = currBmp.getPixel(x, dy)
+                    prevSum += (Color.red(pPrev) * 0.299 + Color.green(pPrev) * 0.587 + Color.blue(pPrev) * 0.114)
+                    currSum += (Color.red(pCurr) * 0.299 + Color.green(pCurr) * 0.587 + Color.blue(pCurr) * 0.114)
+                    samples++
+                    dy += stepY
+                }
+                x += stepX
+            }
+        }
+        if (samples < 12 || currSum < 12.0) return 1.0f
+        return (prevSum / currSum).toFloat().coerceIn(0.84f, 1.20f)
     }
 
     /**
