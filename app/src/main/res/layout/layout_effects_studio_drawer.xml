@@ -835,7 +835,7 @@
                     android:layout_marginStart="6dp"
                     android:paddingHorizontal="12dp"
                     android:gravity="center"
-                    android:text="PANORAMA"
+                    android:text="TINY PLANET"
                     android:textColor="#94A3B8"
                     android:textSize="10sp"
                     android:fontFamily="monospace"

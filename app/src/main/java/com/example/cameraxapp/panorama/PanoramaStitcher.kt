@@ -43,14 +43,26 @@ import kotlin.math.roundToInt
  */
 class PanoramaStitcher {
 
+    enum class SweepDirection {
+        RIGHT,
+        LEFT,
+        UP,
+        DOWN
+    }
+
     enum class PanoramaGuidance {
         READY,
         PAN_RIGHT,
         PAN_LEFT,
+        PAN_UP,
+        PAN_DOWN,
         TILT_UP,
         TILT_DOWN,
+        TILT_LEFT,
+        TILT_RIGHT,
         SLOW_DOWN,
         AUTO_CAPTURED,
+        CLONE_READY,
         FINISHING
     }
 
@@ -75,7 +87,8 @@ class PanoramaStitcher {
         val estimatedProgress: Float,
         val pitchDriftDeg: Float,
         val deltaYawDeg: Float,
-        val panDirection: Int
+        val panDirection: Int,
+        val paceNorm: Float = 0.25f
     )
 
     // Pre-allocated luma grids for zero-GC 30-60 FPS ImageAnalysis overlap tracking
@@ -86,39 +99,61 @@ class PanoramaStitcher {
     var hasAnchorFrame: Boolean = false
         private set
 
+    @Volatile
+    var desiredSweepDirection: SweepDirection = SweepDirection.RIGHT
+
+    @Volatile
+    var cloneModeEnabled: Boolean = false
+
     private var anchorYawDeg: Float = 0f
+    private var anchorPitchDeg: Float = 0f
     private var lastCaptureTimeMs: Long = 0L
+    private var lastFrameTimeMs: Long = 0L
+    private var lastShiftAbs: Float = 0f
+    private var smoothedPace: Float = 0.2f
     private var capturedCount: Int = 0
-    private var panDirection: Int = 0 // 0 = undecided, +1 = panning right, -1 = panning left
+    private var panDirection: Int = 0 // 0 = undecided, +1 = right/up, -1 = left/down
     private var cumulativePanNorm: Float = 0f
+
+    fun isVerticalSweep(): Boolean =
+        desiredSweepDirection == SweepDirection.UP || desiredSweepDirection == SweepDirection.DOWN
 
     fun reset() {
         hasAnchorFrame = false
         anchorGrid.fill(0)
         currGrid.fill(0)
         anchorYawDeg = 0f
+        anchorPitchDeg = 0f
         lastCaptureTimeMs = 0L
+        lastFrameTimeMs = 0L
+        lastShiftAbs = 0f
+        smoothedPace = 0.2f
         capturedCount = 0
-        panDirection = 0
+        panDirection = when (desiredSweepDirection) {
+            SweepDirection.LEFT, SweepDirection.DOWN -> -1
+            SweepDirection.RIGHT, SweepDirection.UP -> 1
+        }
         cumulativePanNorm = 0f
     }
 
     /**
      * Marks the most recently analyzed ImageAnalysis luma grid as the new anchor slice.
      */
-    fun lockCurrentFrameAsAnchor(currentYawDeg: Float, stepShiftAbsNorm: Float) {
+    fun lockCurrentFrameAsAnchor(currentYawDeg: Float, stepShiftAbsNorm: Float, currentPitchDeg: Float = 0f) {
         System.arraycopy(currGrid, 0, anchorGrid, 0, GRID_SIZE)
         hasAnchorFrame = true
         anchorYawDeg = currentYawDeg
+        anchorPitchDeg = currentPitchDeg
         lastCaptureTimeMs = System.currentTimeMillis()
+        lastShiftAbs = 0f
         capturedCount++
         cumulativePanNorm += stepShiftAbsNorm
     }
 
     /**
      * Analyzes the incoming CameraX ImageProxy Y-plane on the background executor:
-     * detects frame overlap, computes 2D stitch alignment, and returns real-time arrow guidance
-     * plus automated capture / auto-finish signals.
+     * detects 4-way frame overlap (Horizontal L/R or Vertical U/D), computes 2D stitch alignment,
+     * live pan pace speedometer, and returns real-time arrow guidance + automated capture triggers.
      */
     fun analyzeFrame(
         imageProxy: ImageProxy,
@@ -127,22 +162,35 @@ class PanoramaStitcher {
         gyroPitchDriftDeg: Float
     ): AlignmentResult {
         extractLumaGrid(imageProxy, isFrontFacing)
+        val vertical = isVerticalSweep()
+        val expectedDir = when (desiredSweepDirection) {
+            SweepDirection.LEFT, SweepDirection.DOWN -> -1
+            SweepDirection.RIGHT, SweepDirection.UP -> 1
+        }
+        if (panDirection == 0) panDirection = expectedDir
 
         // First slice triggers immediately when user starts Panorama capture
         if (!hasAnchorFrame) {
+            val initGuide = when (desiredSweepDirection) {
+                SweepDirection.LEFT -> PanoramaGuidance.PAN_LEFT
+                SweepDirection.UP -> PanoramaGuidance.PAN_UP
+                SweepDirection.DOWN -> PanoramaGuidance.PAN_DOWN
+                else -> PanoramaGuidance.PAN_RIGHT
+            }
             return AlignmentResult(
                 dxNorm = 0f,
                 dyNorm = 0f,
                 overlapRatio = 1.0f,
                 confidence = 1.0f,
-                guidance = PanoramaGuidance.PAN_RIGHT,
+                guidance = initGuide,
                 shouldTriggerAutoCapture = true,
                 shouldAutoFinish = false,
                 sliceCount = 0,
                 estimatedProgress = 0f,
                 pitchDriftDeg = 0f,
                 deltaYawDeg = 0f,
-                panDirection = 0
+                panDirection = expectedDir,
+                paceNorm = 0.2f
             )
         }
 
@@ -153,39 +201,77 @@ class PanoramaStitcher {
         var sadAccum = 0f
         var sadSamples = 0
 
-        val minCol = GRID_W / 5
-        val maxCol = GRID_W - (GRID_W / 5)
-        val minRow = 6
-        val maxRow = GRID_H - 6
-        val maxShiftX = 28
+        if (!vertical) {
+            val minCol = GRID_W / 5
+            val maxCol = GRID_W - (GRID_W / 5)
+            val minRow = 6
+            val maxRow = GRID_H - 6
+            val maxShiftX = 28
 
-        for (dy in -4..4) {
-            for (dx in -maxShiftX..maxShiftX) {
-                if (panDirection > 0 && dx < -3) continue
-                if (panDirection < 0 && dx > 3) continue
+            for (dy in -4..4) {
+                for (dx in -maxShiftX..maxShiftX) {
+                    if (panDirection > 0 && dx < -3) continue
+                    if (panDirection < 0 && dx > 3) continue
 
-                var errSum = 0L
-                var count = 0
-                for (y in minRow until maxRow step 2) {
-                    val ay = y + dy
-                    if (ay !in 0 until GRID_H) continue
-                    val aRow = ay * GRID_W
-                    val cRow = y * GRID_W
-                    for (x in minCol until maxCol step 2) {
-                        val ax = x + dx
-                        if (ax !in 0 until GRID_W) continue
-                        errSum += abs(currGrid[cRow + x] - anchorGrid[aRow + ax])
-                        count++
+                    var errSum = 0L
+                    var count = 0
+                    for (y in minRow until maxRow step 2) {
+                        val ay = y + dy
+                        if (ay !in 0 until GRID_H) continue
+                        val aRow = ay * GRID_W
+                        val cRow = y * GRID_W
+                        for (x in minCol until maxCol step 2) {
+                            val ax = x + dx
+                            if (ax !in 0 until GRID_W) continue
+                            errSum += abs(currGrid[cRow + x] - anchorGrid[aRow + ax])
+                            count++
+                        }
+                    }
+                    if (count >= 48) {
+                        val meanSad = errSum.toFloat() / count.toFloat()
+                        sadAccum += meanSad
+                        sadSamples++
+                        if (meanSad < bestSad) {
+                            bestSad = meanSad
+                            bestDx = dx
+                            bestDy = dy
+                        }
                     }
                 }
-                if (count >= 48) {
-                    val meanSad = errSum.toFloat() / count.toFloat()
-                    sadAccum += meanSad
-                    sadSamples++
-                    if (meanSad < bestSad) {
-                        bestSad = meanSad
-                        bestDx = dx
-                        bestDy = dy
+            }
+        } else {
+            // Vertical sweep: search large vertical shift dy (-22..22) and small horizontal drift dx (-4..4)
+            val minCol = 8
+            val maxCol = GRID_W - 8
+            val minRow = GRID_H / 5
+            val maxRow = GRID_H - (GRID_H / 5)
+            val maxShiftY = 22
+
+            for (dx in -4..4) {
+                for (dy in -maxShiftY..maxShiftY) {
+                    var errSum = 0L
+                    var count = 0
+                    for (y in minRow until maxRow step 2) {
+                        val ay = y + dy
+                        if (ay !in 0 until GRID_H) continue
+                        val aRow = ay * GRID_W
+                        val cRow = y * GRID_W
+                        for (x in minCol until maxCol step 2) {
+                            val ax = x + dx
+                            if (ax !in 0 until GRID_W) continue
+                            errSum += abs(currGrid[cRow + x] - anchorGrid[aRow + ax])
+                            count++
+                        }
+                    }
+                    if (count >= 40) {
+                        val meanSad = errSum.toFloat() / count.toFloat()
+                        sadAccum += meanSad
+                        sadSamples++
+                        if (meanSad < bestSad) {
+                            bestSad = meanSad
+                            bestDx = dx
+                            bestDy = dy
+                        }
                     }
                 }
             }
@@ -194,64 +280,114 @@ class PanoramaStitcher {
         val meanAllSad = if (sadSamples > 0) sadAccum / sadSamples else bestSad
         val confidence = ((meanAllSad - bestSad) / max(meanAllSad, 1f)).coerceIn(0f, 1f)
 
-        val opticalShiftAbs = abs(bestDx).toFloat() / GRID_W.toFloat()
-        val opticalDyNorm = bestDy.toFloat() / GRID_H.toFloat()
-        val yawSinceAnchor = abs(normalizeAngleDelta(anchorYawDeg, gyroDeltaYawDeg))
-        val gyroShiftAbs = (yawSinceAnchor / 36.0f).coerceIn(0f, 0.75f)
+        val opticalPrimaryAbs = if (!vertical) {
+            abs(bestDx).toFloat() / GRID_W.toFloat()
+        } else {
+            abs(bestDy).toFloat() / GRID_H.toFloat()
+        }
+        val opticalCrossDrift = if (!vertical) {
+            bestDy.toFloat() / GRID_H.toFloat()
+        } else {
+            bestDx.toFloat() / GRID_W.toFloat()
+        }
+        val gyroPrimaryDelta = if (!vertical) {
+            abs(normalizeAngleDelta(anchorYawDeg, gyroDeltaYawDeg))
+        } else {
+            abs(gyroPitchDriftDeg - anchorPitchDeg)
+        }
+        val gyroShiftAbs = (gyroPrimaryDelta / 36.0f).coerceIn(0f, 0.75f)
 
         val effectiveShiftAbs = if (confidence >= 0.14f) {
-            (opticalShiftAbs * 0.78f + gyroShiftAbs * 0.22f)
+            (opticalPrimaryAbs * 0.78f + gyroShiftAbs * 0.22f)
         } else {
-            max(opticalShiftAbs * 0.35f, gyroShiftAbs)
+            max(opticalPrimaryAbs * 0.35f, gyroShiftAbs)
         }
 
-        if (panDirection == 0 && (abs(bestDx) >= 4 && confidence >= 0.16f || abs(gyroDeltaYawDeg) >= 3.2f)) {
-            panDirection = if (abs(gyroDeltaYawDeg) >= 3.2f) {
-                if (gyroDeltaYawDeg >= 0f) 1 else -1
-            } else {
-                if (bestDx >= 0) 1 else -1
-            }
+        val signedDxNorm = if (!vertical) {
+            if (panDirection < 0) -effectiveShiftAbs else effectiveShiftAbs
+        } else {
+            opticalCrossDrift
         }
-
-        val signedDxNorm = if (panDirection < 0) -effectiveShiftAbs else effectiveShiftAbs
+        val signedDyNorm = if (!vertical) {
+            opticalCrossDrift
+        } else {
+            if (desiredSweepDirection == SweepDirection.UP) -effectiveShiftAbs else effectiveShiftAbs
+        }
         val overlapRatio = (1.0f - effectiveShiftAbs).coerceIn(0f, 1f)
 
         val now = System.currentTimeMillis()
-        val cooldownElapsed = (now - lastCaptureTimeMs) >= 260L
-        val targetSliceTrigger = cooldownElapsed && (
-            (confidence >= 0.14f && overlapRatio <= 0.70f) ||
-            (yawSinceAnchor >= 7.8f)
-        )
+        val dtSec = ((now - lastFrameTimeMs).coerceIn(16L, 250L)) / 1000f
+        lastFrameTimeMs = now
+        val instVel = if (lastShiftAbs > 0f) abs(effectiveShiftAbs - lastShiftAbs) / dtSec else 0f
+        lastShiftAbs = effectiveShiftAbs
+        // Normalize pan speed: ~0.25 = ideal smooth pace, >= 0.72 = too fast
+        val rawPace = ((instVel * 1.45f) + (if (overlapRatio < 0.50f) 0.45f else 0f)).coerceIn(0.05f, 1.0f)
+        smoothedPace = smoothedPace * 0.72f + rawPace * 0.28f
 
-        val totalProjectedProgress = ((cumulativePanNorm + effectiveShiftAbs) / TARGET_PAN_NORM)
+        val cooldownElapsed = (now - lastCaptureTimeMs) >= (if (cloneModeEnabled) 900L else 260L)
+        // In Clone-Me mode, user taps shutter (or pauses with ~52% overlap) so the subject has time to move!
+        val targetSliceTrigger = if (cloneModeEnabled) {
+            false
+        } else {
+            cooldownElapsed && (
+                (confidence >= 0.14f && overlapRatio <= 0.70f) ||
+                (gyroPrimaryDelta >= 7.8f)
+            )
+        }
+
+        val maxAllowed = if (cloneModeEnabled) 6 else MAX_SLICES
+        val targetSpan = if (cloneModeEnabled) 2.4f else TARGET_PAN_NORM
+        val totalProjectedProgress = ((cumulativePanNorm + effectiveShiftAbs) / targetSpan)
             .coerceIn(0f, 1f)
-        val shouldAutoFinish = (capturedCount >= MAX_SLICES) ||
+        val shouldAutoFinish = !cloneModeEnabled && (
+            (capturedCount >= maxAllowed) ||
             (capturedCount >= 5 && totalProjectedProgress >= 0.98f)
+        )
 
         val guidance = when {
             shouldAutoFinish -> PanoramaGuidance.FINISHING
-            targetSliceTrigger -> PanoramaGuidance.AUTO_CAPTURED
-            abs(gyroPitchDriftDeg) > 4.2f || abs(opticalDyNorm) > 0.065f -> {
-                if (gyroPitchDriftDeg > 0f || opticalDyNorm < -0.065f) PanoramaGuidance.TILT_DOWN else PanoramaGuidance.TILT_UP
+            cloneModeEnabled -> {
+                if (overlapRatio <= 0.65f) PanoramaGuidance.CLONE_READY
+                else when (desiredSweepDirection) {
+                    SweepDirection.LEFT -> PanoramaGuidance.PAN_LEFT
+                    SweepDirection.UP -> PanoramaGuidance.PAN_UP
+                    SweepDirection.DOWN -> PanoramaGuidance.PAN_DOWN
+                    else -> PanoramaGuidance.PAN_RIGHT
+                }
             }
-            overlapRatio < 0.45f -> PanoramaGuidance.SLOW_DOWN
-            panDirection < 0 -> PanoramaGuidance.PAN_LEFT
-            else -> PanoramaGuidance.PAN_RIGHT
+            targetSliceTrigger -> PanoramaGuidance.AUTO_CAPTURED
+            !vertical && (abs(gyroPitchDriftDeg) > 4.2f || abs(opticalCrossDrift) > 0.065f) -> {
+                if (gyroPitchDriftDeg > 0f || opticalCrossDrift < -0.065f) PanoramaGuidance.TILT_DOWN else PanoramaGuidance.TILT_UP
+            }
+            vertical && (abs(gyroDeltaYawDeg) > 4.8f || abs(opticalCrossDrift) > 0.07f) -> {
+                if (gyroDeltaYawDeg > 0f || opticalCrossDrift > 0.07f) PanoramaGuidance.TILT_LEFT else PanoramaGuidance.TILT_RIGHT
+            }
+            overlapRatio < 0.45f || smoothedPace > 0.78f -> PanoramaGuidance.SLOW_DOWN
+            else -> when (desiredSweepDirection) {
+                SweepDirection.LEFT -> PanoramaGuidance.PAN_LEFT
+                SweepDirection.UP -> PanoramaGuidance.PAN_UP
+                SweepDirection.DOWN -> PanoramaGuidance.PAN_DOWN
+                else -> PanoramaGuidance.PAN_RIGHT
+            }
         }
 
         return AlignmentResult(
             dxNorm = signedDxNorm,
-            dyNorm = opticalDyNorm,
+            dyNorm = signedDyNorm,
             overlapRatio = overlapRatio,
             confidence = confidence,
             guidance = guidance,
             shouldTriggerAutoCapture = targetSliceTrigger,
             shouldAutoFinish = shouldAutoFinish,
             sliceCount = capturedCount,
-            estimatedProgress = max(totalProjectedProgress, (abs(gyroDeltaYawDeg) / 115f).coerceIn(0f, 1f)),
+            estimatedProgress = max(
+                totalProjectedProgress,
+                (if (!vertical) abs(gyroDeltaYawDeg) / 115f else abs(gyroPitchDriftDeg) / 95f).coerceIn(0f, 1f)
+            ),
             pitchDriftDeg = gyroPitchDriftDeg,
             deltaYawDeg = gyroDeltaYawDeg,
-            panDirection = panDirection
+            panDirection = panDirection,
+            paceNorm = smoothedPace
         )
     }
 
@@ -286,19 +422,25 @@ class PanoramaStitcher {
     }
 
     /**
-     * Step 3: Standard Android Image Processing Stitcher.
+     * Step 3: Standard Android Image Processing Stitcher (Horizontal & Vertical + Auto-Horizon Straightening).
      *
-     * Uses 2-stage coarse-to-fine pixel-strip seam alignment and a narrow 32–64px seam feather
-     * mask so overlapping textures never smear into double-exposure ghosting, followed by exact
-     * vertical border trimming and a mild unsharp crispness pass.
+     * Uses 2-stage coarse-to-fine pixel-strip seam alignment, narrow seam feathering (preventing ghosting),
+     * automatic horizon leveling counter-rotation, exact edge trimming, and mild unsharp crispness pass.
      */
     fun stitchSlices(rawSlices: List<PanoramaSlice>): Bitmap? {
         if (rawSlices.isEmpty()) return null
-        val ordered = if (panDirection < 0) rawSlices.reversed() else rawSlices
-        if (ordered.size == 1) {
-            return sharpenPanoramaBitmap(ordered[0].bitmap.copy(Bitmap.Config.ARGB_8888, true))
+        if (rawSlices.size == 1) {
+            return sharpenPanoramaBitmap(rawSlices[0].bitmap.copy(Bitmap.Config.ARGB_8888, true))
         }
+        return if (isVerticalSweep()) {
+            stitchVerticalSlices(rawSlices)
+        } else {
+            stitchHorizontalSlices(rawSlices)
+        }
+    }
 
+    private fun stitchHorizontalSlices(rawSlices: List<PanoramaSlice>): Bitmap? {
+        val ordered = if (desiredSweepDirection == SweepDirection.LEFT || panDirection < 0) rawSlices.reversed() else rawSlices
         val sliceH = ordered[0].bitmap.height.coerceAtLeast(64)
         val sliceW = ordered[0].bitmap.width.coerceAtLeast(64)
 
@@ -310,11 +452,12 @@ class PanoramaStitcher {
         for (i in 1 until ordered.size) {
             val prevBmp = ordered[i - 1].bitmap
             val currBmp = ordered[i].bitmap
-            val roughStepNorm = abs(ordered[i].stepDxNorm).coerceIn(0.16f, 0.52f)
+            val defaultStep = if (cloneModeEnabled) 0.44f else 0.28f
+            val roughStepNorm = abs(ordered[i].stepDxNorm).let { if (it < 0.08f) defaultStep else it }.coerceIn(0.16f, 0.58f)
             val roughStepPx = (roughStepNorm * sliceW).roundToInt()
 
             val refined = refineSeamOffsetPx(prevBmp, currBmp, roughStepPx)
-            val stepX = refined.first.toFloat().coerceIn(sliceW * 0.14f, sliceW * 0.58f)
+            val stepX = refined.first.toFloat().coerceIn(sliceW * 0.14f, sliceW * 0.62f)
             val gyroDyHint = -(ordered[i].pitchDriftDeg * 2.2f)
             val stepRelY = if (refined.second != 0) refined.second.toFloat() else (gyroDyHint - yPositions[i - 1])
 
@@ -346,7 +489,10 @@ class PanoramaStitcher {
                 val overlapPx = ((xPositions[i - 1] + ordered[i - 1].bitmap.width) - drawX)
                     .coerceIn(28f, bmp.width * 0.80f)
                 val seamCenter = overlapPx * 0.50f
-                val featherHalf = min(overlapPx * 0.42f, (overlapPx * 0.16f).coerceIn(14f, 32f))
+                val featherHalf = min(
+                    overlapPx * 0.44f,
+                    (overlapPx * (if (cloneModeEnabled) 0.24f else 0.16f)).coerceIn(14f, 42f)
+                )
                 val gradStart = (seamCenter - featherHalf).coerceAtLeast(0f)
                 val gradEnd = (seamCenter + featherHalf).coerceAtMost(overlapPx)
 
@@ -383,14 +529,180 @@ class PanoramaStitcher {
         val bottomCrop = validBottom.coerceIn(min(sliceH, topCrop + 64), sliceH)
         val cropH = (bottomCrop - topCrop).coerceAtLeast(64)
 
-        val cleanBmp = if (topCrop > 0 || cropH < sliceH) {
+        val trimmed = if (topCrop > 0 || cropH < sliceH) {
             Bitmap.createBitmap(canvasBmp, 0, topCrop, canvasBmp.width, cropH).also {
                 if (it != canvasBmp && !canvasBmp.isRecycled) canvasBmp.recycle()
             }
         } else {
             canvasBmp
         }
-        return sharpenPanoramaBitmap(cleanBmp)
+
+        // Auto-Horizon Straightening: estimate global horizon slope across slices & counter-rotate cleanly
+        val spanX = (xPositions.last() - xPositions.first()).coerceAtLeast(1f)
+        val slopeDy = yPositions.last() - yPositions.first()
+        val tiltDeg = Math.toDegrees(Math.atan2(slopeDy.toDouble(), spanX.toDouble())).toFloat().coerceIn(-7.5f, 7.5f)
+        val leveled = if (abs(tiltDeg) >= 0.45f) {
+            autoLevelHorizonBitmap(trimmed, -tiltDeg)
+        } else {
+            trimmed
+        }
+        return sharpenPanoramaBitmap(leveled)
+    }
+
+    private fun stitchVerticalSlices(rawSlices: List<PanoramaSlice>): Bitmap? {
+        // Order top-to-bottom on output canvas
+        val ordered = if (desiredSweepDirection == SweepDirection.UP) rawSlices.reversed() else rawSlices
+        val sliceW = ordered[0].bitmap.width.coerceAtLeast(64)
+        val sliceH = ordered[0].bitmap.height.coerceAtLeast(64)
+
+        val xPositions = FloatArray(ordered.size)
+        val yPositions = FloatArray(ordered.size)
+        xPositions[0] = 0f
+        yPositions[0] = 0f
+
+        for (i in 1 until ordered.size) {
+            val defaultStep = if (cloneModeEnabled) 0.44f else 0.30f
+            val stepNorm = abs(ordered[i].stepDyNorm).let { if (it < 0.08f) defaultStep else it }.coerceIn(0.16f, 0.56f)
+            val stepY = (stepNorm * sliceH).coerceIn(sliceH * 0.16f, sliceH * 0.58f)
+            val dxShift = (-ordered[i].stepDxNorm * sliceW * 0.45f).coerceIn(-sliceW * 0.10f, sliceW * 0.10f)
+            yPositions[i] = yPositions[i - 1] + stepY
+            xPositions[i] = (xPositions[i - 1] + dxShift).coerceIn(-sliceW * 0.12f, sliceW * 0.12f)
+        }
+
+        val totalHeight = min(5120, (yPositions.last() + sliceH).roundToInt().coerceAtLeast(sliceH))
+        val canvasBmp = Bitmap.createBitmap(sliceW, totalHeight, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(canvasBmp)
+        canvas.drawColor(Color.BLACK)
+
+        val maskPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_IN)
+        }
+        val clearPaint = Paint().apply {
+            xfermode = PorterDuffXfermode(PorterDuff.Mode.CLEAR)
+        }
+        val slicePaint = Paint(Paint.FILTER_BITMAP_FLAG)
+
+        for (i in ordered.indices) {
+            val bmp = ordered[i].bitmap
+            val drawX = xPositions[i]
+            val drawY = yPositions[i]
+            if (i == 0) {
+                canvas.drawBitmap(bmp, drawX, drawY, slicePaint)
+            } else {
+                val overlapPx = ((yPositions[i - 1] + ordered[i - 1].bitmap.height) - drawY)
+                    .coerceIn(28f, bmp.height * 0.80f)
+                val seamCenter = overlapPx * 0.50f
+                val featherHalf = min(overlapPx * 0.42f, (overlapPx * 0.18f).coerceIn(14f, 36f))
+                val gradStart = (seamCenter - featherHalf).coerceAtLeast(0f)
+                val gradEnd = (seamCenter + featherHalf).coerceAtMost(overlapPx)
+
+                val featherSlice = Bitmap.createBitmap(bmp.width, bmp.height, Bitmap.Config.ARGB_8888)
+                val fCanvas = Canvas(featherSlice)
+                fCanvas.drawBitmap(bmp, 0f, 0f, slicePaint)
+                if (gradStart > 0.5f) {
+                    fCanvas.drawRect(0f, 0f, bmp.width.toFloat(), gradStart, clearPaint)
+                }
+                maskPaint.shader = LinearGradient(
+                    0f, gradStart, 0f, gradEnd,
+                    intArrayOf(Color.TRANSPARENT, Color.BLACK),
+                    null,
+                    Shader.TileMode.CLAMP
+                )
+                fCanvas.drawRect(0f, gradStart, bmp.width.toFloat(), gradEnd, maskPaint)
+                canvas.drawBitmap(featherSlice, drawX, drawY, slicePaint)
+                featherSlice.recycle()
+            }
+        }
+        maskPaint.shader = null
+
+        var validLeft = 0
+        var validRight = sliceW
+        for (i in ordered.indices) {
+            val l = ceil(xPositions[i].toDouble()).toInt()
+            val r = floor((xPositions[i] + ordered[i].bitmap.width).toDouble()).toInt()
+            if (l > validLeft) validLeft = l
+            if (r < validRight) validRight = r
+        }
+        val leftCrop = validLeft.coerceIn(0, max(0, sliceW / 4))
+        val rightCrop = validRight.coerceIn(min(sliceW, leftCrop + 64), sliceW)
+        val cropW = (rightCrop - leftCrop).coerceAtLeast(64)
+
+        val trimmed = if (leftCrop > 0 || cropW < sliceW) {
+            Bitmap.createBitmap(canvasBmp, leftCrop, 0, cropW, canvasBmp.height).also {
+                if (it != canvasBmp && !canvasBmp.isRecycled) canvasBmp.recycle()
+            }
+        } else {
+            canvasBmp
+        }
+        return sharpenPanoramaBitmap(trimmed)
+    }
+
+    /**
+     * Auto-Horizon Straightening & Edge Crop: smoothly counter-rotates slight hand tilt
+     * and crops strictly inside the largest inscribed rectangle so zero black corner wedges appear.
+     */
+    private fun autoLevelHorizonBitmap(src: Bitmap, angleDeg: Float): Bitmap {
+        val w = src.width
+        val h = src.height
+        if (w < 64 || h < 64) return src
+        val rad = Math.toRadians(abs(angleDeg).toDouble())
+        val sinA = Math.sin(rad)
+        val insetY = ceil(w * 0.5 * sinA).toInt().coerceIn(0, h / 5)
+        val insetX = ceil(h * 0.5 * sinA).toInt().coerceIn(0, w / 8)
+        val outW = (w - insetX * 2).coerceAtLeast(64)
+        val outH = (h - insetY * 2).coerceAtLeast(64)
+
+        val out = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888)
+        val c = Canvas(out)
+        val m = Matrix().apply {
+            postTranslate(-w * 0.5f, -h * 0.5f)
+            postRotate(angleDeg)
+            postTranslate(outW * 0.5f, outH * 0.5f)
+        }
+        c.drawBitmap(src, m, Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG))
+        if (!src.isRecycled) src.recycle()
+        return out
+    }
+
+    /**
+     * Innovative 360° Tiny Planet Polar Projection:
+     * Wraps any stitched wide panorama into a crisp circular "Little Planet" stereographic globe!
+     */
+    fun renderTinyPlanet(src: Bitmap, outputSize: Int = 1080): Bitmap {
+        val srcW = src.width.coerceAtLeast(4)
+        val srcH = src.height.coerceAtLeast(4)
+        val size = outputSize.coerceIn(512, 1440)
+        val srcPx = IntArray(srcW * srcH)
+        src.getPixels(srcPx, 0, srcW, 0, 0, srcW, srcH)
+
+        val outPx = IntArray(size * size)
+        val cx = size * 0.5f
+        val cy = size * 0.5f
+        val maxR = size * 0.5f
+        val twoPi = (Math.PI * 2.0)
+
+        for (y in 0 until size) {
+            val dy = (y - cy).toDouble()
+            val rowOff = y * size
+            for (x in 0 until size) {
+                val dx = (x - cx).toDouble()
+                val r = Math.hypot(dx, dy)
+                val rNorm = (r / maxR).coerceIn(0.0, 1.0)
+                // Stereographic polar mapping: ground curves into planet center, sky wraps outward
+                var angle = Math.atan2(dy, dx) + Math.PI * 0.5
+                if (angle < 0.0) angle += twoPi
+                if (angle >= twoPi) angle -= twoPi
+                val uRaw = angle / twoPi
+                // Seamless mirror-blend across 360° seam so non-360° panoramas never have a hard cut line
+                val uSeamless = if (uRaw <= 0.5) (uRaw * 2.0) else ((1.0 - uRaw) * 2.0)
+                val vNorm = (1.0 - Math.pow(rNorm, 0.84)).coerceIn(0.0, 1.0)
+
+                val sx = (uSeamless * (srcW - 1)).toInt().coerceIn(0, srcW - 1)
+                val sy = (vNorm * (srcH - 1)).toInt().coerceIn(0, srcH - 1)
+                outPx[rowOff + x] = srcPx[sy * srcW + sx]
+            }
+        }
+        return Bitmap.createBitmap(outPx, size, size, Bitmap.Config.ARGB_8888)
     }
 
     /**

@@ -28,6 +28,7 @@ import android.graphics.Typeface
 import android.media.AudioManager
 import android.media.ExifInterface
 import android.media.FaceDetector
+import android.media.MediaActionSound
 import android.media.ToneGenerator
 import android.os.Build
 import android.os.Bundle
@@ -279,8 +280,9 @@ class MainActivity : AppCompatActivity() {
     private var twoFingerDragSensitivity: Float = 1.0f
     private var invertTwoFingerRotate: Boolean = false
 
-    // Audio Cue, Comic SFX & Typography Engines
+    // Audio Cue, Native Shutter/Record SFX, Comic SFX & Typography Engines
     private var toneGenerator: ToneGenerator? = null
+    private var mediaActionSound: MediaActionSound? = null
     private var comicSfxHelper: ComicSoundEffectsHelper? = null
     private var cameraFontHelper: CameraFontHelper? = null
     private var selectedVideoQualityLabel: String = "HD 30FPS"
@@ -410,13 +412,30 @@ class MainActivity : AppCompatActivity() {
     private var latestUprightPitchDeg = 0f
     private val panoramaFallbackHandler = Handler(Looper.getMainLooper())
     private var panoramaFallbackRunnable: Runnable? = null
+    private var panoramaSweepDir: PanoramaStitcher.SweepDirection = PanoramaStitcher.SweepDirection.RIGHT
+    @Volatile
+    private var isPanoramaCloneMode: Boolean = false
+    @Volatile
+    private var isPanoramaTinyPlanetMode: Boolean = false
+    @Volatile
+    private var isPanoramaAeLocked: Boolean = false
+    @Volatile
+    private var requestCloneSliceCapture: Boolean = false
+    private var panoLongPressRunnable: Runnable? = null
+    private var panoLongPressTriggered: Boolean = false
 
     // Automated Night Mode Low-Light ImageAnalysis & Multi-Frame Exposure Stacking State
     private val nightExposureStacker = NightExposureStacker()
     @Volatile
     private var isNightStacking = false
     @Volatile
-    private var isAutoNightStackEnabled = true
+    private var isAutoNightStackEnabled = false
+    private var nightFramesMode: String = "auto" // "auto", "3", "5", "7"
+    private var nightSkyTone: String = "natural" // "natural" (deep blacks), "bright" (shadow boost)
+    @Volatile
+    private var nightShutterProgress: Float = 0f
+    private var nightLastYawDeg: Float = 0f
+    private var nightLastPitchDeg: Float = 0f
     private val nightHandler = Handler(Looper.getMainLooper())
 
     // Eco Mode BatteryManager Monitor & Dynamic ImageAnalysis/AR Throttler
@@ -2195,7 +2214,7 @@ class MainActivity : AppCompatActivity() {
                         }
                     }
 
-                    // Automated Panorama Sequence: CameraX ImageAnalysis Overlap Detection, Stitch Alignment & Guidance Arrows
+                    // Automated Panorama Sequence: 4-Way Sweep, Clone-Me Multi-Pose, Live Mini-Filmstrip, Pace & Haptics
                     if (cameraMode == CameraMode.PANORAMA && isPanoramaCapturing && !isPanoramaStitching) {
                         try {
                             val isFront = (lensFacing == CameraSelector.DEFAULT_FRONT_CAMERA)
@@ -2209,9 +2228,19 @@ class MainActivity : AppCompatActivity() {
                             )
                             panoramaDirection = align.panDirection
 
+                            val maxSlices = if (isPanoramaCloneMode) 4 else 14
+                            val wantCloneStep = isPanoramaCloneMode && requestCloneSliceCapture
+                            if (wantCloneStep) requestCloneSliceCapture = false
+                            val shouldCaptureNow = if (isPanoramaCloneMode) {
+                                align.shouldTriggerAutoCapture || wantCloneStep
+                            } else {
+                                align.shouldTriggerAutoCapture
+                            }
+
                             var newCount = align.sliceCount
                             var didAutoCapture = false
-                            if (align.shouldTriggerAutoCapture) {
+                            var previewThumbCopy: Bitmap? = null
+                            if (shouldCaptureNow && newCount < maxSlices) {
                                 val sliceBmp = panoramaStitcher.imageProxyToBitmap(imageProxy, isFront, 1080)
                                 if (sliceBmp != null) {
                                     val filtered = try {
@@ -2221,9 +2250,17 @@ class MainActivity : AppCompatActivity() {
                                     } catch (_: Throwable) {
                                         sliceBmp
                                     }
-                                    panoramaStitcher.lockCurrentFrameAsAnchor(deltaYaw, Math.abs(align.dxNorm))
+                                    val stepShiftAbs = if (panoramaStitcher.isVerticalSweep()) Math.abs(align.dyNorm) else Math.abs(align.dxNorm)
+                                    panoramaStitcher.lockCurrentFrameAsAnchor(deltaYaw, stepShiftAbs, pitchDrift)
                                     synchronized(panoramaLock) {
                                         if (isPanoramaCapturing) {
+                                            val thumbW = 180
+                                            val thumbH = ((filtered.height.toFloat() / filtered.width.coerceAtLeast(1)) * thumbW).toInt().coerceIn(80, 260)
+                                            previewThumbCopy = try {
+                                                Bitmap.createScaledBitmap(filtered, thumbW, thumbH, true)
+                                            } catch (_: Throwable) {
+                                                null
+                                            }
                                             panoramaSlices.add(
                                                 PanoramaStitcher.PanoramaSlice(
                                                     bitmap = filtered,
@@ -2245,13 +2282,22 @@ class MainActivity : AppCompatActivity() {
 
                             val overlapPct = (align.overlapRatio * 100f).toInt().coerceIn(0, 100)
                             val uiGuidance = if (didAutoCapture) "AUTO_CAPTURED" else align.guidance.name
-                            val shouldFinishNow = align.shouldAutoFinish || newCount >= 14
+                            val progressOut = if (isPanoramaCloneMode) (newCount.toFloat() / maxSlices.toFloat()).coerceIn(0f, 1f) else align.estimatedProgress
+                            val shouldFinishNow = (!isPanoramaCloneMode && align.shouldAutoFinish) || newCount >= maxSlices
 
                             runOnUiThread {
-                                if (!isPanoramaCapturing) return@runOnUiThread
+                                val thumbForUi = previewThumbCopy
+                                if (!isPanoramaCapturing) {
+                                    if (thumbForUi != null && !thumbForUi.isRecycled) thumbForUi.recycle()
+                                    return@runOnUiThread
+                                }
+                                if (thumbForUi != null) {
+                                    viewBinding.proOverlayView.appendPanoramaPreviewSlice(thumbForUi)
+                                    if (!thumbForUi.isRecycled) thumbForUi.recycle()
+                                }
                                 viewBinding.proOverlayView.updatePanoramaAnalysis(
                                     guidance = uiGuidance,
-                                    progress = align.estimatedProgress,
+                                    progress = progressOut,
                                     overlapPct = overlapPct,
                                     dxNorm = align.dxNorm,
                                     dyNorm = align.dyNorm,
@@ -2259,11 +2305,20 @@ class MainActivity : AppCompatActivity() {
                                     yawDeg = deltaYaw,
                                     pitchDriftDeg = pitchDrift,
                                     sliceCount = newCount,
-                                    direction = align.panDirection
+                                    direction = align.panDirection,
+                                    paceNorm = align.paceNorm
                                 )
                                 if (didAutoCapture) {
-                                    viewBinding.chronometer.text = "${newCount}/14 F · ${overlapPct}%"
+                                    window.decorView.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                                    viewBinding.chronometer.text = if (isPanoramaCloneMode) {
+                                        "POSE ${newCount}/${maxSlices} · CLONE"
+                                    } else {
+                                        "${newCount}/${maxSlices} F · ${overlapPct}%"
+                                    }
                                     playCameraCue(ToneGenerator.TONE_PROP_BEEP, 30)
+                                    if (isPanoramaCloneMode && newCount < maxSlices) {
+                                        showHudNotice("Pose #${newCount} locked · Move subject & tap Shutter (hold to stitch)")
+                                    }
                                 }
                                 if (shouldFinishNow) {
                                     finishPanoramaCapture()
@@ -2286,14 +2341,22 @@ class MainActivity : AppCompatActivity() {
                             val showHud = cameraMode == CameraMode.NIGHT ||
                                 currentShootingEffect == "night_sight" ||
                                 nightInfo.isLowLight
+                            val resolvedFrames = when (nightFramesMode) {
+                                "3" -> 3
+                                "5" -> 5
+                                "7" -> 7
+                                else -> nightInfo.recommendedFrameCount
+                            }
                             runOnUiThread {
                                 viewBinding.proOverlayView.isNightModeHudActive = showHud
+                                viewBinding.proOverlayView.nightAutoTriggerEnabled = isAutoNightStackEnabled
+                                viewBinding.proOverlayView.nightSkyToneLabel = if (nightSkyTone == "natural") "NATURAL" else "BRIGHT"
                                 viewBinding.proOverlayView.updateNightAnalysis(
                                     avgLuma = nightInfo.avgLuma,
                                     darkRatio = nightInfo.darkPixelRatio,
                                     isLowLight = nightInfo.isLowLight,
                                     dwellProgress = nightInfo.dwellProgress,
-                                    recommendedFrames = nightInfo.recommendedFrameCount,
+                                    recommendedFrames = resolvedFrames,
                                     statusLabel = nightInfo.state.name
                                 )
                             }
@@ -2804,8 +2867,29 @@ class MainActivity : AppCompatActivity() {
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> v.animate().scaleX(1f).scaleY(1f).setDuration(90L).start()
             }
             if (cameraMode == CameraMode.PANORAMA) {
-                if (event.action == MotionEvent.ACTION_UP) {
-                    togglePanoramaCapture()
+                when (event.action) {
+                    MotionEvent.ACTION_DOWN -> {
+                        panoLongPressTriggered = false
+                        panoLongPressRunnable?.let { panoramaFallbackHandler.removeCallbacks(it) }
+                        if (isPanoramaCapturing && isPanoramaCloneMode) {
+                            panoLongPressRunnable = Runnable {
+                                if (isPanoramaCapturing && isPanoramaCloneMode) {
+                                    panoLongPressTriggered = true
+                                    window.decorView.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                                    finishPanoramaCapture()
+                                }
+                            }
+                            panoramaFallbackHandler.postDelayed(panoLongPressRunnable!!, 520L)
+                        }
+                    }
+                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                        panoLongPressRunnable?.let { panoramaFallbackHandler.removeCallbacks(it) }
+                        panoLongPressRunnable = null
+                        if (event.action == MotionEvent.ACTION_UP && !panoLongPressTriggered) {
+                            togglePanoramaCapture()
+                        }
+                        panoLongPressTriggered = false
+                    }
                 }
                 return@setOnTouchListener true
             }
@@ -2946,10 +3030,74 @@ class MainActivity : AppCompatActivity() {
         }, 200)
     }
 
+    private fun cyclePanoramaSweepDirection() {
+        val order = listOf(
+            PanoramaStitcher.SweepDirection.RIGHT,
+            PanoramaStitcher.SweepDirection.LEFT,
+            PanoramaStitcher.SweepDirection.UP,
+            PanoramaStitcher.SweepDirection.DOWN
+        )
+        val nextIdx = (order.indexOf(panoramaSweepDir) + 1) % order.size
+        setPanoramaSweepDirection(order[nextIdx])
+    }
+
+    private fun setPanoramaSweepDirection(dir: PanoramaStitcher.SweepDirection) {
+        panoramaSweepDir = dir
+        panoramaStitcher.desiredSweepDirection = dir
+        viewBinding.proOverlayView.panoramaSweepDir = dir.name
+        val label = when (dir) {
+            PanoramaStitcher.SweepDirection.RIGHT -> "Sweep Right →"
+            PanoramaStitcher.SweepDirection.LEFT -> "Sweep Left ←"
+            PanoramaStitcher.SweepDirection.UP -> "Vertical Sweep Up ↑"
+            PanoramaStitcher.SweepDirection.DOWN -> "Vertical Sweep Down ↓"
+        }
+        window.decorView.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+        showHudNotice("PANORAMA · $label")
+        refreshFloatingModeMenu()
+    }
+
+    private fun lockPanoramaAeAwb() {
+        try {
+            val factory = viewBinding.viewFinder.meteringPointFactory
+            val centerPt = factory.createPoint(
+                viewBinding.viewFinder.width * 0.5f,
+                viewBinding.viewFinder.height * 0.5f
+            )
+            val action = FocusMeteringAction.Builder(
+                centerPt,
+                FocusMeteringAction.FLAG_AE or FocusMeteringAction.FLAG_AWB
+            ).disableAutoCancel().build()
+            camera?.cameraControl?.startFocusAndMetering(action)
+            isPanoramaAeLocked = true
+            viewBinding.proOverlayView.panoramaAeLocked = true
+        } catch (_: Throwable) {
+            isPanoramaAeLocked = false
+            viewBinding.proOverlayView.panoramaAeLocked = false
+        }
+    }
+
+    private fun unlockPanoramaAeAwb() {
+        if (isPanoramaAeLocked) {
+            try {
+                camera?.cameraControl?.cancelFocusAndMetering()
+            } catch (_: Throwable) {}
+        }
+        isPanoramaAeLocked = false
+        viewBinding.proOverlayView.panoramaAeLocked = false
+    }
+
     private fun togglePanoramaCapture() {
         if (isPanoramaStitching) return
         if (!isPanoramaCapturing) {
             startPanoramaCapture()
+        } else if (isPanoramaCloneMode) {
+            val currentCount = synchronized(panoramaLock) { panoramaSlices.size }
+            if (currentCount >= 4) {
+                finishPanoramaCapture()
+            } else {
+                requestCloneSliceCapture = true
+                window.decorView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+            }
         } else {
             finishPanoramaCapture()
         }
@@ -2958,14 +3106,35 @@ class MainActivity : AppCompatActivity() {
     private fun startPanoramaCapture() {
         clearPanoramaSlices()
         panoramaStitcher.reset()
+        panoramaStitcher.desiredSweepDirection = panoramaSweepDir
+        panoramaStitcher.cloneModeEnabled = isPanoramaCloneMode
+        requestCloneSliceCapture = false
         isPanoramaCapturing = true
         panoramaStartYawDeg = latestUprightYawDeg
         panoramaStartPitchDeg = latestUprightPitchDeg
-        panoramaDirection = 0
+        panoramaDirection = when (panoramaSweepDir) {
+            PanoramaStitcher.SweepDirection.LEFT -> -1
+            PanoramaStitcher.SweepDirection.UP -> 2
+            PanoramaStitcher.SweepDirection.DOWN -> -2
+            else -> 1
+        }
 
+        lockPanoramaAeAwb()
+        viewBinding.proOverlayView.clearPanoramaPreviewStrip()
+        viewBinding.proOverlayView.panoramaSweepDir = panoramaSweepDir.name
+        viewBinding.proOverlayView.panoramaCloneMode = isPanoramaCloneMode
+        viewBinding.proOverlayView.panoramaTinyPlanetMode = isPanoramaTinyPlanetMode
         viewBinding.proOverlayView.isPanoramaCapturing = true
+
+        val initialGuidance = when {
+            isPanoramaCloneMode -> "CLONE_READY"
+            panoramaSweepDir == PanoramaStitcher.SweepDirection.LEFT -> "PAN_LEFT"
+            panoramaSweepDir == PanoramaStitcher.SweepDirection.UP -> "PAN_UP"
+            panoramaSweepDir == PanoramaStitcher.SweepDirection.DOWN -> "PAN_DOWN"
+            else -> "PAN_RIGHT"
+        }
         viewBinding.proOverlayView.updatePanoramaAnalysis(
-            guidance = "PAN_RIGHT",
+            guidance = initialGuidance,
             progress = 0f,
             overlapPct = 100,
             dxNorm = 0f,
@@ -2974,26 +3143,44 @@ class MainActivity : AppCompatActivity() {
             yawDeg = 0f,
             pitchDriftDeg = 0f,
             sliceCount = 0,
-            direction = 0
+            direction = panoramaDirection,
+            paceNorm = 0.22f
         )
         updateCaptureButtonVisual(isRecordingActive = true)
-        viewBinding.tvRecordingStatus.text = "AUTO PANO"
+        viewBinding.tvRecordingStatus.text = when {
+            isPanoramaCloneMode -> "CLONE PANO"
+            isPanoramaTinyPlanetMode -> "360° PLANET"
+            else -> "AUTO PANO"
+        }
         viewBinding.tvRecordingStatus.setTextColor(Color.parseColor("#FACC15"))
-        viewBinding.chronometer.text = "0/14 F · 100%"
+        viewBinding.chronometer.text = if (isPanoramaCloneMode) "POSE 0/4 · CLONE" else "0/14 F · AE LOCK"
         playCameraCue(ToneGenerator.TONE_PROP_BEEP2, 90)
-        showHudNotice("AUTO PANORAMA · FOLLOW ARROWS TO CAPTURE")
+        showHudNotice(
+            if (isPanoramaCloneMode) {
+                "CLONE PANO · AE LOCKED · TAP SHUTTER FOR EACH POSE"
+            } else {
+                "AUTO PANORAMA · AE LOCKED · FOLLOW DIRECTION ARROW"
+            }
+        )
+        refreshFloatingModeMenu()
     }
 
     private fun cancelPanoramaCapture() {
         isPanoramaCapturing = false
+        requestCloneSliceCapture = false
         panoramaFallbackRunnable?.let { panoramaFallbackHandler.removeCallbacks(it) }
         panoramaFallbackRunnable = null
+        panoLongPressRunnable?.let { panoramaFallbackHandler.removeCallbacks(it) }
+        panoLongPressRunnable = null
+        unlockPanoramaAeAwb()
         panoramaStitcher.reset()
+        viewBinding.proOverlayView.clearPanoramaPreviewStrip()
         viewBinding.proOverlayView.isPanoramaCapturing = false
-        viewBinding.proOverlayView.updatePanoramaAnalysis("READY", 0f, 100, 0f, 0f, 0f, 0f, 0f, 0, 0)
+        viewBinding.proOverlayView.updatePanoramaAnalysis("READY", 0f, 100, 0f, 0f, 0f, 0f, 0f, 0, 0, 0.22f)
         clearPanoramaSlices()
         if (cameraMode == CameraMode.PANORAMA) {
             updateCaptureButtonVisual(isRecordingActive = false)
+            refreshFloatingModeMenu()
         }
     }
 
@@ -3009,10 +3196,15 @@ class MainActivity : AppCompatActivity() {
     private fun finishPanoramaCapture() {
         if (!isPanoramaCapturing) return
         isPanoramaCapturing = false
+        requestCloneSliceCapture = false
         panoramaFallbackRunnable?.let { panoramaFallbackHandler.removeCallbacks(it) }
         panoramaFallbackRunnable = null
+        panoLongPressRunnable?.let { panoramaFallbackHandler.removeCallbacks(it) }
+        panoLongPressRunnable = null
+        unlockPanoramaAeAwb()
         viewBinding.proOverlayView.isPanoramaCapturing = false
         updateCaptureButtonVisual(isRecordingActive = false)
+        refreshFloatingModeMenu()
 
         val snapshot: List<PanoramaStitcher.PanoramaSlice>
         synchronized(panoramaLock) {
@@ -3020,21 +3212,38 @@ class MainActivity : AppCompatActivity() {
             panoramaSlices.clear()
         }
 
-        if (snapshot.isEmpty()) return
+        if (snapshot.isEmpty()) {
+            viewBinding.proOverlayView.clearPanoramaPreviewStrip()
+            return
+        }
         if (snapshot.size == 1) {
             Toast.makeText(this, "Pan slowly along arrows before stopping (saved anchor frame)", Toast.LENGTH_SHORT).show()
         }
 
+        val makeTinyPlanet = isPanoramaTinyPlanetMode
         isPanoramaStitching = true
-        viewBinding.tvRecordingStatus.text = "STITCH"
+        viewBinding.tvRecordingStatus.text = if (makeTinyPlanet) "PLANET" else "STITCH"
         viewBinding.tvRecordingStatus.setTextColor(Color.parseColor("#38BDF8"))
-        showHudNotice("ALIGNING & STITCHING ${snapshot.size} PANORAMA FRAMES...")
+        showHudNotice(
+            if (makeTinyPlanet) {
+                "RENDERING 360° TINY PLANET FROM ${snapshot.size} FRAMES..."
+            } else {
+                "ALIGNING, LEVELING & STITCHING ${snapshot.size} PANORAMA FRAMES..."
+            }
+        )
 
         cameraExecutor.execute {
             var stitched: Bitmap? = null
             try {
-                // Delegate pixel-strip alignment refinement & feather Canvas stitching to PanoramaStitcher
-                val cleanPano = panoramaStitcher.stitchSlices(snapshot) ?: return@execute
+                // Pixel-strip alignment, feathered Canvas stitch, and auto-horizon leveling
+                val rawPano = panoramaStitcher.stitchSlices(snapshot) ?: return@execute
+                val cleanPano = if (makeTinyPlanet) {
+                    val planetBmp = panoramaStitcher.renderTinyPlanet(rawPano, 1200)
+                    if (planetBmp != rawPano && !rawPano.isRecycled) rawPano.recycle()
+                    planetBmp
+                } else {
+                    rawPano
+                }
                 stitched = cleanPano
 
                 // Bake Watermark if active
@@ -3055,7 +3264,8 @@ class MainActivity : AppCompatActivity() {
                     )
                 }
 
-                val name = "PANO_" + SimpleDateFormat(FILENAME_FORMAT, Locale.US).format(System.currentTimeMillis())
+                val prefix = if (makeTinyPlanet) "PLANET_" else if (isPanoramaCloneMode) "CLONE_PANO_" else "PANO_"
+                val name = prefix + SimpleDateFormat(FILENAME_FORMAT, Locale.US).format(System.currentTimeMillis())
                 val cv = ContentValues().apply {
                     put(MediaStore.MediaColumns.DISPLAY_NAME, name)
                     put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
@@ -3073,11 +3283,14 @@ class MainActivity : AppCompatActivity() {
                     val outW = cleanPano.width
                     val outH = cleanPano.height
                     runOnUiThread {
-                        playCameraCue(ToneGenerator.TONE_PROP_BEEP2, 120)
-                        viewBinding.tvRecordingStatus.text = "PANO"
+                        playShutterClickSound()
+                        viewBinding.tvRecordingStatus.text = if (makeTinyPlanet) "PLANET" else "PANO"
                         viewBinding.tvRecordingStatus.setTextColor(Color.parseColor("#38BDF8"))
-                        viewBinding.chronometer.text = "AUTO-STITCH"
-                        showHudNotice("Saved Panorama (${outW}×${outH})")
+                        viewBinding.chronometer.text = if (makeTinyPlanet) "360° GLOBE" else "AUTO-LEVEL"
+                        showHudNotice(
+                            if (makeTinyPlanet) "Saved Tiny Planet (${outW}×${outH})"
+                            else "Saved Panorama (${outW}×${outH})"
+                        )
                         try {
                             viewBinding.ivGalleryThumbnail.setImageURI(null)
                             viewBinding.ivGalleryThumbnail.setImageURI(uri)
@@ -3097,8 +3310,9 @@ class MainActivity : AppCompatActivity() {
                 panoramaStitcher.reset()
                 isPanoramaStitching = false
                 runOnUiThread {
+                    viewBinding.proOverlayView.clearPanoramaPreviewStrip()
                     if (cameraMode == CameraMode.PANORAMA && !isPanoramaCapturing) {
-                        viewBinding.proOverlayView.updatePanoramaAnalysis("READY", 0f, 100, 0f, 0f, 0f, 0f, 0f, 0, 0)
+                        viewBinding.proOverlayView.updatePanoramaAnalysis("READY", 0f, 100, 0f, 0f, 0f, 0f, 0f, 0, 0, 0.22f)
                         viewBinding.tvRecordingStatus.text = "PANO"
                         viewBinding.tvRecordingStatus.setTextColor(Color.parseColor("#38BDF8"))
                         viewBinding.chronometer.text = "AUTO-STITCH"
@@ -3428,7 +3642,7 @@ class MainActivity : AppCompatActivity() {
         "macro_focus" -> "MACRO FOCUS"
         "tilt_shift" -> "TILT-SHIFT"
         "double_exposure" -> "DOUBLE EXPOSURE"
-        "panorama" -> "PANORAMA"
+        "panorama" -> "TINY PLANET"
         "film_grain" -> "35MM FILM GRAIN"
         "soft_halation" -> "SOFT HALATION"
         "vignette" -> "VIGNETTE"
@@ -6265,7 +6479,7 @@ class MainActivity : AppCompatActivity() {
             .start(ContextCompat.getMainExecutor(this)) { recordEvent ->
                 when (recordEvent) {
                     is VideoRecordEvent.Start -> {
-                        playCameraCue(ToneGenerator.TONE_PROP_BEEP2, 95)
+                        playRecordStartSound()
                         isRecordingPaused = false
                         updateCaptureButtonVisual(isRecordingActive = true)
                         viewBinding.recordingTimer.visibility = View.VISIBLE
@@ -6324,7 +6538,7 @@ class MainActivity : AppCompatActivity() {
                     }
 
                     is VideoRecordEvent.Finalize -> {
-                        playCameraCue(ToneGenerator.TONE_PROP_BEEP, 110)
+                        playRecordStopSound()
                         stopAutoLoopTicker()
                         isArHoldRecording = false
                         isArRecordingLocked = false
@@ -6399,14 +6613,23 @@ class MainActivity : AppCompatActivity() {
     private fun takePhoto(isBurst: Boolean = false) {
         if (!isBurst && (cameraMode == CameraMode.NIGHT || currentShootingEffect == "night_sight")) {
             if (!isNightStacking) {
+                val targetFrames = when (nightFramesMode) {
+                    "3" -> 3
+                    "5" -> 5
+                    "7" -> 7
+                    else -> nightExposureStacker.lastRecommendedFrameCount
+                }
                 startNightExposureStacking(
                     autoTriggered = false,
-                    targetFrameCount = nightExposureStacker.lastRecommendedFrameCount
+                    targetFrameCount = targetFrames
                 )
             }
             return
         }
         val imageCapture = imageCapture ?: return
+        if (!isBurst) {
+            playShutterClickSound()
+        }
 
         val name = SimpleDateFormat(FILENAME_FORMAT, Locale.US).format(System.currentTimeMillis())
         val needsPostProcess = cameraMode == CameraMode.NIGHT ||
@@ -6591,13 +6814,19 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * Captures a bracketed multi-frame exposure sequence (Night Mode) and fuses frames for low-light clarity.
+     * Captures a balanced bracketed multi-frame exposure sequence (Night Mode), tracks live hand steadiness
+     * with a shutter progress ring, and fuses with 2-stage alignment, highlight recovery & deep night sky dehaze.
      */
     private fun startNightExposureStacking(autoTriggered: Boolean, targetFrameCount: Int) {
         val cap = imageCapture ?: return
         if (isNightStacking || isPanoramaCapturing || isPanoramaStitching || recording != null) return
 
         isNightStacking = true
+        nightShutterProgress = 0.08f
+        nightLastYawDeg = latestUprightYawDeg
+        nightLastPitchDeg = latestUprightPitchDeg
+        val deepSky = (nightSkyTone == "natural")
+
         val exposureState = camera?.cameraInfo?.exposureState
         val savedEvIndex = exposureState?.exposureCompensationIndex ?: 0
         val evRange = exposureState?.exposureCompensationRange
@@ -6615,18 +6844,18 @@ class MainActivity : AppCompatActivity() {
             null
         }
 
-        viewBinding.proOverlayView.updateNightStackProgress(true, 1, totalFrames)
-        viewBinding.tvRecordingStatus.text = "STACK"
-        viewBinding.tvRecordingStatus.setTextColor(Color.parseColor("#A855F7"))
-        viewBinding.chronometer.text = "1/${totalFrames} F"
-        showHudNotice(
-            if (autoTriggered) {
-                "LOW LIGHT DETECTED · AUTO NIGHT STACK (${totalFrames} FRAMES)"
-            } else {
-                "NIGHT STACK · HOLD STEADY (${totalFrames} FRAMES)"
-            }
+        viewBinding.proOverlayView.updateNightStackProgress(
+            stacking = true,
+            currentFrame = 1,
+            totalFrames = totalFrames,
+            fusing = false,
+            steadyScore = 1f
         )
-        playCameraCue(ToneGenerator.TONE_PROP_BEEP2, 70)
+        updateCaptureButtonVisual(isRecordingActive = false)
+        viewBinding.tvRecordingStatus.text = "HOLD"
+        viewBinding.tvRecordingStatus.setTextColor(Color.parseColor("#34D399"))
+        viewBinding.chronometer.text = "1/${totalFrames} F"
+        playShutterClickSound()
 
         val capturedFrames = java.util.Collections.synchronizedList(ArrayList<Bitmap>())
 
@@ -6639,23 +6868,40 @@ class MainActivity : AppCompatActivity() {
             if (snapshot.isEmpty()) {
                 if (pipBitmapSnapshot != null && !pipBitmapSnapshot.isRecycled) pipBitmapSnapshot.recycle()
                 isNightStacking = false
+                nightShutterProgress = 0f
                 runOnUiThread {
-                    viewBinding.proOverlayView.updateNightStackProgress(false, 0, totalFrames)
+                    viewBinding.proOverlayView.updateNightStackProgress(false, 0, totalFrames, fusing = false)
+                    updateCaptureButtonVisual(isRecordingActive = false)
                     viewBinding.tvRecordingStatus.text = if (cameraMode == CameraMode.NIGHT) "NIGHT" else "READY"
                 }
                 return
             }
 
+            // Immediately transition to FUSING phase so user knows shooting is complete & HUD never jumps back
+            nightShutterProgress = 1f
             runOnUiThread {
+                viewBinding.proOverlayView.updateNightStackProgress(
+                    stacking = false,
+                    currentFrame = snapshot.size,
+                    totalFrames = snapshot.size,
+                    fusing = true,
+                    steadyScore = 1f
+                )
+                updateCaptureButtonVisual(isRecordingActive = false)
                 viewBinding.tvRecordingStatus.text = "FUSE"
+                viewBinding.tvRecordingStatus.setTextColor(Color.parseColor("#22D3EE"))
                 viewBinding.chronometer.text = "ALIGN ${snapshot.size}F"
-                showHudNotice("ALIGNING & FUSING ${snapshot.size} NIGHT FRAMES...")
             }
 
             cameraExecutor.execute {
                 var stackedBmp: Bitmap? = null
                 try {
-                    stackedBmp = nightExposureStacker.stackExposureFrames(snapshot, avgLumaHint)
+                    stackedBmp = nightExposureStacker.stackExposureFrames(
+                        frames = snapshot,
+                        avgLumaHint = avgLumaHint,
+                        bracketOffsets = bracketIndices,
+                        deepNightSky = deepSky
+                    )
                     val outBmp = stackedBmp ?: return@execute
 
                     val name = "NIGHT_" + SimpleDateFormat(FILENAME_FORMAT, Locale.US).format(System.currentTimeMillis())
@@ -6681,8 +6927,8 @@ class MainActivity : AppCompatActivity() {
                         lastCapturedMimeType = "image/jpeg"
 
                         runOnUiThread {
-                            playCameraCue(ToneGenerator.TONE_PROP_BEEP2, 110)
-                            showHudNotice("Saved Multi-Frame Night Stack (${snapshot.size} Exposures)")
+                            playShutterClickSound()
+                            showHudNotice("Saved Night Photo (${snapshot.size}F · ${if (deepSky) "Natural" else "Bright"})")
                             try {
                                 viewBinding.ivGalleryThumbnail.setImageURI(null)
                                 viewBinding.ivGalleryThumbnail.setImageURI(uri)
@@ -6702,8 +6948,10 @@ class MainActivity : AppCompatActivity() {
                     }
                     stackedBmp?.takeIf { !it.isRecycled }?.recycle()
                     isNightStacking = false
+                    nightShutterProgress = 0f
                     runOnUiThread {
-                        viewBinding.proOverlayView.updateNightStackProgress(false, 0, totalFrames)
+                        viewBinding.proOverlayView.updateNightStackProgress(false, 0, totalFrames, fusing = false)
+                        updateCaptureButtonVisual(isRecordingActive = false)
                         if (cameraMode == CameraMode.NIGHT) {
                             viewBinding.tvRecordingStatus.text = "NIGHT"
                             viewBinding.tvRecordingStatus.setTextColor(Color.parseColor("#818CF8"))
@@ -6727,11 +6975,26 @@ class MainActivity : AppCompatActivity() {
             if (exposureState?.isExposureCompensationSupported == true) {
                 cameraControl?.setExposureCompensationIndex(evIdx)
             }
+            val yawDelta = Math.abs(normalizeAngleDelta(nightLastYawDeg, latestUprightYawDeg))
+            val pitchDelta = Math.abs(latestUprightPitchDeg - nightLastPitchDeg)
+            val driftDeg = yawDelta + pitchDelta
+            val steadyScore = (1f - (driftDeg / 6.0f)).coerceIn(0.15f, 1.0f)
+            nightLastYawDeg = latestUprightYawDeg
+            nightLastPitchDeg = latestUprightPitchDeg
+            nightShutterProgress = ((stepIndex + 1).toFloat() / totalFrames.toFloat()).coerceIn(0.12f, 0.96f)
+
             runOnUiThread {
-                viewBinding.proOverlayView.updateNightStackProgress(true, stepIndex + 1, totalFrames)
+                viewBinding.proOverlayView.updateNightStackProgress(
+                    stacking = true,
+                    currentFrame = stepIndex + 1,
+                    totalFrames = totalFrames,
+                    fusing = false,
+                    steadyScore = steadyScore
+                )
+                updateCaptureButtonVisual(isRecordingActive = false)
                 viewBinding.chronometer.text = "${stepIndex + 1}/${totalFrames} F"
-                viewBinding.viewFinder.animate().alpha(0.55f).setDuration(45).withEndAction {
-                    viewBinding.viewFinder.animate().alpha(1.0f).setDuration(90).start()
+                viewBinding.viewFinder.animate().alpha(0.68f).setDuration(40).withEndAction {
+                    viewBinding.viewFinder.animate().alpha(1.0f).setDuration(80).start()
                 }.start()
             }
 
@@ -6751,7 +7014,10 @@ class MainActivity : AppCompatActivity() {
                             } finally {
                                 image.close()
                             }
-                            runOnUiThread { playCameraCue(ToneGenerator.TONE_PROP_BEEP, 28) }
+                            runOnUiThread {
+                                window.decorView.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                                playCameraCue(ToneGenerator.TONE_PROP_BEEP, 24)
+                            }
                             nightHandler.post { captureBracketStep(stepIndex + 1) }
                         }
 
@@ -6761,7 +7027,7 @@ class MainActivity : AppCompatActivity() {
                         }
                     }
                 )
-            }, if (stepIndex == 0) 40L else 105L)
+            }, if (stepIndex == 0) 40L else 110L)
         }
 
         captureBracketStep(0)
@@ -7110,10 +7376,17 @@ class MainActivity : AppCompatActivity() {
                     maskLayer.recycle()
                 }
                 "panorama" -> {
-                    val bandH = fh * 0.18f
-                    val barPaint = Paint().apply { color = Color.BLACK }
-                    canvas.drawRect(0f, 0f, fw, bandH, barPaint)
-                    canvas.drawRect(0f, fh - bandH, fw, fh, barPaint)
+                    // Creative Tiny Planet 360° Polar Globe Effect baked cleanly into Photo mode
+                    val planetSize = Math.min(fw, fh).toInt().coerceIn(480, 1180)
+                    val planetBmp = panoramaStitcher.renderTinyPlanet(finalBmp, planetSize)
+                    val bgPaint = Paint().apply { color = Color.parseColor("#020617") }
+                    canvas.drawRect(0f, 0f, fw, fh, bgPaint)
+                    val dstSize = Math.min(fw, fh) * 0.92f
+                    val dstLeft = (fw - dstSize) * 0.5f
+                    val dstTop = (fh - dstSize) * 0.5f
+                    val dstRect = RectF(dstLeft, dstTop, dstLeft + dstSize, dstTop + dstSize)
+                    canvas.drawBitmap(planetBmp, null, dstRect, Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
+                    if (!planetBmp.isRecycled) planetBmp.recycle()
                 }
                 "soft_halation" -> {
                     val haloPaint = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -7500,8 +7773,19 @@ class MainActivity : AppCompatActivity() {
                 // Outer stroke ring
                 paint.style = android.graphics.Paint.Style.STROKE
                 paint.strokeWidth = ringW
-                paint.color = ringColor
+                paint.color = if (mode == CameraMode.NIGHT && isNightStacking) Color.argb(80, 129, 140, 248) else ringColor
                 canvas.drawCircle(cx, cy, outerR - ringW * 0.5f, paint)
+
+                // Live circular progress arc around Moon shutter during Night Mode multi-frame capture/fusion
+                if (mode == CameraMode.NIGHT && isNightStacking && nightShutterProgress > 0.01f) {
+                    val arcR = outerR - ringW * 0.5f
+                    val arcRect = android.graphics.RectF(cx - arcR, cy - arcR, cx + arcR, cy + arcR)
+                    paint.style = android.graphics.Paint.Style.STROKE
+                    paint.strokeCap = android.graphics.Paint.Cap.ROUND
+                    paint.strokeWidth = ringW * 1.18f
+                    paint.color = if (nightShutterProgress >= 0.99f) Color.parseColor("#22D3EE") else Color.parseColor("#34D399")
+                    canvas.drawArc(arcRect, -90f, 360f * nightShutterProgress.coerceIn(0.06f, 1f), false, paint)
+                }
 
                 // Active recording / panorama sweep stop square
                 if (isRecordingActive) {
@@ -8349,6 +8633,10 @@ class MainActivity : AppCompatActivity() {
                     suppressNextTapFocus = false
                     return true
                 }
+                if (cameraMode == CameraMode.PANORAMA && !isPanoramaCapturing && viewBinding.proOverlayView.isPointInPanoramaRail(e.x, e.y)) {
+                    cyclePanoramaSweepDirection()
+                    return true
+                }
                 if (viewBinding.proOverlayView.currentGrid == ProOverlayView.GridType.GOLDEN_SPIRAL) {
                     val nextRot = (viewBinding.proOverlayView.spiralOrientation + 1) % 4
                     setSpiralOrientation(nextRot)
@@ -8636,11 +8924,68 @@ class MainActivity : AppCompatActivity() {
         return super.dispatchTouchEvent(ev)
     }
 
+    private fun ensureMediaActionSound(): MediaActionSound? {
+        if (mediaActionSound == null) {
+            try {
+                mediaActionSound = MediaActionSound().apply {
+                    load(MediaActionSound.SHUTTER_CLICK)
+                    load(MediaActionSound.START_VIDEO_RECORDING)
+                    load(MediaActionSound.STOP_VIDEO_RECORDING)
+                }
+            } catch (_: Throwable) {
+                mediaActionSound = null
+            }
+        }
+        return mediaActionSound
+    }
+
+    private fun playShutterClickSound() {
+        if (isAudioMuted) return
+        try {
+            val mas = ensureMediaActionSound()
+            if (mas != null) {
+                mas.play(MediaActionSound.SHUTTER_CLICK)
+            } else {
+                playCameraCue(ToneGenerator.TONE_PROP_BEEP, 45)
+            }
+        } catch (_: Throwable) {
+            playCameraCue(ToneGenerator.TONE_PROP_BEEP, 45)
+        }
+    }
+
+    private fun playRecordStartSound() {
+        if (isAudioMuted) return
+        try {
+            val mas = ensureMediaActionSound()
+            if (mas != null) {
+                mas.play(MediaActionSound.START_VIDEO_RECORDING)
+            } else {
+                playCameraCue(ToneGenerator.TONE_PROP_BEEP2, 110)
+            }
+        } catch (_: Throwable) {
+            playCameraCue(ToneGenerator.TONE_PROP_BEEP2, 110)
+        }
+    }
+
+    private fun playRecordStopSound() {
+        if (isAudioMuted) return
+        try {
+            val mas = ensureMediaActionSound()
+            if (mas != null) {
+                mas.play(MediaActionSound.STOP_VIDEO_RECORDING)
+            } else {
+                playCameraCue(ToneGenerator.TONE_PROP_BEEP, 130)
+            }
+        } catch (_: Throwable) {
+            playCameraCue(ToneGenerator.TONE_PROP_BEEP, 130)
+        }
+    }
+
     private fun playCameraCue(toneType: Int, durationMs: Int = 80) {
         if (isAudioMuted) return
         try {
             if (toneGenerator == null) {
-                toneGenerator = ToneGenerator(AudioManager.STREAM_SYSTEM, 65)
+                toneGenerator = ToneGenerator(AudioManager.STREAM_MUSIC, 68)
             }
             toneGenerator?.startTone(toneType, durationMs)
         } catch (_: Throwable) {
@@ -11255,13 +11600,148 @@ class MainActivity : AppCompatActivity() {
             }
         )
 
+        val panoDirSpec = FloatingMenuSpec(
+            id = "pano_dir",
+            label = "Dir",
+            glyph = when (panoramaSweepDir) {
+                PanoramaStitcher.SweepDirection.LEFT -> "←"
+                PanoramaStitcher.SweepDirection.UP -> "↑"
+                PanoramaStitcher.SweepDirection.DOWN -> "↓"
+                else -> "→"
+            },
+            badge = when (panoramaSweepDir) {
+                PanoramaStitcher.SweepDirection.LEFT -> "Left"
+                PanoramaStitcher.SweepDirection.UP -> "Up"
+                PanoramaStitcher.SweepDirection.DOWN -> "Down"
+                else -> "Right"
+            },
+            isModified = panoramaSweepDir != PanoramaStitcher.SweepDirection.RIGHT,
+            options = listOf(
+                "RIGHT" to "Right →",
+                "LEFT" to "Left ←",
+                "UP" to "Up ↑",
+                "DOWN" to "Down ↓"
+            ),
+            activeOptionId = panoramaSweepDir.name,
+            onOptionSelect = { id ->
+                val target = PanoramaStitcher.SweepDirection.values().firstOrNull { it.name == id }
+                    ?: PanoramaStitcher.SweepDirection.RIGHT
+                setPanoramaSweepDirection(target)
+            }
+        )
+        val panoCloneSpec = FloatingMenuSpec(
+            id = "pano_clone",
+            label = "Clone",
+            glyph = "✦",
+            badge = if (isPanoramaCloneMode) "On" else "Off",
+            isModified = isPanoramaCloneMode,
+            options = listOf("off" to "Standard", "on" to "Clone Pano"),
+            activeOptionId = if (isPanoramaCloneMode) "on" else "off",
+            onOptionSelect = { id ->
+                isPanoramaCloneMode = (id == "on")
+                panoramaStitcher.cloneModeEnabled = isPanoramaCloneMode
+                viewBinding.proOverlayView.panoramaCloneMode = isPanoramaCloneMode
+                showHudNotice(if (isPanoramaCloneMode) "CLONE PANO ON · Multi-Pose Stitch" else "CLONE PANO OFF")
+                refreshFloatingModeMenu()
+            }
+        )
+        val panoPlanetSpec = FloatingMenuSpec(
+            id = "pano_planet",
+            label = "Planet",
+            glyph = "◎",
+            badge = if (isPanoramaTinyPlanetMode) "360°" else "Wide",
+            isModified = isPanoramaTinyPlanetMode,
+            options = listOf("off" to "Wide", "on" to "Tiny Planet"),
+            activeOptionId = if (isPanoramaTinyPlanetMode) "on" else "off",
+            onOptionSelect = { id ->
+                isPanoramaTinyPlanetMode = (id == "on")
+                viewBinding.proOverlayView.panoramaTinyPlanetMode = isPanoramaTinyPlanetMode
+                showHudNotice(if (isPanoramaTinyPlanetMode) "TINY PLANET 360° OUTPUT ON" else "CLASSIC WIDE PANORAMA OUTPUT")
+                refreshFloatingModeMenu()
+            }
+        )
+        val panoFinishSpec = FloatingMenuSpec(
+            id = "pano_finish",
+            label = "Stitch",
+            glyph = "✓",
+            badge = "Done",
+            isModified = true,
+            isAction = true,
+            onAction = { finishPanoramaCapture() }
+        )
+
+        val nightFramesSpec = FloatingMenuSpec(
+            id = "night_frames",
+            label = "Frames",
+            glyph = "☾",
+            badge = when (nightFramesMode) {
+                "3" -> "3F"
+                "5" -> "5F"
+                "7" -> "7F"
+                else -> "Auto"
+            },
+            isModified = nightFramesMode != "auto",
+            options = listOf(
+                "auto" to "Auto",
+                "3" to "Fast 3F",
+                "5" to "Deep 5F",
+                "7" to "Astro 7F"
+            ),
+            activeOptionId = nightFramesMode,
+            onOptionSelect = { id ->
+                nightFramesMode = id
+                showHudNotice("NIGHT FRAMES · ${id.uppercase(Locale.US)}")
+                refreshFloatingModeMenu()
+            }
+        )
+        val nightSkySpec = FloatingMenuSpec(
+            id = "night_sky",
+            label = "Sky",
+            glyph = "✦",
+            badge = if (nightSkyTone == "natural") "Nat" else "Bright",
+            isModified = nightSkyTone != "natural",
+            options = listOf(
+                "natural" to "Natural Sky",
+                "bright" to "Bright Boost"
+            ),
+            activeOptionId = nightSkyTone,
+            onOptionSelect = { id ->
+                nightSkyTone = id
+                viewBinding.proOverlayView.nightSkyToneLabel = if (id == "natural") "NATURAL" else "BRIGHT"
+                showHudNotice(if (id == "natural") "NIGHT SKY · Deep Natural Blacks" else "NIGHT SKY · Maximum Shadow Boost")
+                refreshFloatingModeMenu()
+            }
+        )
+        val nightAutoSpec = FloatingMenuSpec(
+            id = "night_auto",
+            label = "Auto",
+            glyph = "◎",
+            badge = if (isAutoNightStackEnabled) "On" else "Man",
+            isModified = isAutoNightStackEnabled,
+            options = listOf(
+                "off" to "Manual",
+                "on" to "Auto-Shoot"
+            ),
+            activeOptionId = if (isAutoNightStackEnabled) "on" else "off",
+            onOptionSelect = { id ->
+                isAutoNightStackEnabled = (id == "on")
+                viewBinding.proOverlayView.nightAutoTriggerEnabled = isAutoNightStackEnabled
+                showHudNotice(if (isAutoNightStackEnabled) "AUTO NIGHT SHOOT ON" else "MANUAL SHUTTER NIGHT MODE")
+                refreshFloatingModeMenu()
+            }
+        )
+
         return when (cameraMode) {
             CameraMode.PHOTO -> listOf(timerSpec, ratioSpec, evSpec, filterSpec, gridSpec, proToolsSpec)
             CameraMode.PORTRAIT -> listOf(timerSpec, ratioSpec, evSpec, filterSpec, gridSpec)
-            CameraMode.NIGHT -> listOf(evSpec, timerSpec, filterSpec, gridSpec)
+            CameraMode.NIGHT -> listOf(nightFramesSpec, nightSkySpec, nightAutoSpec, evSpec, timerSpec, filterSpec, gridSpec)
             CameraMode.VIDEO -> listOf(ratioSpec, evSpec, micSpec, filterSpec, gridSpec, proToolsSpec)
             CameraMode.SLOW_MO -> listOf(evSpec, micSpec, filterSpec, gridSpec)
-            CameraMode.PANORAMA -> listOf(evSpec, gridSpec, filterSpec)
+            CameraMode.PANORAMA -> if (isPanoramaCapturing && isPanoramaCloneMode) {
+                listOf(panoFinishSpec, panoDirSpec, panoCloneSpec, panoPlanetSpec, evSpec, gridSpec)
+            } else {
+                listOf(panoDirSpec, panoCloneSpec, panoPlanetSpec, evSpec, gridSpec, filterSpec)
+            }
             CameraMode.AR_LENS -> emptyList()
         }
     }
@@ -11629,6 +12109,8 @@ class MainActivity : AppCompatActivity() {
         openGLProcessor?.release()
         comicSfxHelper?.release()
         try { toneGenerator?.release() } catch (_: Throwable) {}
+        try { mediaActionSound?.release() } catch (_: Throwable) {}
+        mediaActionSound = null
         sensorManager.unregisterListener(sensorEventListener)
         faceMeshHelper?.clear()
         handLandmarkerHelper?.clear()
