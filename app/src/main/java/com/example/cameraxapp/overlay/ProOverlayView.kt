@@ -3184,6 +3184,20 @@ class ProOverlayView @JvmOverloads constructor(
             } else {
                 "$modePrefix $dirGlyph · TAP BAR TO FLIP DIRECTION"
             }
+            if (isPanoramaCapturing && panoramaThumbStrip.isNotEmpty()) {
+                val textW = panoLabelPaint.measureText(statusLine)
+                val pillHalfW = (textW * 0.5f + dpToPx(8f)).coerceAtMost(stripW * 0.48f)
+                val pillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.parseColor("#A6020617")
+                    style = Paint.Style.FILL
+                }
+                canvas.drawRoundRect(
+                    RectF(w * 0.5f - pillHalfW, stripTop + dpToPx(5f), w * 0.5f + pillHalfW, stripBottom - dpToPx(5f)),
+                    dpToPx(6f),
+                    dpToPx(6f),
+                    pillPaint
+                )
+            }
             canvas.drawText(statusLine, w * 0.5f, stripTop + stripH * 0.62f, panoLabelPaint)
 
             // Compact Pace Speedometer + Roll Level + AE Lock Pill directly beneath the Top Strip

@@ -480,20 +480,43 @@ class MainActivity : AppCompatActivity() {
         override fun onSensorChanged(event: SensorEvent?) {
             if (event?.sensor?.type == Sensor.TYPE_ROTATION_VECTOR) {
                 SensorManager.getRotationMatrixFromVector(rotationMatrix, event.values)
-                // Remap device axes into camera-forward, screen-up upright coordinates for the CURRENT display rotation
-                // so roll == 0° and pitch == 0° when held level in Portrait, Landscape-Left, AND Landscape-Right!
-                val (axisX, axisY) = when (currentDisplayRotation) {
-                    Surface.ROTATION_90 -> SensorManager.AXIS_Y to SensorManager.AXIS_MINUS_Z
-                    Surface.ROTATION_180 -> SensorManager.AXIS_MINUS_X to SensorManager.AXIS_MINUS_Z
-                    Surface.ROTATION_270 -> SensorManager.AXIS_MINUS_Y to SensorManager.AXIS_MINUS_Z
-                    else -> SensorManager.AXIS_X to SensorManager.AXIS_MINUS_Z
-                }
-                SensorManager.remapCoordinateSystem(rotationMatrix, axisX, axisY, remappedMatrix)
-                SensorManager.getOrientation(remappedMatrix, uprightAngles)
+                // Row 2 of rotationMatrix is World Up (+Z) in raw device coordinates: (ux, uy, uz)
+                val ux = rotationMatrix[6]
+                val uy = rotationMatrix[7]
+                val uz = rotationMatrix[8]
 
-                val yawDeg = Math.toDegrees(uprightAngles[0].toDouble()).toFloat()
-                val pitchDeg = -Math.toDegrees(uprightAngles[1].toDouble()).toFloat()
-                val rollDeg = Math.toDegrees(uprightAngles[2].toDouble()).toFloat()
+                // Map World Up onto the CURRENT screen's (Right, Top) axes for exact 0° horizon roll
+                // across Portrait (0), Landscape-Left (90), Upside-Down (180), and Landscape-Right (270).
+                val screenRightUp: Float
+                val screenTopUp: Float
+                when (currentDisplayRotation) {
+                    Surface.ROTATION_90 -> {
+                        screenRightUp = -uy
+                        screenTopUp = ux
+                    }
+                    Surface.ROTATION_180 -> {
+                        screenRightUp = -ux
+                        screenTopUp = -uy
+                    }
+                    Surface.ROTATION_270 -> {
+                        screenRightUp = uy
+                        screenTopUp = -ux
+                    }
+                    else -> {
+                        screenRightUp = ux
+                        screenTopUp = uy
+                    }
+                }
+
+                val inPlaneMag = Math.hypot(screenRightUp.toDouble(), screenTopUp.toDouble())
+                val rollDeg = if (inPlaneMag >= 0.25) {
+                    Math.toDegrees(Math.atan2((-screenRightUp).toDouble(), screenTopUp.toDouble())).toFloat()
+                } else {
+                    0f
+                }
+                // Orientation-independent camera optical axis (-devZ) pitch & compass yaw:
+                val pitchDeg = Math.toDegrees(Math.asin((-uz).coerceIn(-1f, 1f).toDouble())).toFloat()
+                val yawDeg = Math.toDegrees(Math.atan2((-rotationMatrix[2]).toDouble(), (-rotationMatrix[5]).toDouble())).toFloat()
 
                 smoothRollDeg = smoothRollDeg * 0.78f + rollDeg * 0.22f
                 viewBinding.proOverlayView.tiltRollDegrees = smoothRollDeg
@@ -1036,6 +1059,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        currentDisplayRotation = readDisplayRotation()
         if (::ecoPowerManager.isInitialized) {
             ecoPowerManager.register()
         }
@@ -3267,13 +3291,11 @@ class MainActivity : AppCompatActivity() {
         viewBinding.tvRecordingStatus.setTextColor(Color.parseColor("#FACC15"))
         viewBinding.chronometer.text = if (isPanoramaCloneMode) "POSE 0/4 · CLONE" else "0/14 F · AE LOCK"
         playCameraCue(ToneGenerator.TONE_PROP_BEEP2, 90)
-        showHudNotice(
-            if (isPanoramaCloneMode) {
-                "CLONE PANO · AE LOCKED · TAP SHUTTER FOR EACH POSE"
-            } else {
-                "AUTO PANORAMA · AE LOCKED · FOLLOW DIRECTION ARROW"
-            }
-        )
+        if (isPanoramaCloneMode) {
+            showHudNotice("CLONE PANO · AE LOCKED · TAP SHUTTER FOR EACH POSE")
+        } else {
+            dismissHudNotice()
+        }
         refreshFloatingModeMenu()
     }
 
@@ -4698,6 +4720,17 @@ class MainActivity : AppCompatActivity() {
 
     private var hudNoticeRunnable: Runnable? = null
     private val hudNoticeHandler = Handler(Looper.getMainLooper())
+
+    private fun dismissHudNotice() {
+        runOnUiThread {
+            try {
+                hudNoticeRunnable?.let { hudNoticeHandler.removeCallbacks(it) }
+                hudNoticeRunnable = null
+                viewBinding.layoutHudNotice.animate().cancel()
+                viewBinding.layoutHudNotice.visibility = View.GONE
+            } catch (_: Exception) {}
+        }
+    }
 
     private fun showHudNotice(text: String, isWarning: Boolean = false) {
         runOnUiThread {
@@ -8083,6 +8116,9 @@ class MainActivity : AppCompatActivity() {
             setArLens("none", showNotice = false, syncFloatingMenu = false)
         }
         cameraMode = mode
+        if (prevMode != mode) {
+            dismissHudNotice()
+        }
         nightExposureStacker.clearDarkEpisodeLock()
         viewBinding.proOverlayView.isNightModeHudActive = (mode == CameraMode.NIGHT || currentShootingEffect == "night_sight")
         isLastActionCreative = false
@@ -8696,7 +8732,7 @@ class MainActivity : AppCompatActivity() {
                         if (lockAfAe) {
                             window.decorView.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
                             showHudNotice("AF/AE Locked • Tap anywhere to unlock")
-                        } else if (isAutoClear) {
+                        } else if (isAutoClear && cameraMode != CameraMode.PANORAMA) {
                             showHudNotice("Auto Blur Cleared • Sharp")
                         }
                     }
@@ -11263,7 +11299,8 @@ class MainActivity : AppCompatActivity() {
                             else -> {
                                 val customName = injectedCustomLenses.find { it.id == currentArLensName }?.name
                                 if (!customName.isNullOrBlank()) {
-                                    customName.split(" ").lastOrNull()?.take(7) ?: customName.take(7)
+                                    val words = customName.trim().split(' ').filter { it.isNotEmpty() && it.any { ch -> ch.isLetter() } }
+                                    (words.lastOrNull() ?: customName).take(7)
                                 } else {
                                     "Custom"
                                 }
@@ -11919,20 +11956,37 @@ class MainActivity : AppCompatActivity() {
         }
 
         // 2. Right Floating Arrow & Mode-Specific Vertical Bar
+        val isLandscape = (resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE)
         val specs = buildFloatingMenuSpecs()
         val showRightHandle = (!isAr || activeArFamily != "off") && specs.isNotEmpty()
         fm.floatingRightMenuWrapper.visibility = if (showRightHandle) View.VISIBLE else View.GONE
+        (fm.floatingRightMenuWrapper.layoutParams as? android.widget.FrameLayout.LayoutParams)?.let { lp ->
+            lp.gravity = if (isLandscape) (android.view.Gravity.END or android.view.Gravity.TOP) else (android.view.Gravity.END or android.view.Gravity.CENTER_VERTICAL)
+            lp.topMargin = ((if (isLandscape) 42 else 0) * dp).toInt()
+            lp.bottomMargin = ((if (isLandscape) (if (isAr) 54 else 8) else 0) * dp).toInt()
+            fm.floatingRightMenuWrapper.layoutParams = lp
+        }
+        (fm.scrollFloatingMenuItems.layoutParams as? android.widget.LinearLayout.LayoutParams)?.let { lp ->
+            lp.height = if (isLandscape) {
+                ((resources.displayMetrics.heightPixels * 0.44f).toInt()).coerceIn((130 * dp).toInt(), (215 * dp).toInt())
+            } else {
+                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+            }
+            fm.scrollFloatingMenuItems.layoutParams = lp
+        }
         fm.btnFloatingMenuArrow.text = if (isFloatingMenuOpen) "▶" else "◀"
         fm.scrollFloatingMenuItems.visibility = if (isFloatingMenuOpen && showRightHandle) View.VISIBLE else View.GONE
 
         fm.containerFloatingMenuItems.removeAllViews()
         if (isFloatingMenuOpen && showRightHandle) {
+            val vPad = ((if (isLandscape) 3 else 7) * dp).toInt()
+            val bMargin = ((if (isLandscape) 3 else 5) * dp).toInt()
             for (spec in specs) {
                 val isSelected = (activeFloatingSettingId == spec.id)
                 val itemBox = android.widget.LinearLayout(this).apply {
                     orientation = android.widget.LinearLayout.VERTICAL
                     gravity = android.view.Gravity.CENTER
-                    setPadding((4 * dp).toInt(), (7 * dp).toInt(), (4 * dp).toInt(), (7 * dp).toInt())
+                    setPadding((4 * dp).toInt(), vPad, (4 * dp).toInt(), vPad)
                     setBackgroundResource(
                         if (isSelected) R.drawable.bg_cinema_button_active else R.drawable.bg_cinema_button_inactive
                     )
@@ -11940,7 +11994,7 @@ class MainActivity : AppCompatActivity() {
                         android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
                         android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
                     ).apply {
-                        bottomMargin = (5 * dp).toInt()
+                        bottomMargin = bMargin
                     }
                     isClickable = true
                     isFocusable = true
@@ -11956,7 +12010,7 @@ class MainActivity : AppCompatActivity() {
                 val titleText = if (spec.glyph.isNotEmpty()) "${spec.glyph} ${spec.label}" else spec.label
                 val tvTitle = TextView(this).apply {
                     text = titleText
-                    textSize = 9.5f
+                    textSize = if (isLandscape) 8.5f else 9.5f
                     setTypeface(null, Typeface.BOLD)
                     gravity = android.view.Gravity.CENTER
                     setSingleLine(true)
@@ -11967,7 +12021,7 @@ class MainActivity : AppCompatActivity() {
                 if (spec.badge.isNotEmpty()) {
                     val tvBadge = TextView(this).apply {
                         text = spec.badge
-                        textSize = 8.5f
+                        textSize = if (isLandscape) 7.5f else 8.5f
                         typeface = Typeface.MONOSPACE
                         gravity = android.view.Gravity.CENTER
                         setSingleLine(true)
@@ -11996,7 +12050,7 @@ class MainActivity : AppCompatActivity() {
 
         val paramLp = fm.layoutFloatingParamBar.layoutParams as? android.widget.FrameLayout.LayoutParams
         if (paramLp != null) {
-            paramLp.bottomMargin = ((if (isAr) 64 else 12) * dp).toInt()
+            paramLp.bottomMargin = ((if (isAr) (if (isLandscape) 52 else 64) else (if (isLandscape) 6 else 12)) * dp).toInt()
             fm.layoutFloatingParamBar.layoutParams = paramLp
         }
 
