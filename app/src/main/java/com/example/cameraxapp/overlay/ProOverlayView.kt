@@ -303,6 +303,7 @@ class ProOverlayView @JvmOverloads constructor(
         }
     var panoramaAeLocked: Boolean = false
     var panoramaEdgeTargetProgress: Float = 0f
+    private var smoothedEdgeTargetProgress: Float = 0f
     var panoramaIsAlignedAndLevel: Boolean = false
     private val panoramaThumbStrip = mutableListOf<android.graphics.Bitmap>()
     private var panoramaLastEdgeBmp: android.graphics.Bitmap? = null
@@ -316,6 +317,7 @@ class ProOverlayView @JvmOverloads constructor(
         panoramaLastEdgeBmp?.takeIf { !it.isRecycled }?.recycle()
         panoramaLastEdgeBmp = null
         panoramaEdgeTargetProgress = 0f
+        smoothedEdgeTargetProgress = 0f
         panoramaIsAlignedAndLevel = false
         postInvalidate()
     }
@@ -2986,14 +2988,23 @@ class ProOverlayView @JvmOverloads constructor(
             canvas.drawCircle(targetX, targetY, ringRadius, targetRingFill)
             canvas.drawCircle(targetX, targetY, ringRadius, targetRingStroke)
 
-            // Live Moving Circle gliding toward the Edge Target Ring as user pans to the next angle
-            val progressToEdge = if (isPanoramaCapturing) {
-                panoramaEdgeTargetProgress.coerceIn(0f, 1.15f)
+            // Live Moving Circle gliding smoothly (60fps eased) toward the Edge Target Ring
+            val targetProgressToEdge = if (isPanoramaCapturing) {
+                panoramaEdgeTargetProgress.coerceIn(0f, 1.12f)
             } else {
                 // Standby gentle animated cue showing the pan direction into the edge circle
                 0.35f + (Math.sin(timeSec * 3.0).toFloat() * 0.22f + 0.22f)
             }
-            val travelDist = dpToPx(if (isLandscape) 66f else 78f)
+            smoothedEdgeTargetProgress = if (!isPanoramaCapturing) {
+                targetProgressToEdge
+            } else if (targetProgressToEdge < smoothedEdgeTargetProgress - 0.35f) {
+                // Crisp reset right after a slice snap!
+                targetProgressToEdge
+            } else {
+                smoothedEdgeTargetProgress + (targetProgressToEdge - smoothedEdgeTargetProgress) * 0.26f
+            }
+            val progressToEdge = smoothedEdgeTargetProgress
+            val travelDist = dpToPx(if (isLandscape) 64f else 78f)
             val crossOffsetPx = if (!isVert) {
                 ((panoramaPitchDriftDeg + (-panoramaAlignDy * 36f)) * dpToPx(2.0f)).coerceIn(-dpToPx(34f), dpToPx(34f))
             } else {
@@ -3073,12 +3084,11 @@ class ProOverlayView @JvmOverloads constructor(
             }
             canvas.drawPath(chevPath, dirChevPaint)
 
-            // 5C. Compact Upper Mini-Filmstrip Dock (Tucked near top so center viewfinder stays 100% open;
-            //     tappable in standby to cycle RIGHT -> LEFT -> UP -> DOWN!)
-            val stripW = (w * (if (isLandscape) 0.44f else 0.72f)).coerceAtMost(dpToPx(290f))
-            val stripH = dpToPx(if (isLandscape) 34f else 38f)
+            // 5C. Compact Upper Mini-Filmstrip Dock (Positioned cleanly BELOW top recording pill in both Portrait & Landscape!)
+            val stripW = (w * (if (isLandscape) 0.42f else 0.72f)).coerceAtMost(dpToPx(286f))
+            val stripH = dpToPx(if (isLandscape) 30f else 36f)
             val stripLeft = (w - stripW) * 0.5f
-            val stripTop = if (isLandscape) dpToPx(54f) else h * 0.135f
+            val stripTop = if (isLandscape) dpToPx(48f) else dpToPx(116f)
             val stripRight = stripLeft + stripW
             val stripBottom = stripTop + stripH
             lastPanoramaRailRect.set(

@@ -460,16 +460,43 @@ class MainActivity : AppCompatActivity() {
         return (((toDeg - fromDeg) + 540f) % 360f) - 180f
     }
 
+    @Volatile
+    private var currentDisplayRotation: Int = Surface.ROTATION_0
+
+    private fun readDisplayRotation(): Int {
+        return try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                display?.rotation ?: Surface.ROTATION_0
+            } else {
+                @Suppress("DEPRECATION")
+                windowManager.defaultDisplay.rotation
+            }
+        } catch (_: Throwable) {
+            Surface.ROTATION_0
+        }
+    }
+
     private val sensorEventListener = object : SensorEventListener {
         override fun onSensorChanged(event: SensorEvent?) {
             if (event?.sensor?.type == Sensor.TYPE_ROTATION_VECTOR) {
                 SensorManager.getRotationMatrixFromVector(rotationMatrix, event.values)
-                SensorManager.getOrientation(rotationMatrix, orientationAngles)
-                // roll: orientationAngles[2] in radians (-PI to PI)
-                val rollDeg = Math.toDegrees(orientationAngles[2].toDouble()).toFloat()
-                val pitchDeg = Math.toDegrees(orientationAngles[1].toDouble()).toFloat()
+                // Remap device axes into camera-forward, screen-up upright coordinates for the CURRENT display rotation
+                // so roll == 0° and pitch == 0° when held level in Portrait, Landscape-Left, AND Landscape-Right!
+                val (axisX, axisY) = when (currentDisplayRotation) {
+                    Surface.ROTATION_90 -> SensorManager.AXIS_Y to SensorManager.AXIS_MINUS_Z
+                    Surface.ROTATION_180 -> SensorManager.AXIS_MINUS_X to SensorManager.AXIS_MINUS_Z
+                    Surface.ROTATION_270 -> SensorManager.AXIS_MINUS_Y to SensorManager.AXIS_MINUS_Z
+                    else -> SensorManager.AXIS_X to SensorManager.AXIS_MINUS_Z
+                }
+                SensorManager.remapCoordinateSystem(rotationMatrix, axisX, axisY, remappedMatrix)
+                SensorManager.getOrientation(remappedMatrix, uprightAngles)
+
+                val yawDeg = Math.toDegrees(uprightAngles[0].toDouble()).toFloat()
+                val pitchDeg = -Math.toDegrees(uprightAngles[1].toDouble()).toFloat()
+                val rollDeg = Math.toDegrees(uprightAngles[2].toDouble()).toFloat()
+
                 smoothRollDeg = smoothRollDeg * 0.78f + rollDeg * 0.22f
-                viewBinding.proOverlayView.tiltRollDegrees = rollDeg
+                viewBinding.proOverlayView.tiltRollDegrees = smoothRollDeg
                 viewBinding.proOverlayView.tiltPitchDegrees = pitchDeg
                 val viewEisControlsRotation = (::gyroStabilizer.isInitialized && gyroStabilizer.isEnabled && cameraEffect == null)
                 if (currentShootingEffect == "action_stabilization") {
@@ -480,11 +507,8 @@ class MainActivity : AppCompatActivity() {
                     viewBinding.viewFinder.rotation = 0f
                 }
 
-                // Remap axes for upright handheld portrait sweep yaw & pitch (fused into ImageAnalysis Panorama tracking)
-                SensorManager.remapCoordinateSystem(rotationMatrix, SensorManager.AXIS_X, SensorManager.AXIS_Z, remappedMatrix)
-                SensorManager.getOrientation(remappedMatrix, uprightAngles)
-                latestUprightYawDeg = Math.toDegrees(uprightAngles[0].toDouble()).toFloat()
-                latestUprightPitchDeg = Math.toDegrees(uprightAngles[1].toDouble()).toFloat()
+                latestUprightYawDeg = yawDeg
+                latestUprightPitchDeg = pitchDeg
             }
         }
 
@@ -919,6 +943,7 @@ class MainActivity : AppCompatActivity() {
         isLastActionCreative = false
         viewBinding.modeScrollView.post { centerModeTab(cameraMode, smooth = false) }
         syncStylizeLoopState()
+        currentDisplayRotation = readDisplayRotation()
         applyOrientationLayout(resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE)
 
         if (allPermissionsGranted()) {
@@ -931,16 +956,8 @@ class MainActivity : AppCompatActivity() {
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         val isLandscape = (newConfig.orientation == Configuration.ORIENTATION_LANDSCAPE)
-        val displayRot = try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                display?.rotation ?: Surface.ROTATION_0
-            } else {
-                @Suppress("DEPRECATION")
-                windowManager.defaultDisplay.rotation
-            }
-        } catch (_: Throwable) {
-            Surface.ROTATION_0
-        }
+        val displayRot = readDisplayRotation()
+        currentDisplayRotation = displayRot
         try {
             imageCapture?.targetRotation = displayRot
             videoCapture?.targetRotation = displayRot
@@ -955,9 +972,9 @@ class MainActivity : AppCompatActivity() {
 
     private fun applyOrientationLayout(isLandscape: Boolean) {
         val dp = resources.displayMetrics.density
-        // Compact top bar margin & padding in Landscape so full 16:9 viewfinder stays unobstructed
+        // 1. Top Toolbar: compact top margin in Landscape
         (viewBinding.proModeBar.layoutParams as? androidx.constraintlayout.widget.ConstraintLayout.LayoutParams)?.let { lp ->
-            lp.topMargin = ((if (isLandscape) 8 else 28) * dp).toInt()
+            lp.topMargin = ((if (isLandscape) 6 else 28) * dp).toInt()
             viewBinding.proModeBar.layoutParams = lp
         }
         viewBinding.proModeBar.setPadding(
@@ -966,22 +983,51 @@ class MainActivity : AppCompatActivity() {
             ((if (isLandscape) 18 else 14) * dp).toInt(),
             ((if (isLandscape) 4 else 10) * dp).toInt()
         )
-        // Compact bottom shutter deck, mode carousel & zoom pill in Landscape so nothing clips off short heights
+        // 2. Top Status / Recording Pill: in Landscape align on the same top row between Flash & Eye buttons so it NEVER overlaps Panorama Filmstrip!
+        (viewBinding.recordingTimer.layoutParams as? androidx.constraintlayout.widget.ConstraintLayout.LayoutParams)?.let { lp ->
+            if (isLandscape) {
+                lp.topToBottom = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.UNSET
+                lp.topToTop = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID
+                lp.topMargin = (8 * dp).toInt()
+            } else {
+                lp.topToTop = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.UNSET
+                lp.topToBottom = viewBinding.proModeBar.id
+                lp.topMargin = (8 * dp).toInt()
+            }
+            viewBinding.recordingTimer.layoutParams = lp
+        }
+        // 3. Bottom Action Deck & Shutter: scale cleanly in Landscape so shutter ring never clips off the bottom edge!
         (viewBinding.bottomControls.layoutParams as? androidx.constraintlayout.widget.ConstraintLayout.LayoutParams)?.let { lp ->
-            lp.height = ((if (isLandscape) 74 else 100) * dp).toInt()
+            lp.height = ((if (isLandscape) 76 else 100) * dp).toInt()
             viewBinding.bottomControls.layoutParams = lp
         }
         viewBinding.bottomControls.setPadding(
-            ((if (isLandscape) 36 else 28) * dp).toInt(),
+            ((if (isLandscape) 42 else 28) * dp).toInt(),
             0,
-            ((if (isLandscape) 36 else 28) * dp).toInt(),
-            ((if (isLandscape) 6 else 16) * dp).toInt()
+            ((if (isLandscape) 42 else 28) * dp).toInt(),
+            ((if (isLandscape) 4 else 16) * dp).toInt()
         )
+        val shutterPx = ((if (isLandscape) 62 else 78) * dp).toInt()
+        (viewBinding.btnCapture.layoutParams as? androidx.constraintlayout.widget.ConstraintLayout.LayoutParams)?.let { lp ->
+            lp.width = shutterPx
+            lp.height = shutterPx
+            viewBinding.btnCapture.layoutParams = lp
+        }
+        val sideBtnPx = ((if (isLandscape) 44 else 54) * dp).toInt()
+        listOf(viewBinding.btnGallery, viewBinding.btnSwitchCamera, viewBinding.btnPauseResume).forEach { btn ->
+            (btn.layoutParams as? androidx.constraintlayout.widget.ConstraintLayout.LayoutParams)?.let { lp ->
+                lp.width = sideBtnPx
+                lp.height = sideBtnPx
+                btn.layoutParams = lp
+            }
+        }
+        // 4. Mode Carousel & Zoom Controls: sleek height in Landscape for maximum vertical viewfinder
         (viewBinding.modeScrollView.layoutParams as? androidx.constraintlayout.widget.ConstraintLayout.LayoutParams)?.let { lp ->
-            lp.height = ((if (isLandscape) 36 else 48) * dp).toInt()
+            lp.height = ((if (isLandscape) 34 else 48) * dp).toInt()
             viewBinding.modeScrollView.layoutParams = lp
         }
         (viewBinding.zoomControls.layoutParams as? androidx.constraintlayout.widget.ConstraintLayout.LayoutParams)?.let { lp ->
+            lp.height = ((if (isLandscape) 30 else 36) * dp).toInt()
             lp.bottomMargin = ((if (isLandscape) 4 else 12) * dp).toInt()
             viewBinding.zoomControls.layoutParams = lp
         }
@@ -8033,7 +8079,8 @@ class MainActivity : AppCompatActivity() {
             viewBinding.arLensModeDock.btnArBatch.setTextColor(Color.parseColor("#94A3B8"))
             viewBinding.arLensModeDock.root.visibility = View.GONE
             viewBinding.arCalibrationDrawer.visibility = View.GONE
-            setArLens("none", showNotice = false)
+            // Preserve activeArFamily when switching out of AR_LENS so returning restores the user's AR mode!
+            setArLens("none", showNotice = false, syncFloatingMenu = false)
         }
         cameraMode = mode
         nightExposureStacker.clearDarkEpisodeLock()
@@ -8069,6 +8116,10 @@ class MainActivity : AppCompatActivity() {
             viewBinding.tvRecordingStatus.setTextColor(Color.parseColor("#E879F9"))
             viewBinding.chronometer.text = "TAP PHOTO · HOLD 0.5S VID"
             viewBinding.chronometer.setTextColor(Color.parseColor("#F0ABFC"))
+            // Entering AR LENS from another mode wakes up Face AR if left on Off so swipe & lenses work immediately!
+            if (prevMode != CameraMode.AR_LENS && activeArFamily == "off") {
+                activeArFamily = "face"
+            }
             // Auto-open right floating settings menu ONLY in AR mode when an effect is active
             activeFloatingSettingId = null
             isFloatingMenuOpen = (activeArFamily != "off")
