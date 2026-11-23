@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.DashPathEffect
 import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Path
@@ -2879,7 +2880,7 @@ class ProOverlayView @JvmOverloads constructor(
         if (isPanoramaModeActive) {
             val isVert = (panoramaSweepDir == "UP" || panoramaSweepDir == "DOWN")
             val isLandscape = (w > h)
-            val rollDeg = rollAngleDegrees.coerceIn(-25f, 25f)
+            val rollDeg = tiltRollDegrees.coerceIn(-25f, 25f)
             val rollLevel = Math.abs(rollDeg) <= 2.2f
             val driftLevel = if (!isVert) {
                 Math.abs(panoramaPitchDriftDeg) <= 3.8f && Math.abs(panoramaAlignDy) <= 0.06f

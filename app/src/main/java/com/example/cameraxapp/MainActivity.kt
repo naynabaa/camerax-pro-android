@@ -109,6 +109,7 @@ import com.example.cameraxapp.audio.ComicSoundEffectsHelper
 import com.example.cameraxapp.font.CameraFontHelper
 import com.google.mediapipe.tasks.vision.facelandmarker.FaceLandmarkerResult
 import android.content.res.Configuration
+import android.view.Surface
 import android.provider.OpenableColumns
 import java.io.File
 import java.io.FileOutputStream
@@ -2287,7 +2288,7 @@ class MainActivity : AppCompatActivity() {
                                 isFrontFacing = isFront,
                                 gyroDeltaYawDeg = deltaYaw,
                                 gyroPitchDriftDeg = pitchDrift,
-                                rollDeg = viewBinding.proOverlayView.rollAngleDegrees
+                                rollDeg = viewBinding.proOverlayView.tiltRollDegrees
                             )
                             panoramaDirection = align.panDirection
 
