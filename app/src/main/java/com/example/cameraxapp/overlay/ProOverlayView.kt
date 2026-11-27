@@ -158,26 +158,67 @@ class ProOverlayView @JvmOverloads constructor(
             invalidate()
         }
 
-    // Audio Peak VU Meter (Decibel level monitoring -60dB to 0dB with clip indicator)
+    // Audio Peak VU Meter (Decibel level monitoring -48dB to 0dB with peak hold & clip indicator)
     var showAudioVuMeter: Boolean = false
         set(value) {
             field = value
             invalidate()
         }
-    var audioLevelDbLeft: Float = -24f
+    var audioLevelDbLeft: Float = -48f
         set(value) {
-            field = value
-            if (showAudioVuMeter) invalidate()
+            field = value.coerceIn(-48f, 0f)
+            if (showAudioVuMeter) postInvalidateOnAnimation()
         }
-    var audioLevelDbRight: Float = -26f
+    var audioLevelDbRight: Float = -48f
         set(value) {
-            field = value
-            if (showAudioVuMeter) invalidate()
+            field = value.coerceIn(-48f, 0f)
+            if (showAudioVuMeter) postInvalidateOnAnimation()
         }
     var isAudioClipping: Boolean = false
         set(value) {
             field = value
-            if (showAudioVuMeter) invalidate()
+            if (showAudioVuMeter) postInvalidateOnAnimation()
+        }
+    private var audioPeakHoldLeft: Float = -48f
+    private var audioPeakHoldRight: Float = -48f
+
+    fun updateAudioMeter(leftDb: Float, rightDb: Float, clipping: Boolean) {
+        val clampedL = leftDb.coerceIn(-48f, 0f)
+        val clampedR = rightDb.coerceIn(-48f, 0f)
+        // Fast attack, smooth ballistics decay
+        audioLevelDbLeft = if (clampedL > audioLevelDbLeft) {
+            audioLevelDbLeft * 0.25f + clampedL * 0.75f
+        } else {
+            audioLevelDbLeft * 0.72f + clampedL * 0.28f
+        }
+        audioLevelDbRight = if (clampedR > audioLevelDbRight) {
+            audioLevelDbRight * 0.25f + clampedR * 0.75f
+        } else {
+            audioLevelDbRight * 0.72f + clampedR * 0.28f
+        }
+        audioPeakHoldLeft = if (audioLevelDbLeft >= audioPeakHoldLeft) audioLevelDbLeft else (audioPeakHoldLeft - 0.65f).coerceAtLeast(audioLevelDbLeft)
+        audioPeakHoldRight = if (audioLevelDbRight >= audioPeakHoldRight) audioLevelDbRight else (audioPeakHoldRight - 0.65f).coerceAtLeast(audioLevelDbRight)
+        isAudioClipping = clipping || clampedL >= -1.5f || clampedR >= -1.5f
+        if (showAudioVuMeter && !isCleanScreen) {
+            postInvalidateOnAnimation()
+        }
+    }
+
+    var stylizedPreviewPausedReason: String? = null
+        set(value) {
+            if (field != value) {
+                field = value
+                postInvalidateOnAnimation()
+            }
+        }
+
+    var anamorphicDeSqueezeFactor: Float = 1.0f
+        set(value) {
+            val clamped = value.coerceIn(1.0f, 2.2f)
+            if (field != clamped) {
+                field = clamped
+                invalidate()
+            }
         }
 
     // Clean Screen Mode (1-Tap Dismiss All Graphs for Unobstructed Framing)
@@ -1223,6 +1264,39 @@ class ProOverlayView @JvmOverloads constructor(
         if (showWatermark) {
             drawWatermarkBanner(canvas, heightF)
         }
+
+        // 12. Draw Anamorphic De-Squeeze Badge & Letterbox Frame Guides when active
+        if (anamorphicDeSqueezeFactor > 1.01f) {
+            val activeH = heightF / anamorphicDeSqueezeFactor
+            val barH = ((heightF - activeH) * 0.5f).coerceAtLeast(0f)
+            if (barH > 2f) {
+                canvas.drawRect(0f, 0f, widthF, barH, cineMattePaint)
+                canvas.drawRect(0f, heightF - barH, widthF, heightF, cineMattePaint)
+            }
+        }
+
+        // 13. Draw Eco / Thermal Stylized Preview Pause Notice so users know the effect still bakes on capture
+        val pauseReason = stylizedPreviewPausedReason
+        if (!pauseReason.isNullOrBlank()) {
+            val noticePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.parseColor("#FEF08A")
+                textSize = dpToPx(10.5f)
+                isFakeBoldText = true
+                textAlign = Paint.Align.CENTER
+            }
+            val tw = noticePaint.measureText(pauseReason)
+            val padX = dpToPx(10f)
+            val padY = dpToPx(5f)
+            val topY = dpToPx(86f)
+            val pillRect = RectF(
+                widthF * 0.5f - tw * 0.5f - padX,
+                topY,
+                widthF * 0.5f + tw * 0.5f + padX,
+                topY + noticePaint.textSize + padY * 2f
+            )
+            canvas.drawRoundRect(pillRect, dpToPx(8f), dpToPx(8f), watermarkBgPaint)
+            canvas.drawText(pauseReason, widthF * 0.5f, pillRect.bottom - padY - dpToPx(1.5f), noticePaint)
+        }
     }
 
     private fun drawFocusPeaking(canvas: Canvas, w: Float, h: Float) {
@@ -1759,16 +1833,43 @@ class ProOverlayView @JvmOverloads constructor(
         val barRight2 = barLeft2 + barW
         canvas.drawRect(barLeft2, barTop, barRight2, barTop + barH, barBgPaint)
 
-        // Fill levels
+        // Fill levels with broadcast Green / Amber / Red zones + peak hold ticks
         val fillL = ((audioLevelDbLeft + 48f) / 48f).coerceIn(0f, 1f)
         val fillR = ((audioLevelDbRight + 48f) / 48f).coerceIn(0f, 1f)
+        val peakL = ((audioPeakHoldLeft + 48f) / 48f).coerceIn(0f, 1f)
+        val peakR = ((audioPeakHoldRight + 48f) / 48f).coerceIn(0f, 1f)
 
-        val levelPaint = Paint().apply {
-            color = Color.parseColor("#10B981")
+        val levelColorL = when {
+            audioLevelDbLeft >= -3f -> Color.parseColor("#EF4444")
+            audioLevelDbLeft >= -12f -> Color.parseColor("#F59E0B")
+            else -> Color.parseColor("#10B981")
+        }
+        val levelColorR = when {
+            audioLevelDbRight >= -3f -> Color.parseColor("#EF4444")
+            audioLevelDbRight >= -12f -> Color.parseColor("#F59E0B")
+            else -> Color.parseColor("#10B981")
+        }
+
+        val levelPaint = Paint().apply { style = Paint.Style.FILL }
+        levelPaint.color = levelColorL
+        canvas.drawRect(barLeft1, barTop + barH * (1f - fillL), barRight1, barTop + barH, levelPaint)
+        levelPaint.color = levelColorR
+        canvas.drawRect(barLeft2, barTop + barH * (1f - fillR), barRight2, barTop + barH, levelPaint)
+
+        // Peak hold marker lines
+        val peakPaint = Paint().apply {
+            color = Color.WHITE
             style = Paint.Style.FILL
         }
-        canvas.drawRect(barLeft1, barTop + barH * (1f - fillL), barRight1, barTop + barH, levelPaint)
-        canvas.drawRect(barLeft2, barTop + barH * (1f - fillR), barRight2, barTop + barH, levelPaint)
+        val tickH = dpToPx(2f)
+        if (peakL > 0.02f) {
+            val pyL = barTop + barH * (1f - peakL)
+            canvas.drawRect(barLeft1, pyL, barRight1, pyL + tickH, peakPaint)
+        }
+        if (peakR > 0.02f) {
+            val pyR = barTop + barH * (1f - peakR)
+            canvas.drawRect(barLeft2, pyR, barRight2, pyR + tickH, peakPaint)
+        }
     }
 
     // --- REAL-TIME LIVE COLOR FILTER GRADING OVER VIEW FINDER ---

@@ -11,6 +11,7 @@ import android.opengl.EGLSurface
 import android.opengl.GLES20
 import android.opengl.GLUtils
 import android.opengl.Matrix
+import android.util.Base64
 import android.util.Log
 import org.json.JSONArray
 import org.json.JSONObject
@@ -129,6 +130,9 @@ class GlbArModelEngine(private val appContext: Context) {
     private var gpuUploadNeeded: Boolean = false
     @Volatile
     private var isReleased: Boolean = false
+    @Volatile
+    var lastLoadError: String = ""
+        private set
 
     // EGL / GLES20 state (owned exclusively by glExecutor thread)
     private var eglDisplay: EGLDisplay = EGL14.EGL_NO_DISPLAY
@@ -143,36 +147,64 @@ class GlbArModelEngine(private val appContext: Context) {
 
     fun hasModelLoaded(): Boolean = loadedPrimitives.isNotEmpty()
 
+    fun validateFile(filePath: String): String? {
+        return try {
+            val file = File(filePath)
+            if (!file.exists() || !file.isFile) return "File not found"
+            val bytes = file.readBytes()
+            val prevErr = lastLoadError
+            lastLoadError = ""
+            val parsed = parseGlb(bytes)
+            val err = if (parsed.isEmpty()) lastLoadError.ifEmpty { "No readable 3D triangles found in .glb" } else null
+            if (err == null) lastLoadError = prevErr
+            err
+        } catch (t: Throwable) {
+            "Parse error: ${t.localizedMessage ?: t.javaClass.simpleName}"
+        }
+    }
+
     fun loadFromAsset(assetPath: String): Boolean {
+        lastLoadError = ""
         return try {
             val bytes = appContext.assets.open(assetPath).use { it.readBytes() }
             loadFromBytes(bytes)
         } catch (t: Throwable) {
+            lastLoadError = t.localizedMessage ?: "Asset read error"
             Log.e(TAG, "Failed to load GLB asset: $assetPath", t)
             false
         }
     }
 
     fun loadFromFile(filePath: String): Boolean {
+        lastLoadError = ""
         return try {
             val file = File(filePath)
-            if (!file.exists() || !file.isFile) return false
+            if (!file.exists() || !file.isFile) {
+                lastLoadError = "Model file missing on device"
+                return false
+            }
             val bytes = file.readBytes()
             loadFromBytes(bytes)
         } catch (t: Throwable) {
+            lastLoadError = t.localizedMessage ?: "File read error"
             Log.e(TAG, "Failed to load GLB file: $filePath", t)
             false
         }
     }
 
     fun loadFromBytes(bytes: ByteArray): Boolean {
+        lastLoadError = ""
         return try {
             val parsed = parseGlb(bytes)
-            if (parsed.isEmpty()) return false
+            if (parsed.isEmpty()) {
+                if (lastLoadError.isEmpty()) lastLoadError = "No valid 3D mesh triangles found"
+                return false
+            }
             loadedPrimitives = parsed
             gpuUploadNeeded = true
             true
         } catch (t: Throwable) {
+            lastLoadError = t.localizedMessage ?: t.javaClass.simpleName
             Log.e(TAG, "Failed to parse GLB binary payload", t)
             false
         }
@@ -565,48 +597,129 @@ class GlbArModelEngine(private val appContext: Context) {
     }
 
     // =========================================================================
-    // Pure Kotlin glTF 2.0 Binary (.glb) Parser
+    // Pure Kotlin glTF 2.0 Binary (.glb) Parser (Quantization, Strip/Fan, Downsampled Textures, Poly Cap)
     // =========================================================================
+    private fun decodeDownsampledBitmap(src: ByteArray, offset: Int, length: Int, maxDim: Int = 512): Bitmap? {
+        return try {
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeByteArray(src, offset, length, bounds)
+            val w = bounds.outWidth
+            val h = bounds.outHeight
+            if (w <= 0 || h <= 0) return null
+            var sample = 1
+            while ((w / sample) > maxDim || (h / sample) > maxDim) {
+                sample *= 2
+            }
+            val opts = BitmapFactory.Options().apply {
+                inSampleSize = sample
+                inPreferredConfig = Bitmap.Config.ARGB_8888
+            }
+            BitmapFactory.decodeByteArray(src, offset, length, opts)
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    private fun decodeDataUriBytes(uri: String): ByteArray? {
+        if (!uri.startsWith("data:")) return null
+        val comma = uri.indexOf(',')
+        if (comma < 0 || comma + 1 >= uri.length) return null
+        return try {
+            Base64.decode(uri.substring(comma + 1), Base64.DEFAULT)
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
     private fun parseGlb(bytes: ByteArray): List<ParsedPrimitive> {
-        if (bytes.size < 20) return emptyList()
+        if (bytes.size < 20) {
+            lastLoadError = "File too small to be a valid .glb"
+            return emptyList()
+        }
         val buf = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
         val magic = buf.int
         val version = buf.int
         val totalLen = buf.int
-        if (magic != 0x46546C67 || version != 2 || totalLen > bytes.size) return emptyList()
+        if (magic != 0x46546C67 || version != 2 || totalLen < 20) {
+            lastLoadError = "Not a valid glTF 2.0 binary (.glb)"
+            return emptyList()
+        }
 
         var jsonStr: String? = null
-        var binOffset = -1
+        var binBytes: ByteArray? = null
+        var binOffset = 0
         var binLength = 0
 
         var pos = 12
-        while (pos + 8 <= bytes.size) {
+        val limit = min(bytes.size, if (totalLen > 0) totalLen else bytes.size)
+        while (pos + 8 <= limit) {
             buf.position(pos)
             val chunkLen = buf.int
             val chunkType = buf.int
             val dataStart = pos + 8
-            if (chunkLen < 0 || dataStart + chunkLen > bytes.size) break
+            if (chunkLen < 0 || dataStart > bytes.size) break
+            val safeLen = min(chunkLen, bytes.size - dataStart)
             when (chunkType) {
-                0x4E4F534A -> jsonStr = String(bytes, dataStart, chunkLen, Charsets.UTF_8)
+                0x4E4F534A -> jsonStr = String(bytes, dataStart, safeLen, Charsets.UTF_8).trimEnd(0.toChar(), ' ')
                 0x004E4942 -> {
+                    binBytes = bytes
                     binOffset = dataStart
-                    binLength = chunkLen
+                    binLength = safeLen
                 }
             }
             pos = dataStart + chunkLen
         }
 
-        if (jsonStr == null || binOffset < 0) return emptyList()
+        if (jsonStr == null) {
+            lastLoadError = "Missing glTF JSON chunk"
+            return emptyList()
+        }
         val root = JSONObject(jsonStr)
-        val accessors = root.optJSONArray("accessors") ?: return emptyList()
-        val bufferViews = root.optJSONArray("bufferViews") ?: return emptyList()
-        val meshes = root.optJSONArray("meshes") ?: return emptyList()
+        val buffersArr = root.optJSONArray("buffers")
+        if (binBytes == null && buffersArr != null && buffersArr.length() > 0) {
+            val uri = buffersArr.optJSONObject(0)?.optString("uri", "") ?: ""
+            val decoded = decodeDataUriBytes(uri)
+            if (decoded != null) {
+                binBytes = decoded
+                binOffset = 0
+                binLength = decoded.size
+            }
+        }
+        if (binBytes == null) {
+            lastLoadError = "Missing binary mesh chunk (external .bin not bundled)"
+            return emptyList()
+        }
+        val binData = binBytes!!
+
+        val extUsed = root.optJSONArray("extensionsUsed")
+        var hasDracoExt = false
+        if (extUsed != null) {
+            for (ei in 0 until extUsed.length()) {
+                if (extUsed.optString(ei) == "KHR_draco_mesh_compression") {
+                    hasDracoExt = true
+                    break
+                }
+            }
+        }
+
+        val accessors = root.optJSONArray("accessors") ?: run {
+            lastLoadError = "GLB contains no geometry accessors"
+            return emptyList()
+        }
+        val bufferViews = root.optJSONArray("bufferViews") ?: run {
+            lastLoadError = "GLB contains no bufferViews"
+            return emptyList()
+        }
+        val meshes = root.optJSONArray("meshes") ?: run {
+            lastLoadError = "GLB contains no 3D meshes"
+            return emptyList()
+        }
         val nodes = root.optJSONArray("nodes") ?: JSONArray()
         val materials = root.optJSONArray("materials") ?: JSONArray()
         val textures = root.optJSONArray("textures") ?: JSONArray()
         val images = root.optJSONArray("images") ?: JSONArray()
 
-        // Decode embedded PNG/JPEG textures once per image index
+        // Decode embedded PNG/JPEG textures once per image index (downsampled <= 512px to avoid 4K OOM)
         val decodedImages = HashMap<Int, Bitmap>()
         for (i in 0 until images.length()) {
             val imgObj = images.optJSONObject(i) ?: continue
@@ -616,11 +729,20 @@ class GlbArModelEngine(private val appContext: Context) {
                 val off = binOffset + bv.optInt("byteOffset", 0)
                 val len = bv.optInt("byteLength", 0)
                 if (off >= binOffset && off + len <= binOffset + binLength && len > 0) {
-                    val bmp = BitmapFactory.decodeByteArray(bytes, off, len)
+                    val bmp = decodeDownsampledBitmap(binData, off, len, 512)
+                    if (bmp != null) decodedImages[i] = bmp
+                }
+            } else {
+                val imgUri = imgObj.optString("uri", "")
+                val imgBytes = decodeDataUriBytes(imgUri)
+                if (imgBytes != null && imgBytes.isNotEmpty()) {
+                    val bmp = decodeDownsampledBitmap(imgBytes, 0, imgBytes.size, 512)
                     if (bmp != null) decodedImages[i] = bmp
                 }
             }
         }
+
+        val bb = ByteBuffer.wrap(binData).order(ByteOrder.LITTLE_ENDIAN)
 
         fun readFloatAccessor(accIdx: Int, expectedComps: Int): FloatArray? {
             if (accIdx < 0 || accIdx >= accessors.length()) return null
@@ -629,17 +751,46 @@ class GlbArModelEngine(private val appContext: Context) {
             if (bvIdx < 0 || bvIdx >= bufferViews.length()) return null
             val bv = bufferViews.getJSONObject(bvIdx)
             val count = acc.optInt("count", 0)
+            if (count <= 0) return null
             val compType = acc.optInt("componentType", 5126)
-            if (compType != 5126 || count <= 0) return null
-            val stride = bv.optInt("byteStride", expectedComps * 4).coerceAtLeast(expectedComps * 4)
+            val normalized = acc.optBoolean("normalized", false)
+            val compSize = when (compType) {
+                5120, 5121 -> 1
+                5122, 5123 -> 2
+                5126 -> 4
+                else -> return null
+            }
+            val packedSize = expectedComps * compSize
+            val rawStride = bv.optInt("byteStride", 0)
+            val stride = if (rawStride > 0) max(rawStride, packedSize) else packedSize
             val base = binOffset + bv.optInt("byteOffset", 0) + acc.optInt("byteOffset", 0)
             val out = FloatArray(count * expectedComps)
-            val bb = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
             for (i in 0 until count) {
                 val elemOff = base + i * stride
-                if (elemOff + expectedComps * 4 > bytes.size) break
+                if (elemOff < 0 || elemOff + packedSize > binData.size) break
                 for (c in 0 until expectedComps) {
-                    out[i * expectedComps + c] = bb.getFloat(elemOff + c * 4)
+                    val p = elemOff + c * compSize
+                    val v = when (compType) {
+                        5126 -> bb.getFloat(p)
+                        5120 -> {
+                            val raw = bb.get(p).toFloat()
+                            if (normalized) max(raw / 127f, -1f) else raw
+                        }
+                        5121 -> {
+                            val raw = (bb.get(p).toInt() and 0xFF).toFloat()
+                            if (normalized) raw / 255f else raw
+                        }
+                        5122 -> {
+                            val raw = bb.getShort(p).toFloat()
+                            if (normalized) max(raw / 32767f, -1f) else raw
+                        }
+                        5123 -> {
+                            val raw = (bb.getShort(p).toInt() and 0xFFFF).toFloat()
+                            if (normalized) raw / 65535f else raw
+                        }
+                        else -> 0f
+                    }
+                    out[i * expectedComps + c] = if (v.isFinite()) v else 0f
                 }
             }
             return out
@@ -652,6 +803,7 @@ class GlbArModelEngine(private val appContext: Context) {
             if (bvIdx < 0 || bvIdx >= bufferViews.length()) return null
             val bv = bufferViews.getJSONObject(bvIdx)
             val count = acc.optInt("count", 0)
+            if (count <= 0) return null
             val compType = acc.optInt("componentType", 5123)
             val elemSize = when (compType) {
                 5121 -> 1
@@ -659,13 +811,13 @@ class GlbArModelEngine(private val appContext: Context) {
                 5125 -> 4
                 else -> return null
             }
-            val stride = bv.optInt("byteStride", elemSize).coerceAtLeast(elemSize)
+            val rawStride = bv.optInt("byteStride", 0)
+            val stride = if (rawStride > 0) max(rawStride, elemSize) else elemSize
             val base = binOffset + bv.optInt("byteOffset", 0) + acc.optInt("byteOffset", 0)
             val out = IntArray(count)
-            val bb = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
             for (i in 0 until count) {
                 val off = base + i * stride
-                if (off + elemSize > bytes.size) break
+                if (off < 0 || off + elemSize > binData.size) break
                 out[i] = when (compType) {
                     5121 -> bb.get(off).toInt() and 0xFF
                     5123 -> bb.getShort(off).toInt() and 0xFFFF
@@ -678,23 +830,78 @@ class GlbArModelEngine(private val appContext: Context) {
         val collected = ArrayList<ParsedPrimitive>()
         var minX = Float.POSITIVE_INFINITY; var minY = Float.POSITIVE_INFINITY; var minZ = Float.POSITIVE_INFINITY
         var maxX = Float.NEGATIVE_INFINITY; var maxY = Float.NEGATIVE_INFINITY; var maxZ = Float.NEGATIVE_INFINITY
+        var sawDracoPrimitive = false
+        var totalTrianglesSoFar = 0
+        val maxTotalTriangles = 45000
 
         fun appendMesh(meshIdx: Int, worldMat: FloatArray) {
             if (meshIdx < 0 || meshIdx >= meshes.length()) return
+            if (totalTrianglesSoFar >= maxTotalTriangles) return
             val mesh = meshes.getJSONObject(meshIdx)
             val prims = mesh.optJSONArray("primitives") ?: return
             for (pi in 0 until prims.length()) {
                 val prim = prims.getJSONObject(pi)
+                if (prim.optJSONObject("extensions")?.has("KHR_draco_mesh_compression") == true) {
+                    sawDracoPrimitive = true
+                }
                 val mode = prim.optInt("mode", 4)
-                if (mode != 4) continue // TRIANGLES only
+                if (mode != 4 && mode != 5 && mode != 6) continue // TRIANGLES, TRIANGLE_STRIP, TRIANGLE_FAN
                 val attrs = prim.optJSONObject("attributes") ?: continue
                 val rawPos = readFloatAccessor(attrs.optInt("POSITION", -1), 3) ?: continue
                 val rawNorm = readFloatAccessor(attrs.optInt("NORMAL", -1), 3)
                 val rawUv = readFloatAccessor(attrs.optInt("TEXCOORD_0", -1), 2)
-                val indices = if (prim.has("indices")) readIndexAccessor(prim.optInt("indices", -1)) else null
+                val rawIndices = if (prim.has("indices")) readIndexAccessor(prim.optInt("indices", -1)) else null
 
-                val vertCount = indices?.size ?: (rawPos.size / 3)
-                if (vertCount < 3) continue
+                val srcCount = rawIndices?.size ?: (rawPos.size / 3)
+                if (srcCount < 3) continue
+
+                // Expand TRIANGLES / TRIANGLE_STRIP / TRIANGLE_FAN into triangle index triples
+                val triIndices: IntArray = when (mode) {
+                    4 -> {
+                        val triCount = srcCount / 3
+                        val arr = IntArray(triCount * 3)
+                        for (i in 0 until triCount * 3) {
+                            arr[i] = if (rawIndices != null) rawIndices[i] else i
+                        }
+                        arr
+                    }
+                    5 -> {
+                        val triCount = (srcCount - 2).coerceAtLeast(0)
+                        val arr = IntArray(triCount * 3)
+                        for (t in 0 until triCount) {
+                            val i0 = if (rawIndices != null) rawIndices[t] else t
+                            val i1 = if (rawIndices != null) rawIndices[t + 1] else (t + 1)
+                            val i2 = if (rawIndices != null) rawIndices[t + 2] else (t + 2)
+                            if (t % 2 == 0) {
+                                arr[t * 3] = i0; arr[t * 3 + 1] = i1; arr[t * 3 + 2] = i2
+                            } else {
+                                arr[t * 3] = i1; arr[t * 3 + 1] = i0; arr[t * 3 + 2] = i2
+                            }
+                        }
+                        arr
+                    }
+                    else -> {
+                        val triCount = (srcCount - 2).coerceAtLeast(0)
+                        val arr = IntArray(triCount * 3)
+                        val rootIdx = if (rawIndices != null) rawIndices[0] else 0
+                        for (t in 0 until triCount) {
+                            arr[t * 3] = rootIdx
+                            arr[t * 3 + 1] = if (rawIndices != null) rawIndices[t + 1] else (t + 1)
+                            arr[t * 3 + 2] = if (rawIndices != null) rawIndices[t + 2] else (t + 2)
+                        }
+                        arr
+                    }
+                }
+
+                val availTris = triIndices.size / 3
+                if (availTris <= 0) continue
+                val remainingBudget = (maxTotalTriangles - totalTrianglesSoFar).coerceAtLeast(0)
+                if (remainingBudget <= 0) break
+                // Stride-decimate ultra-high-poly meshes smoothly so Sketchfab models never OOM
+                val triStep = if (availTris > remainingBudget) max(1, (availTris + remainingBudget - 1) / remainingBudget) else 1
+                val keptTris = min(remainingBudget, (availTris + triStep - 1) / triStep)
+                val vertCount = keptTris * 3
+                totalTrianglesSoFar += keptTris
 
                 val outPos = FloatArray(vertCount * 3)
                 val outNorm = FloatArray(vertCount * 3)
@@ -705,35 +912,45 @@ class GlbArModelEngine(private val appContext: Context) {
                 val inN = FloatArray(4)
                 val outN = FloatArray(4)
 
-                for (i in 0 until vertCount) {
-                    val vi = if (indices != null) indices[i] else i
-                    if (vi * 3 + 2 >= rawPos.size) continue
-                    inV[0] = rawPos[vi * 3]
-                    inV[1] = rawPos[vi * 3 + 1]
-                    inV[2] = rawPos[vi * 3 + 2]
-                    inV[3] = 1f
-                    Matrix.multiplyMV(outV, 0, worldMat, 0, inV, 0)
-                    outPos[i * 3] = outV[0]
-                    outPos[i * 3 + 1] = outV[1]
-                    outPos[i * 3 + 2] = outV[2]
-                    minX = min(minX, outV[0]); minY = min(minY, outV[1]); minZ = min(minZ, outV[2])
-                    maxX = max(maxX, outV[0]); maxY = max(maxY, outV[1]); maxZ = max(maxZ, outV[2])
+                var outI = 0
+                var srcTri = 0
+                while (srcTri < availTris && outI + 2 < vertCount) {
+                    for (k in 0..2) {
+                        val vi = triIndices[srcTri * 3 + k]
+                        if (vi >= 0 && vi * 3 + 2 < rawPos.size) {
+                            inV[0] = rawPos[vi * 3]
+                            inV[1] = rawPos[vi * 3 + 1]
+                            inV[2] = rawPos[vi * 3 + 2]
+                            inV[3] = 1f
+                            Matrix.multiplyMV(outV, 0, worldMat, 0, inV, 0)
+                            val vx = if (outV[0].isFinite()) outV[0] else 0f
+                            val vy = if (outV[1].isFinite()) outV[1] else 0f
+                            val vz = if (outV[2].isFinite()) outV[2] else 0f
+                            outPos[outI * 3] = vx
+                            outPos[outI * 3 + 1] = vy
+                            outPos[outI * 3 + 2] = vz
+                            minX = min(minX, vx); minY = min(minY, vy); minZ = min(minZ, vz)
+                            maxX = max(maxX, vx); maxY = max(maxY, vy); maxZ = max(maxZ, vz)
 
-                    if (rawNorm != null && vi * 3 + 2 < rawNorm.size) {
-                        inN[0] = rawNorm[vi * 3]
-                        inN[1] = rawNorm[vi * 3 + 1]
-                        inN[2] = rawNorm[vi * 3 + 2]
-                        inN[3] = 0f
-                        Matrix.multiplyMV(outN, 0, worldMat, 0, inN, 0)
-                        val len = sqrt(outN[0] * outN[0] + outN[1] * outN[1] + outN[2] * outN[2]).coerceAtLeast(1e-5f)
-                        outNorm[i * 3] = outN[0] / len
-                        outNorm[i * 3 + 1] = outN[1] / len
-                        outNorm[i * 3 + 2] = outN[2] / len
+                            if (rawNorm != null && vi * 3 + 2 < rawNorm.size) {
+                                inN[0] = rawNorm[vi * 3]
+                                inN[1] = rawNorm[vi * 3 + 1]
+                                inN[2] = rawNorm[vi * 3 + 2]
+                                inN[3] = 0f
+                                Matrix.multiplyMV(outN, 0, worldMat, 0, inN, 0)
+                                val len = sqrt(outN[0] * outN[0] + outN[1] * outN[1] + outN[2] * outN[2]).coerceAtLeast(1e-5f)
+                                outNorm[outI * 3] = outN[0] / len
+                                outNorm[outI * 3 + 1] = outN[1] / len
+                                outNorm[outI * 3 + 2] = outN[2] / len
+                            }
+                            if (rawUv != null && vi * 2 + 1 < rawUv.size) {
+                                outUv[outI * 2] = rawUv[vi * 2]
+                                outUv[outI * 2 + 1] = rawUv[vi * 2 + 1]
+                            }
+                        }
+                        outI++
                     }
-                    if (rawUv != null && vi * 2 + 1 < rawUv.size) {
-                        outUv[i * 2] = rawUv[vi * 2]
-                        outUv[i * 2 + 1] = rawUv[vi * 2 + 1]
-                    }
+                    srcTri += triStep
                 }
 
                 // Auto-compute flat triangle normals if model omitted NORMAL attribute
@@ -873,9 +1090,19 @@ class GlbArModelEngine(private val appContext: Context) {
         if (collected.isEmpty()) {
             for (mi in 0 until meshes.length()) appendMesh(mi, identity)
         }
-        if (collected.isEmpty()) return emptyList()
+        if (collected.isEmpty()) {
+            lastLoadError = if (hasDracoExt || sawDracoPrimitive) {
+                "Draco-compressed GLB — re-export uncompressed (disable Draco in Blender / gltf.report)"
+            } else {
+                "GLB has no readable triangle geometry"
+            }
+            return emptyList()
+        }
 
         // Normalize all primitives to centered unit 1.0 bounding box
+        if (!minX.isFinite() || !maxX.isFinite()) {
+            minX = -0.5f; maxX = 0.5f; minY = -0.5f; maxY = 0.5f; minZ = -0.5f; maxZ = 0.5f
+        }
         val cx = (minX + maxX) * 0.5f
         val cy = (minY + maxY) * 0.5f
         val cz = (minZ + maxZ) * 0.5f

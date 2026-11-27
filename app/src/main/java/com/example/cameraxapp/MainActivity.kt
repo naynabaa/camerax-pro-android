@@ -55,9 +55,17 @@ import android.widget.LinearLayout
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
+import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CameraManager
+import android.hardware.camera2.CaptureRequest
+import android.util.Range
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.annotation.OptIn
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.camera.camera2.interop.Camera2Interop
+import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraControl
 import androidx.camera.core.CameraSelector
@@ -109,6 +117,9 @@ import com.example.cameraxapp.audio.ComicSoundEffectsHelper
 import com.example.cameraxapp.font.CameraFontHelper
 import com.google.mediapipe.tasks.vision.facelandmarker.FaceLandmarkerResult
 import android.content.res.Configuration
+import android.media.AudioFormat
+import android.media.AudioRecord
+import android.media.MediaRecorder
 import android.view.Surface
 import android.provider.OpenableColumns
 import java.io.File
@@ -156,6 +167,9 @@ class MainActivity : AppCompatActivity() {
     private var cameraProvider: ProcessCameraProvider? = null
     private var extensionsManager: ExtensionsManager? = null
     private var isNightExtensionActive: Boolean = false
+    private var isPortraitExtensionActive: Boolean = false
+    private var isArImageCaptureBound: Boolean = true
+    private var activeSlowMoFpsLabel: String = "60FPS"
     private var preNightExposureIndex: Int = 0
     private var hasSavedPreNightExposure: Boolean = false
 
@@ -293,7 +307,18 @@ class MainActivity : AppCompatActivity() {
     private var comicHalftoneDotSize: Float = 1.0f
     private var comicLabelDepth: Float = 1.0f
 
-    // AR Calibration & Comic Studio State
+    // AR Calibration & Comic Studio State (isolated per AR lens / GLB ID)
+    private data class ArLensTransform(
+        val offsetX: Float = 0f,
+        val offsetY: Float = 0f,
+        val scale: Float = 1.0f,
+        val rotDeg: Float = 0f,
+        val eyeSpace: Float = 1.0f,
+        val forehead: Float = 0f,
+        val chin: Float = 0f
+    )
+    private val perLensTransforms = HashMap<String, ArLensTransform>()
+    private var activeTransformKey: String = ""
     private var calibOffsetX: Float = 0f
     private var calibOffsetY: Float = 0f
     private var calibScale: Float = 1.0f
@@ -302,6 +327,14 @@ class MainActivity : AppCompatActivity() {
     private var calibForehead: Float = 0f
     private var calibChin: Float = 0f
     private var calibDebug: Boolean = false
+
+    // Per-Category Active 3D GLB Selection & Import Target
+    private var pendingGlbImportCategory: String = "face"
+    private var activeHandGlbId: String = ""
+    private var activeBodyGlbId: String = ""
+    private var activeWorldGlbId: String = ""
+    private var activeSnapGlbId: String = ""
+    private var activeBeautyGlbId: String = ""
 
     private data class ComicPalettePreset(
         val id: String,
@@ -355,7 +388,8 @@ class MainActivity : AppCompatActivity() {
         val modelRotationY: Float = 0f,
         val modelRotationX: Float = 0f,
         val autoSpin: Boolean = true,
-        val telemetryText: String = ""
+        val telemetryText: String = "",
+        val category: String = "face"
     )
     private val injectedCustomLenses = mutableListOf<CustomLensDef>(
         CustomLensDef("lens_neon_cat_ears", "Neon Feline Ears", "forehead", "cat_ears", "#ec4899", "#38bdf8", "", "", 1f, 0f, 0f, 0f, true, "NEKO.SYS // V2.0"),
@@ -523,11 +557,24 @@ class MainActivity : AppCompatActivity() {
                 viewBinding.proOverlayView.tiltPitchDegrees = pitchDeg
                 val viewEisControlsRotation = (::gyroStabilizer.isInitialized && gyroStabilizer.isEnabled && cameraEffect == null)
                 if (currentShootingEffect == "action_stabilization") {
-                    viewBinding.viewFinder.rotation = -smoothRollDeg.coerceIn(-45f, 45f)
+                    openGLProcessor?.setHorizonLockRoll(smoothRollDeg)
+                    if (!isPreviewCameraEffectActive) {
+                        viewBinding.viewFinder.rotation = -smoothRollDeg.coerceIn(-45f, 45f)
+                    } else if (viewBinding.viewFinder.rotation != 0f) {
+                        viewBinding.viewFinder.rotation = 0f
+                    }
                 } else if (currentShootingEffect == "hyperlapse") {
-                    viewBinding.viewFinder.rotation = -(smoothRollDeg * 0.45f).coerceIn(-18f, 18f)
-                } else if (!viewEisControlsRotation && viewBinding.viewFinder.rotation != 0f) {
-                    viewBinding.viewFinder.rotation = 0f
+                    openGLProcessor?.setHorizonLockRoll(smoothRollDeg)
+                    if (!isPreviewCameraEffectActive) {
+                        viewBinding.viewFinder.rotation = -(smoothRollDeg * 0.45f).coerceIn(-18f, 18f)
+                    } else if (viewBinding.viewFinder.rotation != 0f) {
+                        viewBinding.viewFinder.rotation = 0f
+                    }
+                } else {
+                    openGLProcessor?.setHorizonLockRoll(0f)
+                    if (!viewEisControlsRotation && viewBinding.viewFinder.rotation != 0f) {
+                        viewBinding.viewFinder.rotation = 0f
+                    }
                 }
 
                 latestUprightYawDeg = yawDeg
@@ -546,6 +593,11 @@ class MainActivity : AppCompatActivity() {
     @Volatile
     private var isStylizingFrame = false
     private var isStylizeLoopScheduled = false
+    @Volatile
+    private var audioMeterRunning = false
+    private var audioMeterThread: Thread? = null
+    private var lastVideoOverlayRefreshMs: Long = 0L
+    private var videoExportOverlayBmp: Bitmap? = null
     private fun shouldRunCpuStylizeLoop(): Boolean {
         val disableHeavyStylize = (::ecoPowerManager.isInitialized && ecoPowerManager.isHeavyMetersDisabled) ||
             (::thermalGuardManager.isInitialized && thermalGuardManager.shouldReduceComplexity)
@@ -557,6 +609,13 @@ class MainActivity : AppCompatActivity() {
     }
     private fun syncStylizeLoopState() {
         val needed = shouldRunCpuStylizeLoop()
+        val hasStylizedActive = (isStylizedLiveEffect(currentShootingEffect) || isComicFilterPreset(currentFilterName))
+        val throttledOut = hasStylizedActive && !isPreviewCameraEffectActive && !needed && !isFinishing && !isDestroyed
+        viewBinding.proOverlayView.stylizedPreviewPausedReason = if (throttledOut) {
+            "ECO / THERMAL: EFFECT APPLIES ON CAPTURE"
+        } else {
+            null
+        }
         if (needed && !isStylizeLoopScheduled) {
             isStylizeLoopScheduled = true
             stylizeHandler.postDelayed(stylizeRunnable, 80L)
@@ -698,6 +757,7 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         viewBinding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(viewBinding.root)
+        setupBackPressHandling()
 
         cameraExecutor = Executors.newSingleThreadExecutor()
         stylizeExecutor = Executors.newSingleThreadExecutor()
@@ -1074,10 +1134,14 @@ class MainActivity : AppCompatActivity() {
         }
         syncWorldArLifecycleAndPower()
         syncStylizeLoopState()
+        if (viewBinding.proOverlayView.showAudioVuMeter && recording == null) {
+            startStandbyAudioMeter()
+        }
     }
 
     override fun onPause() {
         super.onPause()
+        stopStandbyAudioMeter()
         stylizeHandler.removeCallbacks(stylizeRunnable)
         isStylizeLoopScheduled = false
         if (::ecoPowerManager.isInitialized) {
@@ -1091,6 +1155,77 @@ class MainActivity : AppCompatActivity() {
         }
         worldArTracker?.stop()
         sensorManager.unregisterListener(sensorEventListener)
+    }
+
+    private fun startStandbyAudioMeter() {
+        if (audioMeterRunning || recording != null || !viewBinding.proOverlayView.showAudioVuMeter) return
+        if (PermissionChecker.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PermissionChecker.PERMISSION_GRANTED) {
+            return
+        }
+        audioMeterRunning = true
+        audioMeterThread = Thread({
+            var recorder: AudioRecord? = null
+            try {
+                val sampleRate = 8000
+                val minBuf = AudioRecord.getMinBufferSize(
+                    sampleRate,
+                    AudioFormat.CHANNEL_IN_MONO,
+                    AudioFormat.ENCODING_PCM_16BIT
+                ).coerceAtLeast(1024)
+                recorder = AudioRecord(
+                    MediaRecorder.AudioSource.MIC,
+                    sampleRate,
+                    AudioFormat.CHANNEL_IN_MONO,
+                    AudioFormat.ENCODING_PCM_16BIT,
+                    minBuf
+                )
+                if (recorder.state != AudioRecord.STATE_INITIALIZED) {
+                    return@Thread
+                }
+                val buf = ShortArray(512)
+                recorder.startRecording()
+                while (audioMeterRunning && !Thread.currentThread().isInterrupted) {
+                    val read = recorder.read(buf, 0, buf.size)
+                    if (read > 0) {
+                        if (isAudioMuted) {
+                            runOnUiThread { viewBinding.proOverlayView.updateAudioMeter(-48f, -48f, false) }
+                        } else {
+                            var sumSq = 0.0
+                            var peak = 0
+                            for (i in 0 until read) {
+                                val v = buf[i].toInt()
+                                val av = Math.abs(v)
+                                if (av > peak) peak = av
+                                sumSq += v.toDouble() * v.toDouble()
+                            }
+                            val rms = Math.sqrt(sumSq / read.toDouble()) / 32768.0
+                            val dbL = if (rms > 1e-4) (20.0 * Math.log10(rms)).toFloat() else -48f
+                            val peakNorm = peak / 32768.0
+                            val dbR = (dbL + (if (peakNorm > 0.01) ((peakNorm - rms).coerceIn(-0.08, 0.08) * 18.0).toFloat() else -0.8f)).coerceIn(-48f, 0f)
+                            val clipping = peak >= 31200
+                            runOnUiThread {
+                                if (!isFinishing && !isDestroyed && viewBinding.proOverlayView.showAudioVuMeter) {
+                                    viewBinding.proOverlayView.updateAudioMeter(dbL, dbR, clipping)
+                                }
+                            }
+                        }
+                    }
+                    try { Thread.sleep(45L) } catch (_: InterruptedException) { break }
+                }
+            } catch (t: Throwable) {
+                Log.w(TAG, "Standby Audio VU meter stopped", t)
+            } finally {
+                try { recorder?.stop() } catch (_: Throwable) {}
+                try { recorder?.release() } catch (_: Throwable) {}
+                audioMeterRunning = false
+            }
+        }, "ProAudioVuMeter").apply { isDaemon = true; start() }
+    }
+
+    private fun stopStandbyAudioMeter() {
+        audioMeterRunning = false
+        audioMeterThread?.interrupt()
+        audioMeterThread = null
     }
 
     private fun syncWorldArLifecycleAndPower() {
@@ -1419,6 +1554,11 @@ class MainActivity : AppCompatActivity() {
             isLastActionCreative = false
             window.decorView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
         }
+        viewBinding.effectsStudioDrawer.effectsDrawerBackdrop.setOnClickListener {
+            viewBinding.effectsStudioDrawer.root.visibility = View.GONE
+            isLastActionCreative = false
+            window.decorView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+        }
 
         // Top Toolbar: Dedicated Framing Guides & Grids HUD
         viewBinding.btnGuide.setOnClickListener {
@@ -1619,6 +1759,7 @@ class MainActivity : AppCompatActivity() {
         }
         viewBinding.effectsStudioDrawer.switchDateStamp.setOnCheckedChangeListener { _, isChecked ->
             viewBinding.proOverlayView.enableDateStamp = isChecked
+            syncOverlayToVideoProcessor()
             if (!isUpdatingEffectSwitches) {
                 currentCreativeTarget = CreativeTarget.EFFECTS
                 isLastActionCreative = true
@@ -1727,15 +1868,20 @@ class MainActivity : AppCompatActivity() {
         // TAB 2: Exposure Switches & Instruments
         viewBinding.proStudioDrawer.switchZebra.setOnCheckedChangeListener { _, isChecked ->
             viewBinding.proOverlayView.showZebraStripes = isChecked
-            viewBinding.proStudioDrawer.tvZebraStatus.text = if (isChecked) "Clipping warning (${viewBinding.proOverlayView.zebraThreshold}% IRE)" else "Zebra warning disabled"
+            val ireLabel = if (viewBinding.proOverlayView.zebraThreshold >= 250) "98%" else "95%"
+            viewBinding.proStudioDrawer.tvZebraStatus.text = if (isChecked) "Clipping warning (${ireLabel} IRE)" else "Zebra warning disabled"
             updateActiveInstrumentsCount()
         }
         viewBinding.proStudioDrawer.btnZebraThreshold.setOnClickListener {
             val next = if (viewBinding.proOverlayView.zebraThreshold == 240) 250 else 240
             viewBinding.proOverlayView.zebraThreshold = next
-            viewBinding.proStudioDrawer.btnZebraThreshold.text = if (next == 250) "98%" else "95%"
-            viewBinding.proStudioDrawer.tvZebraStatus.text = "Clipping warning (${if (next == 250) "98%" else "95%"} IRE)"
-            // silent (no popup)
+            val ireLabel = if (next == 250) "98%" else "95%"
+            viewBinding.proStudioDrawer.btnZebraThreshold.text = ireLabel
+            viewBinding.proStudioDrawer.tvZebraStatus.text = if (viewBinding.proOverlayView.showZebraStripes) {
+                "Clipping warning (${ireLabel} IRE)"
+            } else {
+                "Zebra warning disabled"
+            }
         }
         viewBinding.proStudioDrawer.switchWaveform.setOnCheckedChangeListener { _, isChecked ->
             viewBinding.proOverlayView.showWaveform = isChecked
@@ -1766,6 +1912,12 @@ class MainActivity : AppCompatActivity() {
         // TAB 4: Audio Switches
         viewBinding.proStudioDrawer.switchAudioVuMeter.setOnCheckedChangeListener { _, isChecked ->
             viewBinding.proOverlayView.showAudioVuMeter = isChecked
+            if (isChecked) {
+                if (recording == null) startStandbyAudioMeter()
+            } else {
+                stopStandbyAudioMeter()
+                viewBinding.proOverlayView.updateAudioMeter(-48f, -48f, false)
+            }
             updateActiveInstrumentsCount()
         }
         viewBinding.proStudioDrawer.switchMicInput.setOnCheckedChangeListener { _, isChecked ->
@@ -1925,14 +2077,61 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
+     * Queries Camera2 characteristics for the highest supported Slow-Mo FPS range (120fps / 60fps) on the active lens.
+     */
+    private fun resolveBestSlowMoFpsRange(): Range<Int>? {
+        return try {
+            val cm = getSystemService(Context.CAMERA_SERVICE) as CameraManager
+            val targetFacing = if (lensFacing == CameraSelector.DEFAULT_FRONT_CAMERA) {
+                CameraCharacteristics.LENS_FACING_FRONT
+            } else {
+                CameraCharacteristics.LENS_FACING_BACK
+            }
+            var bestRange: Range<Int>? = null
+            for (camId in cm.cameraIdList) {
+                val chars = cm.getCameraCharacteristics(camId)
+                if (chars.get(CameraCharacteristics.LENS_FACING) != targetFacing) continue
+                val ranges = chars.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES) ?: continue
+                // Prefer fixed high-FPS ranges (e.g., 120..120, 60..60), then highest upper >= 60
+                val fixedHigh = ranges.filter { it.lower == it.upper && it.upper >= 60 }.maxByOrNull { it.upper }
+                val varHigh = ranges.filter { it.upper >= 60 }.maxByOrNull { it.upper * 1000 + it.lower }
+                bestRange = fixedHigh ?: varHigh
+                if (bestRange != null) break
+            }
+            bestRange
+        } catch (e: Throwable) {
+            Log.w(TAG, "Unable to query Slow-Mo FPS ranges", e)
+            null
+        }
+    }
+
+    /**
      * Bind Preview, ImageCapture, VideoCapture & ImageAnalysis (or ConcurrentCamera PiP) to current lifecycle
      */
+    @OptIn(ExperimentalCamera2Interop::class)
     private fun bindCameraUseCases() {
         val cameraProvider = cameraProvider ?: return
         faceMeshHelper?.setFrontFacing(lensFacing == CameraSelector.DEFAULT_FRONT_CAMERA)
 
-        // Preview Use Case
-        val preview = Preview.Builder().build().also {
+        val wantsHighFpsSlowMo = (cameraMode == CameraMode.SLOW_MO || currentShootingEffect == "slow_motion_120_240")
+        val slowMoFpsRange: Range<Int>? = if (wantsHighFpsSlowMo) {
+            resolveBestSlowMoFpsRange()
+        } else {
+            null
+        }
+        activeSlowMoFpsLabel = if (slowMoFpsRange != null) {
+            "${slowMoFpsRange.upper}FPS"
+        } else {
+            "HD SLOW-MO"
+        }
+
+        // Preview Use Case (applies real high-FPS Camera2 target range in SLOW_MO mode)
+        val previewBuilder = Preview.Builder()
+        if (slowMoFpsRange != null) {
+            Camera2Interop.Extender(previewBuilder)
+                .setCaptureRequestOption(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, slowMoFpsRange)
+        }
+        val preview = previewBuilder.build().also {
             it.setSurfaceProvider(viewBinding.viewFinder.surfaceProvider)
         }
 
@@ -1962,8 +2161,8 @@ class MainActivity : AppCompatActivity() {
         }
         imageCapture = imageCaptureBuilder.build()
 
-        // VideoCapture Use Case with Dynamic + Thermally Capped Quality Selector
-        val requestedQuality = resolveVideoQuality()
+        // VideoCapture Use Case with Dynamic + Thermally Capped Quality Selector & Real Slow-Mo Target FPS
+        val requestedQuality = if (cameraMode == CameraMode.SLOW_MO) Quality.FHD else resolveVideoQuality()
         val selectedQuality = if (::thermalGuardManager.isInitialized) {
             thermalGuardManager.constrainVideoQuality(requestedQuality)
         } else {
@@ -1977,7 +2176,11 @@ class MainActivity : AppCompatActivity() {
                 )
             )
             .build()
-        videoCapture = VideoCapture.withOutput(recorder)
+        val videoCaptureBuilder = VideoCapture.Builder(recorder)
+        if (slowMoFpsRange != null) {
+            videoCaptureBuilder.setTargetFrameRate(slowMoFpsRange)
+        }
+        videoCapture = videoCaptureBuilder.build()
 
         // Real-Time Frame Analysis Engine: Live Histogram (Luma & RGB), Zebra Overexposure, Focus Peaking, Waveform & Vector Scope
         // Golden Rule: All pixel math is executed asynchronously on background cameraExecutor thread with pre-allocated buffers.
@@ -2133,6 +2336,7 @@ class MainActivity : AppCompatActivity() {
                             val skinTonePercent = if (vsPointCount > 0) ((skinMatchHits.toFloat() / vsPointCount) * 100f).coerceIn(45f, 98f) else 88f
 
                             // 3. 256-Bin Histogram and Optical Center of Mass (Background Loop)
+                            val activeZebraThresh = viewBinding.proOverlayView.zebraThreshold
                             for (y in 0 until height step step) {
                                 val rowOffset = y * rowStride
                                 for (x in 0 until width step step) {
@@ -2147,7 +2351,7 @@ class MainActivity : AppCompatActivity() {
                                         sumWeightY += y * mass
                                         totalWeight += mass
 
-                                        if (luma >= 240) {
+                                        if (luma >= activeZebraThresh) {
                                             clipCount++
                                             if (clipCount % 12 == 0 && overexposedCount < 48) {
                                                 val nX = x.toFloat() / width.toFloat()
@@ -2757,22 +2961,39 @@ class MainActivity : AppCompatActivity() {
         updatePipOverlayVisibility()
 
         var activeNightExt = false
-        val effectiveSelector = if (cameraMode == CameraMode.NIGHT) {
-            try {
-                if (extensionsManager?.isExtensionAvailable(lensFacing, ExtensionMode.NIGHT) == true) {
-                    activeNightExt = true
-                    extensionsManager!!.getExtensionEnabledCameraSelector(lensFacing, ExtensionMode.NIGHT)
-                } else {
+        var activePortraitExt = false
+        val effectiveSelector = when (cameraMode) {
+            CameraMode.NIGHT -> {
+                try {
+                    if (extensionsManager?.isExtensionAvailable(lensFacing, ExtensionMode.NIGHT) == true) {
+                        activeNightExt = true
+                        extensionsManager!!.getExtensionEnabledCameraSelector(lensFacing, ExtensionMode.NIGHT)
+                    } else {
+                        lensFacing
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "ExtensionMode.NIGHT check failed, using computational night fallback", e)
                     lensFacing
                 }
-            } catch (e: Exception) {
-                Log.w(TAG, "ExtensionMode.NIGHT check failed, using computational night fallback", e)
-                lensFacing
             }
-        } else {
-            lensFacing
+            CameraMode.PORTRAIT -> {
+                try {
+                    if (extensionsManager?.isExtensionAvailable(lensFacing, ExtensionMode.BOKEH) == true) {
+                        activePortraitExt = true
+                        extensionsManager!!.getExtensionEnabledCameraSelector(lensFacing, ExtensionMode.BOKEH)
+                    } else {
+                        lensFacing
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "ExtensionMode.BOKEH check failed, using computational portrait bokeh fallback", e)
+                    lensFacing
+                }
+            }
+            else -> lensFacing
         }
         isNightExtensionActive = activeNightExt
+        isPortraitExtensionActive = activePortraitExt
+        isArImageCaptureBound = true
 
         try {
             cameraProvider.unbindAll()
@@ -2781,10 +3002,11 @@ class MainActivity : AppCompatActivity() {
 
             val isPhotoType = cameraMode == CameraMode.PHOTO || cameraMode == CameraMode.PORTRAIT || cameraMode == CameraMode.NIGHT || cameraMode == CameraMode.PANORAMA
             if (cameraMode == CameraMode.AR_LENS) {
-                // AR LENS Mode binds BOTH ImageCapture (Tap for Photo) AND VideoCapture (Hold >=1s for Video) + ImageAnalysis (FaceMesh)
+                // AR LENS Mode keeps ImageAnalysis ALIVE across all fallback tiers so MediaPipe Face/Hand/Pose tracking never dies!
                 val proc = openGLProcessor ?: OpenGLSurfaceProcessor().also { openGLProcessor = it }
                 syncAllStateToOpenGLProcessor()
                 var boundArCombo = false
+                // Tier 1: Full 4-use-case + CameraEffect (Preview + Photo + Video + ImageAnalysis)
                 try {
                     val effect = OpenGLSurfaceProcessor.createCameraEffect(proc, proc.getExecutor())
                     val groupBuilder = UseCaseGroup.Builder()
@@ -2796,61 +3018,79 @@ class MainActivity : AppCompatActivity() {
                     camera = cameraProvider.bindToLifecycle(this, lensFacing, groupBuilder.build())
                     cameraEffect = effect
                     isPreviewCameraEffectActive = true
+                    isArImageCaptureBound = true
                     boundArCombo = true
                 } catch (effectErr: Exception) {
-                    Log.w(TAG, "AR LENS CameraEffect 4-use-case bind unsupported on HAL, retrying 3-use-case with CameraEffect", effectErr)
+                    Log.w(TAG, "AR LENS CameraEffect 4-use-case bind unsupported on HAL, retrying 3-use-case with ImageAnalysis preserved", effectErr)
                     cameraEffect = null
                     isPreviewCameraEffectActive = false
                 }
+                // Tier 2: 3-use-case + CameraEffect (Preview + VideoCapture + ImageAnalysis; AR photos use high-res composite viewfinder fallback)
                 if (!boundArCombo) {
                     try {
                         val effect = OpenGLSurfaceProcessor.createCameraEffect(proc, proc.getExecutor())
                         val groupBuilder = UseCaseGroup.Builder()
                             .addUseCase(preview)
-                            .addUseCase(imageCapture!!)
                             .addUseCase(videoCapture!!)
+                            .addUseCase(imageAnalysis!!)
                             .addEffect(effect)
                         camera = cameraProvider.bindToLifecycle(this, lensFacing, groupBuilder.build())
                         cameraEffect = effect
                         isPreviewCameraEffectActive = true
+                        isArImageCaptureBound = false
                         boundArCombo = true
                     } catch (threeUcErr: Exception) {
-                        Log.w(TAG, "AR LENS Preview+Photo+Video CameraEffect unsupported on HAL, retrying Video-only CameraEffect", threeUcErr)
+                        Log.w(TAG, "AR LENS Preview+Video+Analysis CameraEffect unsupported on HAL, retrying Video-only CameraEffect", threeUcErr)
                         cameraEffect = null
                         isPreviewCameraEffectActive = false
                     }
                 }
+                // Tier 3: 3-use-case + Video-only CameraEffect (keeps ImageAnalysis alive!)
                 if (!boundArCombo) {
                     try {
                         val effect = OpenGLSurfaceProcessor.createVideoOnlyCameraEffect(proc, proc.getExecutor())
                         val groupBuilder = UseCaseGroup.Builder()
                             .addUseCase(preview)
-                            .addUseCase(imageCapture!!)
                             .addUseCase(videoCapture!!)
+                            .addUseCase(imageAnalysis!!)
                             .addEffect(effect)
                         camera = cameraProvider.bindToLifecycle(this, lensFacing, groupBuilder.build())
                         cameraEffect = effect
                         isPreviewCameraEffectActive = false
+                        isArImageCaptureBound = false
                         boundArCombo = true
                     } catch (vidOnlyErr: Exception) {
-                        Log.w(TAG, "AR LENS Video-only CameraEffect unsupported on HAL, retrying without CameraEffect", vidOnlyErr)
+                        Log.w(TAG, "AR LENS Video-only CameraEffect unsupported on HAL, retrying plain 4-use-case", vidOnlyErr)
                         cameraEffect = null
                         isPreviewCameraEffectActive = false
                     }
                 }
+                // Tier 4: Plain 4-use-case without CameraEffect
                 if (!boundArCombo) {
                     try {
                         camera = cameraProvider.bindToLifecycle(this, lensFacing, preview, imageCapture!!, videoCapture!!, imageAnalysis!!)
+                        isArImageCaptureBound = true
                         boundArCombo = true
                     } catch (fourUcErr: Exception) {
-                        Log.w(TAG, "AR LENS 4-use-case bind unsupported on HAL, falling back to Preview + Photo + Video", fourUcErr)
+                        Log.w(TAG, "AR LENS 4-use-case bind unsupported on HAL, falling back to Preview + Video + ImageAnalysis", fourUcErr)
+                    }
+                }
+                // Tier 5: Plain 3-use-case preserving ImageAnalysis (never drops MediaPipe tracking!)
+                if (!boundArCombo) {
+                    try {
+                        camera = cameraProvider.bindToLifecycle(this, lensFacing, preview, videoCapture!!, imageAnalysis!!)
+                        isArImageCaptureBound = false
+                        boundArCombo = true
+                    } catch (threePlainErr: Exception) {
+                        Log.w(TAG, "AR LENS Preview+Video+Analysis unsupported on HAL, falling back to Preview + Photo + ImageAnalysis", threePlainErr)
                     }
                 }
                 if (!boundArCombo) {
-                    camera = cameraProvider.bindToLifecycle(this, lensFacing, preview, imageCapture!!, videoCapture!!)
+                    camera = cameraProvider.bindToLifecycle(this, lensFacing, preview, imageCapture!!, imageAnalysis!!)
+                    isArImageCaptureBound = true
                 }
             } else if (isPhotoType) {
-                val usePreviewEisEffect = (::gyroStabilizer.isInitialized && gyroStabilizer.isEnabled && !activeNightExt)
+                val usePreviewEisEffect = (::gyroStabilizer.isInitialized && gyroStabilizer.isEnabled && !activeNightExt && !activePortraitExt)
                 var boundPreviewWithEffect = false
                 if (usePreviewEisEffect) {
                     val proc = openGLProcessor ?: OpenGLSurfaceProcessor().also { openGLProcessor = it }
@@ -2941,10 +3181,20 @@ class MainActivity : AppCompatActivity() {
 
             // Initialize Exposure compensation range from CameraInfo (auto-lifts EV in NIGHT mode)
             initExposureRange()
+            updateUltraWideLensAvailability()
 
             // Re-apply real-time ColorMatrix / RenderEffect filter onto TextureView preview
             syncStylizeLoopState()
             viewBinding.viewFinder.post { applyLivePreviewColorMatrix() }
+
+            // Sync live Slow-Mo FPS & Portrait BOKEH HUD labels once hardware capabilities are resolved
+            if (recording == null) {
+                if (cameraMode == CameraMode.SLOW_MO) {
+                    viewBinding.chronometer.text = activeSlowMoFpsLabel
+                } else if (cameraMode == CameraMode.PORTRAIT) {
+                    viewBinding.chronometer.text = if (isPortraitExtensionActive) "BOKEH · 4:3" else "DEPTH · 4:3"
+                }
+            }
 
             // Reset sharpness baseline & run initial Auto-Focus / Blur-Clear sweep after binding
             isAfAeLocked = false
@@ -3968,6 +4218,15 @@ class MainActivity : AppCompatActivity() {
         } else {
             proc.setCustomFilterParams(false, 0, 0, 0, false)
         }
+        // Upload exact 20-float ColorMatrix so all 34 presets + Custom Filters (including sepia, tint & partial grayscale) match Photo 1:1
+        val exactMatrix = if (currentFilterName == "normal" || isComicFilterPreset(currentFilterName)) {
+            null
+        } else {
+            buildActiveColorMatrix(includeEffectColorLook = false, includeLiveSliders = false).array
+        }
+        proc.setExactColorMatrix(exactMatrix)
+        proc.setDeSqueezeFactor(parseDeSqueezeFactor(currentDeSqueeze))
+        proc.setHorizonLockRoll(if (currentShootingEffect == "action_stabilization" || currentShootingEffect == "hyperlapse") smoothRollDeg else 0f)
         proc.setShootingEffect(currentShootingEffect)
         proc.setEffectIntensity(currentShootingEffect, (activeEffectIntensity * 100f).toInt().coerceIn(0, 100))
         proc.setAdjustments(
@@ -4031,7 +4290,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun buildActiveColorMatrix(includeEffectColorLook: Boolean): ColorMatrix {
+    private fun buildActiveColorMatrix(includeEffectColorLook: Boolean, includeLiveSliders: Boolean = true): ColorMatrix {
         val bri = viewBinding.proOverlayView.liveBrightnessPercent
         val con = viewBinding.proOverlayView.liveContrastPercent
         val sat = viewBinding.proOverlayView.liveSaturationPercent
@@ -4353,8 +4612,41 @@ class MainActivity : AppCompatActivity() {
             else -> {
                 val custom = injectedCustomFilters.find { it.id == currentFilterName }
                 if (custom != null) {
-                    val satVal = (1.0f + custom.saturation / 100f).coerceIn(0f, 2.5f)
-                    combined.postConcat(ColorMatrix().apply { setSaturation(if (custom.grayscale > 50) 0f else satVal) })
+                    val satBase = (1.0f + custom.saturation / 100f).coerceIn(0f, 2.5f)
+                    val grayBlend = (custom.grayscale.coerceIn(0, 100) / 100f)
+                    val effSat = satBase * (1f - grayBlend)
+                    combined.postConcat(ColorMatrix().apply { setSaturation(effSat) })
+
+                    // Smooth Sepia blend (0..100%)
+                    val sep = (custom.sepia.coerceIn(0, 100) / 100f)
+                    if (sep > 0.01f) {
+                        val inv = 1f - sep
+                        combined.postConcat(ColorMatrix(floatArrayOf(
+                            inv + sep * 0.393f, sep * 0.769f, sep * 0.189f, 0f, 0f,
+                            sep * 0.349f, inv + sep * 0.686f, sep * 0.168f, 0f, 0f,
+                            sep * 0.272f, sep * 0.534f, inv + sep * 0.131f, 0f, 0f,
+                            0f, 0f, 0f, 1f, 0f
+                        )))
+                    }
+
+                    // Optional hex tintColor overlay wash (e.g. #38BDF8)
+                    val tintHex = custom.tintColor.trim()
+                    if (tintHex.startsWith("#") && tintHex.length >= 7 && !tintHex.equals("#000000", ignoreCase = true) && !tintHex.equals("#FFFFFF", ignoreCase = true)) {
+                        try {
+                            val cInt = Color.parseColor(tintHex)
+                            val tr = Color.red(cInt) / 255f
+                            val tg = Color.green(cInt) / 255f
+                            val tb = Color.blue(cInt) / 255f
+                            val tintAmt = 0.20f
+                            combined.postConcat(ColorMatrix(floatArrayOf(
+                                1f - tintAmt * (1f - tr), 0f, 0f, 0f, tr * tintAmt * 255f * 0.55f,
+                                0f, 1f - tintAmt * (1f - tg), 0f, 0f, tg * tintAmt * 255f * 0.55f,
+                                0f, 0f, 1f - tintAmt * (1f - tb), 0f, tb * tintAmt * 255f * 0.55f,
+                                0f, 0f, 0f, 1f, 0f
+                            )))
+                        } catch (_: Throwable) {}
+                    }
+
                     val conVal = (1.0f + custom.contrast / 100f).coerceIn(0.4f, 2.2f)
                     val t = (-0.5f * conVal + 0.5f) * 255f + (custom.brightness * 1.2f)
                     combined.postConcat(ColorMatrix(floatArrayOf(
@@ -4691,28 +4983,30 @@ class MainActivity : AppCompatActivity() {
         }
 
         // 2. Live Adjustment Sliders (Brightness / Contrast / Saturation)
-        if (sat != 0) {
-            val satVal = (1.0f + (sat / 100f)).coerceIn(0f, 2.5f)
-            combined.postConcat(ColorMatrix().apply { setSaturation(satVal) })
-        }
-        if (con != 0) {
-            val conVal = if (con >= 0) 1.0f + (con / 100f) else 1.0f + (con / 200f)
-            val translate = (-0.5f * conVal + 0.5f) * 255f
-            combined.postConcat(ColorMatrix(floatArrayOf(
-                conVal, 0f, 0f, 0f, translate,
-                0f, conVal, 0f, 0f, translate,
-                0f, 0f, conVal, 0f, translate,
-                0f, 0f, 0f, 1f, 0f
-            )))
-        }
-        if (bri != 0) {
-            val bOff = bri * 1.2f
-            combined.postConcat(ColorMatrix(floatArrayOf(
-                1f, 0f, 0f, 0f, bOff,
-                0f, 1f, 0f, 0f, bOff,
-                0f, 0f, 1f, 0f, bOff,
-                0f, 0f, 0f, 1f, 0f
-            )))
+        if (includeLiveSliders) {
+            if (sat != 0) {
+                val satVal = (1.0f + (sat / 100f)).coerceIn(0f, 2.5f)
+                combined.postConcat(ColorMatrix().apply { setSaturation(satVal) })
+            }
+            if (con != 0) {
+                val conVal = if (con >= 0) 1.0f + (con / 100f) else 1.0f + (con / 200f)
+                val translate = (-0.5f * conVal + 0.5f) * 255f
+                combined.postConcat(ColorMatrix(floatArrayOf(
+                    conVal, 0f, 0f, 0f, translate,
+                    0f, conVal, 0f, 0f, translate,
+                    0f, 0f, conVal, 0f, translate,
+                    0f, 0f, 0f, 1f, 0f
+                )))
+            }
+            if (bri != 0) {
+                val bOff = bri * 1.2f
+                combined.postConcat(ColorMatrix(floatArrayOf(
+                    1f, 0f, 0f, 0f, bOff,
+                    0f, 1f, 0f, 0f, bOff,
+                    0f, 0f, 1f, 0f, bOff,
+                    0f, 0f, 0f, 1f, 0f
+                )))
+            }
         }
 
         return combined
@@ -4913,10 +5207,11 @@ class MainActivity : AppCompatActivity() {
             return
         }
         val prevLens = currentArLensName
-        currentArLensName = lens
-        if (lens != "none") {
-            lastActiveArLensName = lens
+        // Persist previous lens's personal Size/Height/Placement before switching so changes NEVER bleed to other lenses
+        if (prevLens != "none" && prevLens != lens) {
+            saveCurrentLensTransform("face:$prevLens")
         }
+        currentArLensName = lens
         viewBinding.arFaceOverlayView.activeCustomLensStyle = null
         val mappedMode = when (lens.lowercase(Locale.ROOT)) {
             "mesh_contour", "mesh" -> ARFaceOverlayView.ArLensMode.MESH_CONTOUR
@@ -4938,7 +5233,8 @@ class MainActivity : AppCompatActivity() {
                                 offsetY = customLens.modelOffsetY,
                                 rotYDeg = customLens.modelRotationY,
                                 rotXDeg = customLens.modelRotationX,
-                                autoSpin = customLens.autoSpin
+                                autoSpin = customLens.autoSpin,
+                                activateFaceLens = true
                             )
                         } else {
                             viewBinding.arFaceOverlayView.loadGlbModelFromAsset(
@@ -4948,13 +5244,20 @@ class MainActivity : AppCompatActivity() {
                                 offsetY = customLens.modelOffsetY,
                                 rotYDeg = customLens.modelRotationY,
                                 rotXDeg = customLens.modelRotationX,
-                                autoSpin = customLens.autoSpin
+                                autoSpin = customLens.autoSpin,
+                                activateFaceLens = true
                             )
                         }
                         if (loaded) {
                             ARFaceOverlayView.ArLensMode.GLB_3D
                         } else {
-                            showHudNotice("Failed to load 3D GLB model: ${customLens.name}", isWarning = true)
+                            val errDetail = viewBinding.arFaceOverlayView.getLastGlbError()
+                            val msg = if (errDetail.isNotEmpty()) {
+                                "GLB '${customLens.name}': $errDetail"
+                            } else {
+                                "Failed to load 3D GLB model: ${customLens.name}"
+                            }
+                            showHudNotice(msg, isWarning = true)
                             ARFaceOverlayView.ArLensMode.NONE
                         }
                     } else {
@@ -4970,16 +5273,26 @@ class MainActivity : AppCompatActivity() {
                 } else ARFaceOverlayView.ArLensMode.NONE
             }
         }
+        // Only remember as lastActiveArLensName if it actually loaded (prevents broken GLB from looping on return)
+        if (lens != "none" && mappedMode != ARFaceOverlayView.ArLensMode.NONE) {
+            lastActiveArLensName = lens
+        } else if (lens != "none" && mappedMode == ARFaceOverlayView.ArLensMode.NONE) {
+            currentArLensName = "none"
+        }
+        // Restore this specific lens's own saved Size/Height/Placement (defaults to 1.0x / 0 if untouched)
+        if (currentArLensName != "none") {
+            loadTransformForKey("face:$currentArLensName")
+        }
         syncComicFrameOverlayState()
         viewBinding.arFaceOverlayView.currentLens = mappedMode
         if (mappedMode == ARFaceOverlayView.ArLensMode.NONE) {
             viewBinding.arFaceOverlayView.clear()
         }
         syncOverlayToVideoProcessor()
-        updateLensButtons(lens)
+        updateLensButtons(currentArLensName)
         updateArDockStatusLabel()
         if (syncFloatingMenu && cameraMode == CameraMode.AR_LENS) {
-            if (lens != "none") {
+            if (currentArLensName != "none") {
                 activeArFamily = "face"
             } else if (activeArFamily == "face") {
                 activeArFamily = "off"
@@ -4987,8 +5300,8 @@ class MainActivity : AppCompatActivity() {
             }
             refreshFloatingModeMenu()
         }
-        if (isAutoAdaptEnabled && lens != "none" && lens != prevLens) {
-            val recommendedFront = lens in setOf("mesh_contour", "cyberpunk_visor", "golden_crown", "comic_frame") ||
+        if (isAutoAdaptEnabled && currentArLensName != "none" && currentArLensName != prevLens) {
+            val recommendedFront = currentArLensName in setOf("mesh_contour", "cyberpunk_visor", "golden_crown", "comic_frame") ||
                 mappedMode == ARFaceOverlayView.ArLensMode.GLB_3D ||
                 mappedMode == ARFaceOverlayView.ArLensMode.CUSTOM_STYLE
             val isCurrentlyFront = (lensFacing == CameraSelector.DEFAULT_FRONT_CAMERA)
@@ -4996,8 +5309,8 @@ class MainActivity : AppCompatActivity() {
                 switchCamera()
             }
         }
-        if (showNotice) {
-            val displayName = getArLensDisplayName(lens)
+        if (showNotice && mappedMode != ARFaceOverlayView.ArLensMode.NONE) {
+            val displayName = getArLensDisplayName(currentArLensName)
             if (mappedMode == ARFaceOverlayView.ArLensMode.GLB_3D) {
                 showHudNotice("3D GLB AR Lens: $displayName")
             } else {
@@ -5206,6 +5519,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setShootingEffect(effectId: String, showNotice: Boolean = true) {
+        val prevEffectId = currentShootingEffect
         currentShootingEffect = effectId
         val isArtEffect = artEffectIds.contains(effectId)
         val isToonEffect = toonEffectIds.contains(effectId)
@@ -5253,7 +5567,9 @@ class MainActivity : AppCompatActivity() {
             viewBinding.viewFinder.rotation = 0f
         }
 
-        if (effectId == "dolly_zoom") {
+        val deSqueezeFactor = parseDeSqueezeFactor(currentDeSqueeze)
+        val baseScaleY = if (!isPreviewCameraEffectActive && deSqueezeFactor > 1.01f) 1f / deSqueezeFactor else 1f
+        if (effectId == "dolly_zoom" && !isPreviewCameraEffectActive) {
             dollyZoomAnimator = android.animation.ValueAnimator.ofFloat(1.0f, 1.36f).apply {
                 duration = 1600L
                 repeatMode = android.animation.ValueAnimator.REVERSE
@@ -5262,7 +5578,7 @@ class MainActivity : AppCompatActivity() {
                 addUpdateListener { anim ->
                     val s = anim.animatedValue as Float
                     viewBinding.viewFinder.scaleX = s
-                    viewBinding.viewFinder.scaleY = s
+                    viewBinding.viewFinder.scaleY = s * baseScaleY
                 }
                 start()
             }
@@ -5272,13 +5588,23 @@ class MainActivity : AppCompatActivity() {
             } else {
                 1.0f
             }
-            val cropScale = when (effectId) {
-                "macro_focus" -> 1.26f
-                "action_stabilization" -> 1.15f
-                "hyperlapse" -> 1.10f
-                else -> eisZoom
+            val cropScale = if (isPreviewCameraEffectActive) {
+                1.0f
+            } else {
+                when (effectId) {
+                    "macro_focus" -> 1.26f
+                    "action_stabilization" -> 1.15f
+                    "hyperlapse" -> 1.10f
+                    else -> eisZoom
+                }
             }
-            viewBinding.viewFinder.animate().scaleX(cropScale).scaleY(cropScale).setDuration(180).start()
+            viewBinding.viewFinder.animate().scaleX(cropScale).scaleY(cropScale * baseScaleY).setDuration(180).start()
+        }
+
+        // Rebind Camera2 high-FPS target range when toggling Slow-Motion effect in Video mode
+        val slowMoChanged = (prevEffectId == "slow_motion_120_240") != (effectId == "slow_motion_120_240")
+        if (slowMoChanged && recording == null && cameraProvider != null && (cameraMode == CameraMode.VIDEO || cameraMode == CameraMode.SLOW_MO)) {
+            bindCameraUseCases()
         }
 
         applyLivePreviewColorMatrix()
@@ -6401,8 +6727,24 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun parseDeSqueezeFactor(label: String): Float = when (label.trim().lowercase(Locale.ROOT)) {
+        "1.33x" -> 1.33f
+        "1.55x" -> 1.55f
+        "1.8x", "1.80x" -> 1.80f
+        "2.0x", "2.00x" -> 2.00f
+        else -> 1.0f
+    }
+
     private fun setDeSqueeze(label: String, index: Int) {
         currentDeSqueeze = label
+        val factor = parseDeSqueezeFactor(label)
+        viewBinding.proOverlayView.anamorphicDeSqueezeFactor = factor
+        openGLProcessor?.setDeSqueezeFactor(factor)
+        // In non-OpenGL preview (Photo modes), optically de-squeeze the PreviewView vertically to match cinema widescreen
+        val targetScaleY = if (!isPreviewCameraEffectActive && factor > 1.01f) 1f / factor else 1f
+        val curScaleX = viewBinding.viewFinder.scaleX.coerceAtLeast(1f)
+        viewBinding.viewFinder.animate().scaleY(curScaleX * targetScaleY).setDuration(160L).start()
+
         val squeezeButtons = listOf(
             viewBinding.proStudioDrawer.btnSqueezeOff to 0,
             viewBinding.proStudioDrawer.btnSqueeze133 to 1,
@@ -6420,7 +6762,8 @@ class MainActivity : AppCompatActivity() {
                 btn.setTextColor(Color.parseColor("#94A3B8"))
             }
         }
-        // silent (no popup)
+        updateActiveInstrumentsCount()
+        showHudNotice(if (factor > 1.01f) "Anamorphic De-Squeeze ${label}" else "Anamorphic De-Squeeze OFF")
     }
 
     private fun updateActiveInstrumentsCount() {
@@ -6438,6 +6781,7 @@ class MainActivity : AppCompatActivity() {
         if (viewBinding.proOverlayView.showAudioVuMeter) count++
         if (viewBinding.proOverlayView.showWatermark) count++
         if (isMultiCamPipEnabled) count++
+        if (parseDeSqueezeFactor(currentDeSqueeze) > 1.01f) count++
 
         if (count > 0) {
             viewBinding.viewStudioBadge.visibility = View.VISIBLE
@@ -6546,17 +6890,32 @@ class MainActivity : AppCompatActivity() {
         updateActiveInstrumentsCount()
     }
 
+    private fun updateUltraWideLensAvailability() {
+        val minZoom = camera?.cameraInfo?.zoomState?.value?.minZoomRatio ?: 1.0f
+        val hasUltraWide = minZoom < 0.95f
+        val alphaVal = if (hasUltraWide) 1.0f else 0.42f
+        viewBinding.btnZoom06.alpha = alphaVal
+        viewBinding.proStudioDrawer.btnLens06.alpha = alphaVal
+    }
+
     private fun setZoomLevel(ratio: Float, index: Int) {
         val zoomState = camera?.cameraInfo?.zoomState?.value
         val minZoom = zoomState?.minZoomRatio ?: 1.0f
         val maxZoom = zoomState?.maxZoomRatio ?: 8.0f
-        val clamped = ratio.coerceIn(minZoom, maxZoom)
+        val effectiveIndex = if (index == 0 && minZoom >= 0.95f) {
+            showHudNotice("Ultra-wide 0.6x unavailable on this lens", isWarning = true)
+            1
+        } else {
+            index
+        }
+        val effectiveRatio = if (effectiveIndex == 1 && index == 0) 1.0f else ratio
+        val clamped = effectiveRatio.coerceIn(minZoom, maxZoom)
         cameraControl?.setZoomRatio(clamped)
 
         // Viewfinder zoom pills
         val pillViews = listOf(viewBinding.btnZoom06, viewBinding.btnZoom1, viewBinding.btnZoom2, viewBinding.btnZoom5)
         for (i in pillViews.indices) {
-            if (i == index) {
+            if (i == effectiveIndex) {
                 pillViews[i].setBackgroundResource(R.drawable.bg_zoom_pill_active)
                 pillViews[i].setTextColor(Color.parseColor("#0F172A"))
             } else {
@@ -6569,7 +6928,7 @@ class MainActivity : AppCompatActivity() {
         val lensButtons = listOf(viewBinding.proStudioDrawer.btnLens06, viewBinding.proStudioDrawer.btnLens1, viewBinding.proStudioDrawer.btnLens2, viewBinding.proStudioDrawer.btnLens5)
         for (i in lensButtons.indices) {
             val btn = lensButtons[i]
-            val isActive = i == index
+            val isActive = i == effectiveIndex
             if (isActive) {
                 btn.setBackgroundResource(R.drawable.bg_cinema_button_active)
                 val title = btn.getChildAt(0) as? TextView
@@ -6600,7 +6959,11 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        // Ensure OpenGL SurfaceProcessor has the latest active filter, effect, intensity, adjustments & AR overlay before recording starts
+        // Release standby AudioRecord mic listener before VideoCapture acquires mic
+        stopStandbyAudioMeter()
+        openGLProcessor?.resetVideoRecordingTiming()
+
+        // Ensure OpenGL SurfaceProcessor has the latest active filter, effect, intensity, adjustments, Date Stamp, Watermark & AR overlay before recording starts
         syncAllStateToOpenGLProcessor()
         syncOverlayToVideoProcessor(forceUpload = true)
 
@@ -6659,9 +7022,11 @@ class MainActivity : AppCompatActivity() {
 
                         startAutoLoopTicker()
 
-                        viewBinding.tabPhoto.isEnabled = false
-                        viewBinding.tabVideo.isEnabled = false
-                        viewBinding.tabArLens.isEnabled = false
+                        listOf(
+                            viewBinding.tabSlowMo, viewBinding.tabVideo, viewBinding.tabPhoto,
+                            viewBinding.tabPortrait, viewBinding.tabNight, viewBinding.tabPanorama,
+                            viewBinding.tabArLens
+                        ).forEach { it.isEnabled = false }
                         viewBinding.btnSwitchCamera.isEnabled = false
                     }
 
@@ -6691,6 +7056,26 @@ class MainActivity : AppCompatActivity() {
                         // silent (no popup)
                     }
 
+                    is VideoRecordEvent.Status -> {
+                        // Feed live recording microphone amplitude to Audio VU Meter
+                        if (viewBinding.proOverlayView.showAudioVuMeter) {
+                            if (isAudioMuted) {
+                                viewBinding.proOverlayView.updateAudioMeter(-48f, -48f, false)
+                            } else {
+                                val amp = recordEvent.recordingStats.audioStats.audioAmplitude
+                                val dbL = if (amp > 1e-4) (20.0 * Math.log10(amp)).toFloat().coerceIn(-48f, 0f) else -48f
+                                val dbR = (dbL - 0.9f).coerceIn(-48f, 0f)
+                                viewBinding.proOverlayView.updateAudioMeter(dbL, dbR, dbL >= -1.2f)
+                            }
+                        }
+                        // Refresh Video Date Stamp / Watermark / AR overlay once per second during recording
+                        val nowMs = SystemClock.uptimeMillis()
+                        if ((nowMs - lastVideoOverlayRefreshMs) >= 1000L && (viewBinding.proOverlayView.enableDateStamp || viewBinding.proOverlayView.showWatermark)) {
+                            lastVideoOverlayRefreshMs = nowMs
+                            syncOverlayToVideoProcessor()
+                        }
+                    }
+
                     is VideoRecordEvent.Finalize -> {
                         playRecordStopSound()
                         stopAutoLoopTicker()
@@ -6700,6 +7085,10 @@ class MainActivity : AppCompatActivity() {
                         viewBinding.tvArRecLockBadge.visibility = View.GONE
                         viewBinding.tvArRecLockBadge.translationY = 0f
                         openGLProcessor?.updateOverlayBitmap(null)
+                        openGLProcessor?.resetVideoRecordingTiming()
+                        if (viewBinding.proOverlayView.showAudioVuMeter) {
+                            startStandbyAudioMeter()
+                        }
                         viewBinding.chronometer.stop()
                         timeWhenStopped = 0L
                         viewBinding.btnPauseResume.visibility = View.GONE
@@ -6712,7 +7101,17 @@ class MainActivity : AppCompatActivity() {
                             viewBinding.chronometer.text = "TAP PHOTO · HOLD 0.5S VID"
                             viewBinding.chronometer.setTextColor(Color.parseColor("#F0ABFC"))
                             updateCaptureButtonVisual(isRecordingActive = false)
-                            viewBinding.arLensModeDock.root.visibility = View.VISIBLE
+                            // Keep legacy dock hidden; restore the modern AR category bar & floating menu cleanly
+                            viewBinding.arLensModeDock.root.visibility = View.GONE
+                            refreshFloatingModeMenu()
+                        } else if (cameraMode == CameraMode.SLOW_MO) {
+                            viewBinding.tvRecordingStatus.text = "SLOW-MO"
+                            viewBinding.tvRecordingStatus.setTextColor(Color.parseColor("#FACC15"))
+                            viewBinding.recordingDot.setBackgroundResource(R.drawable.bg_green_dot)
+                            viewBinding.recordingDot.visibility = View.VISIBLE
+                            viewBinding.chronometer.text = activeSlowMoFpsLabel
+                            viewBinding.chronometer.setTextColor(Color.parseColor("#FEF08A"))
+                            updateCaptureButtonVisual(isRecordingActive = false)
                         } else {
                             viewBinding.tvRecordingStatus.text = "STANDBY"
                             viewBinding.tvRecordingStatus.setTextColor(ContextCompat.getColor(this, android.R.color.darker_gray))
@@ -6721,9 +7120,11 @@ class MainActivity : AppCompatActivity() {
                             updateCaptureButtonVisual(isRecordingActive = false)
                         }
 
-                        viewBinding.tabPhoto.isEnabled = true
-                        viewBinding.tabVideo.isEnabled = true
-                        viewBinding.tabArLens.isEnabled = true
+                        listOf(
+                            viewBinding.tabSlowMo, viewBinding.tabVideo, viewBinding.tabPhoto,
+                            viewBinding.tabPortrait, viewBinding.tabNight, viewBinding.tabPanorama,
+                            viewBinding.tabArLens
+                        ).forEach { it.isEnabled = true }
                         viewBinding.btnSwitchCamera.isEnabled = true
 
                         if (!recordEvent.hasError()) {
@@ -6780,28 +7181,82 @@ class MainActivity : AppCompatActivity() {
             }
             return
         }
-        val imageCapture = imageCapture ?: return
         if (!isBurst) {
             playShutterClickSound()
         }
 
         val name = SimpleDateFormat(FILENAME_FORMAT, Locale.US).format(System.currentTimeMillis())
+
+        // On 3-stream phone HALs in AR_LENS mode where ImageCapture was traded to keep MediaPipe ImageAnalysis alive,
+        // capture an instant WYSIWYG composite frame directly from the viewfinder + AR overlay!
+        if (cameraMode == CameraMode.AR_LENS && !isArImageCaptureBound) {
+            viewBinding.viewFinder.animate().alpha(0.3f).setDuration(50).withEndAction {
+                viewBinding.viewFinder.animate().alpha(1.0f).setDuration(150).start()
+            }.start()
+            val previewSnap = try { viewBinding.viewFinder.bitmap } catch (_: Throwable) { null }
+            if (previewSnap != null) {
+                cameraExecutor.execute {
+                    val finalBmp = renderCreativeLookOntoBitmap(previewSnap, null, skipNightLut = false, alreadyMirroredFront = true)
+                    val cv = ContentValues().apply {
+                        put(MediaStore.MediaColumns.DISPLAY_NAME, name)
+                        put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                            put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/CameraX-Image")
+                            put(MediaStore.Images.Media.IS_PENDING, 1)
+                        }
+                    }
+                    val savedUri = try {
+                        val uri = contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, cv)
+                        if (uri != null) {
+                            contentResolver.openOutputStream(uri)?.use { out ->
+                                finalBmp.compress(Bitmap.CompressFormat.JPEG, 94, out)
+                                out.flush()
+                            }
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                                val doneCv = ContentValues().apply { put(MediaStore.Images.Media.IS_PENDING, 0) }
+                                contentResolver.update(uri, doneCv, null, null)
+                            }
+                        }
+                        uri
+                    } catch (e: Throwable) {
+                        Log.e(TAG, "AR preview composite photo save failed", e)
+                        null
+                    } finally {
+                        if (!finalBmp.isRecycled) finalBmp.recycle()
+                    }
+                    runOnUiThread {
+                        if (savedUri != null) {
+                            lastCapturedUri = savedUri
+                            lastCapturedMimeType = "image/jpeg"
+                            try {
+                                viewBinding.ivGalleryThumbnail.setImageURI(null)
+                                viewBinding.ivGalleryThumbnail.setImageURI(savedUri)
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Failed updating gallery thumbnail", e)
+                            }
+                        }
+                    }
+                }
+            }
+            return
+        }
+
+        val imageCapture = imageCapture ?: return
         val needsPostProcess = cameraMode == CameraMode.NIGHT ||
+            cameraMode == CameraMode.PORTRAIT ||
             isMultiCamPipEnabled && viewBinding.pipCardContainer.visibility == View.VISIBLE ||
             currentFilterName != "normal" ||
             currentShootingEffect != "none" ||
             viewBinding.proOverlayView.liveBrightnessPercent != 0 ||
             viewBinding.proOverlayView.liveContrastPercent != 0 ||
             viewBinding.proOverlayView.liveSaturationPercent != 0 ||
-            viewBinding.arFaceOverlayView.currentLens != ARFaceOverlayView.ArLensMode.NONE ||
-            viewBinding.arFaceOverlayView.enableComicOnomatopoeia ||
-            viewBinding.arFaceOverlayView.enableComicSpeechBubble ||
-            viewBinding.arFaceOverlayView.hasArTextItems() ||
+            viewBinding.arFaceOverlayView.hasAnyVisibleOverlay() ||
             viewBinding.proOverlayView.enableFilmGrain ||
             viewBinding.proOverlayView.enableDateStamp ||
             viewBinding.proOverlayView.enableCineFlare ||
             viewBinding.proOverlayView.enableVignette ||
-            viewBinding.proOverlayView.showWatermark
+            viewBinding.proOverlayView.showWatermark ||
+            parseDeSqueezeFactor(currentDeSqueeze) > 1.01f
 
         if (!isBurst) {
             if (cameraMode == CameraMode.NIGHT) {
@@ -6823,7 +7278,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         if (needsPostProcess) {
-            // Capture to private cache file first, apply all filters/effects/Art/Toon/AR cleanly,
+            // Capture to private cache file first, apply all filters/effects/Art/Toon/AR/Portrait cleanly,
             // then publish ONCE into MediaStore (IS_PENDING=1 -> write -> IS_PENDING=0) so OEM Scoped Storage never blocks overwrite!
             val tempFile = File(cacheDir, "raw_capture_${System.currentTimeMillis()}.jpg")
             val tempOutputOptions = ImageCapture.OutputFileOptions.Builder(tempFile).build()
@@ -7348,7 +7803,64 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun renderCreativeLookOntoBitmap(orientedBmp: Bitmap, pipBitmapSnapshot: Bitmap? = null, skipNightLut: Boolean = false): Bitmap {
+    private fun applyComputationalPortraitBokeh(src: Bitmap) {
+        val w = src.width
+        val h = src.height
+        if (w < 64 || h < 64) return
+        try {
+            // Fast 2-pass downscaled background blur so even 12MP portrait captures finish in <120ms without OOM
+            val blurW = (w / 14).coerceIn(48, 220)
+            val blurH = (h / 14).coerceIn(48, 220)
+            val tiny1 = Bitmap.createScaledBitmap(src, blurW, blurH, true)
+            val tiny2 = Bitmap.createScaledBitmap(tiny1, (blurW * 0.6f).toInt().coerceAtLeast(32), (blurH * 0.6f).toInt().coerceAtLeast(32), true)
+            if (tiny1 != tiny2) tiny1.recycle()
+            val blurredBg = Bitmap.createScaledBitmap(tiny2, w, h, true)
+            if (tiny2 != blurredBg) tiny2.recycle()
+
+            // Center sharp subject ellipse on tracked face if recent, otherwise classic portrait upper-center
+            val hasRecentFace = (SystemClock.uptimeMillis() - lastTrackedFaceTimeMs) < 2500L
+            val cx = w * (if (hasRecentFace) lastTrackedFaceX.coerceIn(0.25f, 0.75f) else 0.50f)
+            val cy = h * (if (hasRecentFace) (lastTrackedFaceY + 0.08f).coerceIn(0.25f, 0.70f) else 0.44f)
+            val rx = Math.min(w, h) * 0.38f
+            val ry = Math.max(w, h) * 0.36f
+
+            val sharpSubject = src.copy(Bitmap.Config.ARGB_8888, false)
+            val maskBmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+            val maskCanvas = Canvas(maskBmp)
+            maskCanvas.drawBitmap(sharpSubject, 0f, 0f, null)
+            sharpSubject.recycle()
+
+            val radialMaskPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_IN)
+                shader = RadialGradient(
+                    0f, 0f, 1f,
+                    intArrayOf(Color.BLACK, Color.BLACK, Color.argb(180, 0, 0, 0), Color.TRANSPARENT),
+                    floatArrayOf(0f, 0.58f, 0.80f, 1.0f),
+                    Shader.TileMode.CLAMP
+                )
+            }
+            maskCanvas.save()
+            maskCanvas.translate(cx, cy)
+            maskCanvas.scale(rx, ry)
+            maskCanvas.drawCircle(0f, 0f, 1f, radialMaskPaint)
+            maskCanvas.restore()
+
+            val outCanvas = Canvas(src)
+            outCanvas.drawBitmap(blurredBg, 0f, 0f, Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
+            outCanvas.drawBitmap(maskBmp, 0f, 0f, Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
+            blurredBg.recycle()
+            maskBmp.recycle()
+        } catch (t: Throwable) {
+            Log.w(TAG, "Computational portrait bokeh skipped", t)
+        }
+    }
+
+    private fun renderCreativeLookOntoBitmap(
+        orientedBmp: Bitmap,
+        pipBitmapSnapshot: Bitmap? = null,
+        skipNightLut: Boolean = false,
+        alreadyMirroredFront: Boolean = false
+    ): Bitmap {
             var finalBmp = Bitmap.createBitmap(orientedBmp.width, orientedBmp.height, Bitmap.Config.ARGB_8888)
             run {
                 val baseCanvas = Canvas(finalBmp)
@@ -7362,13 +7874,22 @@ class MainActivity : AppCompatActivity() {
                 if (hasColorMatrix) {
                     basePaint.colorFilter = ColorMatrixColorFilter(buildActiveColorMatrix(includeEffectColorLook = false))
                 }
-                baseCanvas.drawBitmap(orientedBmp, 0f, 0f, basePaint)
+                // Match live front-camera mirror preview so saved selfies & Face/Hand/Body/Beauty AR overlays align 1:1
+                val shouldMirrorFront = !alreadyMirroredFront && lensFacing == CameraSelector.DEFAULT_FRONT_CAMERA
+                if (shouldMirrorFront) {
+                    baseCanvas.save()
+                    baseCanvas.scale(-1f, 1f, finalBmp.width * 0.5f, finalBmp.height * 0.5f)
+                    baseCanvas.drawBitmap(orientedBmp, 0f, 0f, basePaint)
+                    baseCanvas.restore()
+                } else {
+                    baseCanvas.drawBitmap(orientedBmp, 0f, 0f, basePaint)
+                }
                 if (!orientedBmp.isRecycled) orientedBmp.recycle()
 
-                // If Comic Book base filter preset is selected, apply multi-pass GPU Comic shader with reliable CPU fallback
+                // If Comic Book base filter preset is selected, apply multi-pass GPU Comic shader respecting activeEffectIntensity
                 if (isComicFilterPreset(currentFilterName)) {
                     val gpuComic = try {
-                        filterManager.applyToonEffectToBitmap(finalBmp, "comic_book", 0.92f)
+                        filterManager.applyToonEffectToBitmap(finalBmp, "comic_book", activeEffectIntensity)
                     } catch (_: Throwable) {
                         null
                     }
@@ -7396,9 +7917,25 @@ class MainActivity : AppCompatActivity() {
                 finalBmp = writable
             }
 
+            // Computational Portrait Depth Bokeh when device HAL doesn't expose hardware ExtensionMode.BOKEH
+            if (cameraMode == CameraMode.PORTRAIT && !isPortraitExtensionActive) {
+                applyComputationalPortraitBokeh(finalBmp)
+            }
+
             // Computational Night Mode / Night Sight adaptive shadow-recovery LUT (skipped when already stacked)
             if (!skipNightLut && (cameraMode == CameraMode.NIGHT || currentShootingEffect == "night_sight")) {
                 applyComputationalNightEnhancement(finalBmp, isHardwareExt = isNightExtensionActive && cameraMode == CameraMode.NIGHT)
+            }
+
+            // Apply Anamorphic De-Squeeze optically to captured photo before stamping overlays so text stays crisp
+            val photoDeSqueeze = parseDeSqueezeFactor(currentDeSqueeze)
+            if (photoDeSqueeze > 1.01f) {
+                val targetH = (finalBmp.height / photoDeSqueeze).roundToInt().coerceAtLeast(120)
+                val squeezed = Bitmap.createScaledBitmap(finalBmp, finalBmp.width, targetH, true)
+                val writableSq = squeezed.copy(Bitmap.Config.ARGB_8888, true)
+                if (squeezed != writableSq) squeezed.recycle()
+                finalBmp.recycle()
+                finalBmp = writableSq
             }
 
             val canvas = Canvas(finalBmp)
@@ -7409,11 +7946,12 @@ class MainActivity : AppCompatActivity() {
             val scaleX = fw / overlayW
             val scaleY = fh / overlayH
             val scale = Math.min(scaleX, scaleY)
+            val effInt = activeEffectIntensity.coerceIn(0f, 1f)
 
-            // Bake Optical, Shutter & Motion Shooting Effects into saved JPEG
+            // Bake Optical, Shutter & Motion Shooting Effects into saved JPEG (real highlight-reactive & intensity-scaled)
             when (currentShootingEffect) {
                 "night_sight" -> {
-                    val nightCm = ColorMatrix().apply { setSaturation(1.08f) }
+                    val nightCm = ColorMatrix().apply { setSaturation(1.0f + 0.12f * effInt) }
                     val copy = finalBmp.copy(Bitmap.Config.ARGB_8888, false)
                     val p = Paint(Paint.ANTI_ALIAS_FLAG).apply { colorFilter = ColorMatrixColorFilter(nightCm) }
                     canvas.drawBitmap(copy, 0f, 0f, p)
@@ -7423,11 +7961,12 @@ class MainActivity : AppCompatActivity() {
                     val ghost = finalBmp.copy(Bitmap.Config.ARGB_8888, false)
                     val m = Matrix().apply {
                         postTranslate(-fw * 0.5f, -fh * 0.5f)
-                        postScale(1.12f, 1.12f)
-                        postRotate(3.2f)
-                        postTranslate(fw * 0.54f, fh * 0.48f)
+                        val sc = 1.04f + 0.10f * effInt
+                        postScale(sc, sc)
+                        postRotate(3.4f * effInt)
+                        postTranslate(fw * (0.5f + 0.045f * effInt), fh * (0.5f - 0.025f * effInt))
                     }
-                    val p = Paint(Paint.ANTI_ALIAS_FLAG).apply { alpha = 92 }
+                    val p = Paint(Paint.ANTI_ALIAS_FLAG).apply { alpha = (115f * effInt).roundToInt().coerceIn(0, 160) }
                     canvas.drawBitmap(ghost, m, p)
                     ghost.recycle()
                 }
@@ -7435,68 +7974,66 @@ class MainActivity : AppCompatActivity() {
                     val blurredBmp = motionBlurProcessor.applyDirectionalMotionBlur(
                         src = finalBmp,
                         metrics = latestMotionMetrics,
-                        intensity = activeEffectIntensity,
+                        intensity = effInt,
                         forLivePreview = false
                     )
                     canvas.drawBitmap(blurredBmp, 0f, 0f, null)
                     if (blurredBmp != finalBmp && !blurredBmp.isRecycled) blurredBmp.recycle()
                 }
                 "long_exposure" -> {
+                    // Real multi-tap directional streak accumulation (no fake hardcoded orange bar)
                     val streakSrc = finalBmp.copy(Bitmap.Config.ARGB_8888, false)
-                    val p = Paint(Paint.ANTI_ALIAS_FLAG).apply { alpha = 48 }
-                    val shiftAmt = 0.012f
-                    canvas.drawBitmap(streakSrc, -fw * shiftAmt, 0f, p)
-                    canvas.drawBitmap(streakSrc, fw * shiftAmt, 0f, p)
-                    streakSrc.recycle()
-                    val trailP = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                        style = Paint.Style.STROKE
-                        strokeCap = Paint.Cap.ROUND
-                        strokeWidth = (fw * 0.008f).coerceAtLeast(6f)
-                        shader = LinearGradient(
-                            0f, fh * 0.65f, fw, fh * 0.65f,
-                            intArrayOf(Color.TRANSPARENT, Color.parseColor("#99F59E0B"), Color.TRANSPARENT),
-                            null, Shader.TileMode.CLAMP
-                        )
+                    val dirX = if (Math.abs(latestMotionMetrics.dirX) + Math.abs(latestMotionMetrics.dirY) > 0.1f) latestMotionMetrics.dirX else 1.0f
+                    val dirY = if (Math.abs(latestMotionMetrics.dirX) + Math.abs(latestMotionMetrics.dirY) > 0.1f) latestMotionMetrics.dirY else 0.0f
+                    val maxShift = Math.min(fw, fh) * (0.024f * effInt)
+                    val p = Paint(Paint.ANTI_ALIAS_FLAG).apply { alpha = (34f * effInt).roundToInt().coerceIn(8, 52) }
+                    for (tap in -3..3) {
+                        if (tap == 0) continue
+                        val frac = tap / 3f
+                        canvas.drawBitmap(streakSrc, dirX * maxShift * frac, dirY * maxShift * frac, p)
                     }
-                    canvas.drawLine(0f, fh * 0.65f, fw, fh * 0.64f, trailP)
+                    streakSrc.recycle()
                 }
                 "light_painting" -> {
-                    val glowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                        style = Paint.Style.STROKE
-                        strokeCap = Paint.Cap.ROUND
+                    // Real highlight-extracted light trail accumulation along motion flow (only real lights paint trails)
+                    val hiBmp = extractHighlightBitmap(finalBmp, lumaThreshold = 205, tintR = 1.05f, tintG = 1.02f, tintB = 1.12f)
+                    val screenP = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
+                        xfermode = PorterDuffXfermode(PorterDuff.Mode.SCREEN)
+                        alpha = (165f * effInt).roundToInt().coerceIn(0, 220)
                     }
-                    val path = Path()
-                    for (step in 0..64) {
-                        val t = 1.2 + step * 0.08
-                        val px = fw * (0.5f + 0.30f * Math.sin(t * 1.3).toFloat())
-                        val py = fh * (0.48f + 0.22f * Math.cos(t * 2.1).toFloat())
-                        if (step == 0) path.moveTo(px, py) else path.lineTo(px, py)
+                    val dirX = if (Math.abs(latestMotionMetrics.dirX) + Math.abs(latestMotionMetrics.dirY) > 0.1f) latestMotionMetrics.dirX else 0.85f
+                    val dirY = if (Math.abs(latestMotionMetrics.dirX) + Math.abs(latestMotionMetrics.dirY) > 0.1f) latestMotionMetrics.dirY else -0.35f
+                    val stepDist = Math.min(fw, fh) * (0.014f * effInt)
+                    for (k in 1..6) {
+                        val dst = RectF(dirX * stepDist * k, dirY * stepDist * k, fw + dirX * stepDist * k, fh + dirY * stepDist * k)
+                        screenP.alpha = ((170f * effInt) * (1f - k * 0.12f)).roundToInt().coerceIn(10, 220)
+                        canvas.drawBitmap(hiBmp, null, dst, screenP)
                     }
-                    glowPaint.strokeWidth = (fw * 0.022f).coerceAtLeast(16f)
-                    glowPaint.color = Color.parseColor("#44EC4899")
-                    canvas.drawPath(path, glowPaint)
-                    glowPaint.strokeWidth = (fw * 0.007f).coerceAtLeast(6f)
-                    glowPaint.color = Color.parseColor("#E638BDF8")
-                    canvas.drawPath(path, glowPaint)
+                    hiBmp.recycle()
                 }
                 "star_trails" -> {
-                    val starPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                        style = Paint.Style.STROKE
-                        strokeCap = Paint.Cap.ROUND
-                        strokeWidth = (fw * 0.0035f).coerceAtLeast(3f)
+                    // Real bright-point rotational arc accumulator (only real stars/lights form celestial trails)
+                    val starSrc = extractHighlightBitmap(finalBmp, lumaThreshold = 215, tintR = 1.04f, tintG = 1.02f, tintB = 0.94f)
+                    val screenP = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
+                        xfermode = PorterDuffXfermode(PorterDuff.Mode.SCREEN)
                     }
-                    val cx = fw * 0.5f
-                    val cy = fh * 0.22f
-                    for (i in 1..9) {
-                        val r = Math.min(fw, fh) * (0.10f + i * 0.065f)
-                        val oval = RectF(cx - r, cy - r, cx + r, cy + r)
-                        starPaint.color = if (i % 2 == 0) Color.parseColor("#AAFFFFFF") else Color.parseColor("#AAFEF08A")
-                        canvas.drawArc(oval, i * 33f, 54f + (i % 3) * 18f, false, starPaint)
+                    val poleX = fw * 0.5f
+                    val poleY = fh * 0.18f
+                    val maxDeg = 14f * effInt
+                    for (step in 1..10) {
+                        val deg = (step / 10f) * maxDeg
+                        screenP.alpha = ((165f * effInt) * (1f - step * 0.07f)).roundToInt().coerceIn(12, 210)
+                        canvas.save()
+                        canvas.rotate(deg, poleX, poleY)
+                        canvas.drawBitmap(starSrc, null, RectF(0f, 0f, fw, fh), screenP)
+                        canvas.restore()
                     }
+                    starSrc.recycle()
                 }
                 "portrait_bokeh", "video_bokeh", "tilt_shift" -> {
-                    val smallW = (finalBmp.width / 14).coerceAtLeast(32)
-                    val smallH = (finalBmp.height / 14).coerceAtLeast(32)
+                    val blurDiv = (4f + 12f * effInt).roundToInt().coerceIn(4, 18)
+                    val smallW = (finalBmp.width / blurDiv).coerceAtLeast(32)
+                    val smallH = (finalBmp.height / blurDiv).coerceAtLeast(32)
                     val down = Bitmap.createScaledBitmap(finalBmp, smallW, smallH, true)
                     val blurred = Bitmap.createScaledBitmap(down, finalBmp.width, finalBmp.height, true)
                     down.recycle()
@@ -7512,14 +8049,20 @@ class MainActivity : AppCompatActivity() {
                             val r = Math.max(fw, fh) * 0.58f
                             RadialGradient(
                                 fw * 0.5f, fh * 0.45f, r,
-                                intArrayOf(Color.TRANSPARENT, Color.argb(120, 0, 0, 0), Color.BLACK),
+                                intArrayOf(Color.TRANSPARENT, Color.argb((125f * effInt).roundToInt().coerceIn(0, 255), 0, 0, 0), Color.argb((255f * effInt).roundToInt().coerceIn(0, 255), 0, 0, 0)),
                                 floatArrayOf(0.28f, 0.50f, 1.0f),
                                 Shader.TileMode.CLAMP
                             )
                         } else {
                             LinearGradient(
                                 0f, 0f, 0f, fh,
-                                intArrayOf(Color.BLACK, Color.argb(140, 0, 0, 0), Color.TRANSPARENT, Color.TRANSPARENT, Color.argb(140, 0, 0, 0), Color.BLACK),
+                                intArrayOf(
+                                    Color.argb((255f * effInt).roundToInt().coerceIn(0, 255), 0, 0, 0),
+                                    Color.argb((145f * effInt).roundToInt().coerceIn(0, 255), 0, 0, 0),
+                                    Color.TRANSPARENT, Color.TRANSPARENT,
+                                    Color.argb((145f * effInt).roundToInt().coerceIn(0, 255), 0, 0, 0),
+                                    Color.argb((255f * effInt).roundToInt().coerceIn(0, 255), 0, 0, 0)
+                                ),
                                 floatArrayOf(0f, 0.24f, 0.36f, 0.64f, 0.76f, 1.0f),
                                 Shader.TileMode.CLAMP
                             )
@@ -7543,22 +8086,22 @@ class MainActivity : AppCompatActivity() {
                     if (!planetBmp.isRecycled) planetBmp.recycle()
                 }
                 "soft_halation" -> {
-                    val haloPaint = Paint(Paint.ANTI_ALIAS_FLAG)
-                    haloPaint.shader = RadialGradient(
-                        fw * 0.28f, fh * 0.24f, fw * 0.44f,
-                        intArrayOf(Color.parseColor("#55FF4D1A"), Color.parseColor("#20FF7043"), Color.TRANSPARENT),
-                        floatArrayOf(0f, 0.45f, 1f),
-                        Shader.TileMode.CLAMP
-                    )
-                    canvas.drawRect(0f, 0f, fw, fh, haloPaint)
+                    // Real highlight-bloom halation (extracts actual bright areas and blooms warm red-orange film halation around them)
+                    val haloBmp = extractHighlightBitmap(finalBmp, lumaThreshold = 192, tintR = 1.25f, tintG = 0.55f, tintB = 0.25f)
+                    val bloomPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
+                        xfermode = PorterDuffXfermode(PorterDuff.Mode.SCREEN)
+                        alpha = (210f * effInt).roundToInt().coerceIn(0, 255)
+                    }
+                    canvas.drawBitmap(haloBmp, null, RectF(0f, 0f, fw, fh), bloomPaint)
+                    haloBmp.recycle()
                 }
                 "vintage_super8" -> {
                     val s8Cm = ColorMatrix().apply {
-                        setSaturation(0.84f)
+                        setSaturation(1.0f - 0.16f * effInt)
                         postConcat(ColorMatrix(floatArrayOf(
-                            1.08f, 0.08f, 0.0f, 0f, 8f,
-                            0.03f, 1.02f, 0.0f, 0f, 4f,
-                            0.0f, 0.02f, 0.82f, 0f, -6f,
+                            1.0f + 0.08f * effInt, 0.08f * effInt, 0.0f, 0f, 8f * effInt,
+                            0.03f * effInt, 1.0f + 0.02f * effInt, 0.0f, 0f, 4f * effInt,
+                            0.0f, 0.02f * effInt, 1.0f - 0.18f * effInt, 0f, -6f * effInt,
                             0f, 0f, 0f, 1f, 0f
                         )))
                     }
@@ -7567,20 +8110,22 @@ class MainActivity : AppCompatActivity() {
                     canvas.drawBitmap(copy, 0f, 0f, p)
                     copy.recycle()
 
+                    val leakAlpha1 = (102f * effInt).roundToInt().coerceIn(0, 255)
+                    val leakAlpha2 = (42f * effInt).roundToInt().coerceIn(0, 255)
                     val leakPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                         shader = RadialGradient(
                             fw * 0.92f, fh * 0.16f, fw * 0.48f,
-                            intArrayOf(Color.parseColor("#66FB923C"), Color.parseColor("#28EF4444"), Color.TRANSPARENT),
+                            intArrayOf(Color.argb(leakAlpha1, 251, 146, 60), Color.argb(leakAlpha2, 239, 68, 68), Color.TRANSPARENT),
                             floatArrayOf(0f, 0.5f, 1f),
                             Shader.TileMode.CLAMP
                         )
                     }
                     canvas.drawRect(0f, 0f, fw, fh, leakPaint)
 
-                    val railW = fw * 0.045f
+                    val railW = fw * 0.045f * effInt
                     val gatePaint = Paint().apply { color = Color.parseColor("#E6060608") }
                     canvas.drawRect(0f, 0f, railW, fh, gatePaint)
-                    canvas.drawRect(fw - fw * 0.015f, 0f, fw, fh, gatePaint)
+                    canvas.drawRect(fw - fw * 0.015f * effInt, 0f, fw, fh, gatePaint)
                 }
                 "oil_canvas", "charcoal_sketch", "watercolor_wash", "ink_and_line",
                 "pastel_chalk", "halftone_print", "cyanotype", "woodcut_engraving",
@@ -7593,7 +8138,7 @@ class MainActivity : AppCompatActivity() {
                 "cel_shaded_studio", "graphic_novel_noir", "manga_ink", "pop_art_print",
                 "line_art_minimalist", "ligne_claire" -> {
                     val gpuToon = try {
-                        filterManager.applyToonEffectToBitmap(finalBmp, currentShootingEffect, activeEffectIntensity)
+                        filterManager.applyToonEffectToBitmap(finalBmp, currentShootingEffect, effInt)
                     } catch (_: Throwable) {
                         null
                     }
@@ -7603,11 +8148,11 @@ class MainActivity : AppCompatActivity() {
                 }
                 "super8_film" -> {
                     val s8Cm = ColorMatrix().apply {
-                        setSaturation(0.92f)
+                        setSaturation(1.0f - 0.08f * effInt)
                         postConcat(ColorMatrix(floatArrayOf(
-                            1.14f, 0.08f, 0f, 0f, 10f,
-                            0.04f, 1.04f, 0f, 0f, 4f,
-                            0f, 0.02f, 0.80f, 0f, -8f,
+                            1.0f + 0.14f * effInt, 0.08f * effInt, 0f, 0f, 10f * effInt,
+                            0.04f * effInt, 1.0f + 0.04f * effInt, 0f, 0f, 4f * effInt,
+                            0f, 0.02f * effInt, 1.0f - 0.20f * effInt, 0f, -8f * effInt,
                             0f, 0f, 0f, 1f, 0f
                         )))
                     }
@@ -7618,29 +8163,29 @@ class MainActivity : AppCompatActivity() {
                     val scrP = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                         style = Paint.Style.STROKE
                         strokeWidth = (fw * 0.002f).coerceAtLeast(2f)
-                        color = Color.parseColor("#66FFFBEB")
+                        color = Color.argb((100f * effInt).roundToInt().coerceIn(0, 255), 255, 251, 235)
                     }
                     canvas.drawLine(fw * 0.24f, 0f, fw * 0.245f, fh, scrP)
                     canvas.drawLine(fw * 0.72f, 0f, fw * 0.715f, fh, scrP)
                     val gatePath = Path().apply {
                         fillType = Path.FillType.EVEN_ODD
                         addRect(0f, 0f, fw, fh, Path.Direction.CW)
-                        val ix = fw * 0.045f
-                        val iy = fh * 0.04f
-                        val cr = Math.min(fw, fh) * 0.085f
+                        val ix = fw * 0.045f * effInt
+                        val iy = fh * 0.04f * effInt
+                        val cr = Math.min(fw, fh) * 0.085f * effInt
                         addRoundRect(RectF(ix, iy, fw - ix, fh - iy), cr, cr, Path.Direction.CCW)
                     }
                     canvas.drawPath(gatePath, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#F0070709") })
                 }
                 "film_16mm" -> {
                     val docCm = ColorMatrix().apply {
-                        setSaturation(0.88f)
-                        val c = 1.14f
+                        setSaturation(1.0f - 0.12f * effInt)
+                        val c = 1.0f + 0.14f * effInt
                         val t = (-0.5f * c + 0.5f) * 255f
                         postConcat(ColorMatrix(floatArrayOf(
-                            c, 0.02f, 0f, 0f, t + 4f,
-                            0f, c, 0f, 0f, t + 2f,
-                            0f, 0f, c * 0.94f, 0f, t - 2f,
+                            c, 0.02f * effInt, 0f, 0f, t + 4f * effInt,
+                            0f, c, 0f, 0f, t + 2f * effInt,
+                            0f, 0f, c * (1f - 0.06f * effInt), 0f, t - 2f * effInt,
                             0f, 0f, 0f, 1f, 0f
                         )))
                     }
@@ -7650,23 +8195,24 @@ class MainActivity : AppCompatActivity() {
                     copy.recycle()
                 }
                 "vhs_tape" -> {
-                    val smallW = (finalBmp.width / 4).coerceAtLeast(120)
-                    val smallH = (finalBmp.height / 4).coerceAtLeast(160)
+                    val div = (1f + 3f * effInt).roundToInt().coerceIn(2, 5)
+                    val smallW = (finalBmp.width / div).coerceAtLeast(120)
+                    val smallH = (finalBmp.height / div).coerceAtLeast(160)
                     val down = Bitmap.createScaledBitmap(finalBmp, smallW, smallH, true)
                     val soft = Bitmap.createScaledBitmap(down, finalBmp.width, finalBmp.height, true)
                     down.recycle()
-                    canvas.drawBitmap(soft, 0f, 0f, null)
-                    val bleedP = Paint(Paint.ANTI_ALIAS_FLAG).apply { alpha = 58 }
-                    canvas.drawBitmap(soft, -fw * 0.008f, 0f, bleedP)
-                    canvas.drawBitmap(soft, fw * 0.008f, 0f, bleedP)
+                    canvas.drawBitmap(soft, 0f, 0f, Paint(Paint.ANTI_ALIAS_FLAG).apply { alpha = (255f * effInt).roundToInt().coerceIn(0, 255) })
+                    val bleedP = Paint(Paint.ANTI_ALIAS_FLAG).apply { alpha = (64f * effInt).roundToInt().coerceIn(0, 120) }
+                    canvas.drawBitmap(soft, -fw * 0.008f * effInt, 0f, bleedP)
+                    canvas.drawBitmap(soft, fw * 0.008f * effInt, 0f, bleedP)
                     soft.recycle()
                     val trackY = fh * 0.68f
-                    val trackP = Paint().apply { color = Color.parseColor("#55FFFFFF") }
+                    val trackP = Paint().apply { color = Color.argb((85f * effInt).roundToInt().coerceIn(0, 180), 255, 255, 255) }
                     canvas.drawRect(0f, trackY, fw, trackY + fh * 0.015f, trackP)
                     canvas.drawRect(0f, fh - fh * 0.012f, fw, fh, trackP)
                 }
                 "crt_monitor" -> {
-                    val scanP = Paint().apply { color = Color.parseColor("#52020612") }
+                    val scanP = Paint().apply { color = Color.argb((84f * effInt).roundToInt().coerceIn(0, 180), 2, 6, 18) }
                     val step = (fh / 160f).toInt().coerceAtLeast(4)
                     for (y in 0 until finalBmp.height step step) {
                         canvas.drawRect(0f, y.toFloat(), fw, y + step * 0.45f, scanP)
@@ -7674,7 +8220,11 @@ class MainActivity : AppCompatActivity() {
                     val vigP = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                         shader = RadialGradient(
                             fw * 0.5f, fh * 0.5f, Math.max(fw, fh) * 0.72f,
-                            intArrayOf(Color.parseColor("#1EB8E6FD"), Color.TRANSPARENT, Color.parseColor("#99020617")),
+                            intArrayOf(
+                                Color.argb((30f * effInt).roundToInt().coerceIn(0, 100), 184, 230, 253),
+                                Color.TRANSPARENT,
+                                Color.argb((155f * effInt).roundToInt().coerceIn(0, 220), 2, 6, 23)
+                            ),
                             floatArrayOf(0f, 0.62f, 1f),
                             Shader.TileMode.CLAMP
                         )
@@ -7682,34 +8232,17 @@ class MainActivity : AppCompatActivity() {
                     canvas.drawRect(0f, 0f, fw, fh, vigP)
                 }
                 "stop_motion" -> {
-                    val smCm = ColorMatrix().apply { setSaturation(1.18f) }
+                    val smCm = ColorMatrix().apply { setSaturation(1.0f + 0.18f * effInt) }
                     val copy = finalBmp.copy(Bitmap.Config.ARGB_8888, false)
                     canvas.drawBitmap(copy, 0f, 0f, Paint(Paint.ANTI_ALIAS_FLAG).apply { colorFilter = ColorMatrixColorFilter(smCm) })
                     copy.recycle()
                 }
             }
 
-            // Bake Anamorphic Flare streaks if Cine Flare toggle OR anamorphic_flare effect is active
+            // Bake Highlight-Reactive Anamorphic Flare streaks (only blooms from real bright light sources in the frame!)
             if (viewBinding.proOverlayView.enableCineFlare || currentShootingEffect == "anamorphic_flare") {
-                val flarePaint = Paint(Paint.ANTI_ALIAS_FLAG)
-                val cy = fh * 0.44f
-                val streakH = fh * 0.018f
-                flarePaint.shader = LinearGradient(
-                    0f, cy, fw, cy,
-                    intArrayOf(Color.TRANSPARENT, Color.parseColor("#B300D4FF"), Color.parseColor("#E6FFFFFF"), Color.parseColor("#B300D4FF"), Color.TRANSPARENT),
-                    floatArrayOf(0f, 0.35f, 0.5f, 0.65f, 1f),
-                    Shader.TileMode.CLAMP
-                )
-                canvas.drawRect(0f, cy - streakH, fw, cy + streakH, flarePaint)
-                val cy2 = fh * 0.56f
-                val streakH2 = fh * 0.010f
-                flarePaint.shader = LinearGradient(
-                    0f, cy2, fw, cy2,
-                    intArrayOf(Color.TRANSPARENT, Color.parseColor("#88F59E0B"), Color.parseColor("#CCFFFFFF"), Color.parseColor("#88F59E0B"), Color.TRANSPARENT),
-                    floatArrayOf(0f, 0.38f, 0.58f, 0.72f, 1f),
-                    Shader.TileMode.CLAMP
-                )
-                canvas.drawRect(0f, cy2 - streakH2, fw, cy2 + streakH2, flarePaint)
+                val flareStrength = if (currentShootingEffect == "anamorphic_flare") effInt else 0.78f
+                applyHighlightAnamorphicFlare(canvas, finalBmp, flareStrength)
             }
 
             // Bake Film Grain if Film Grain toggle, Shooting Effect, Vintage Super 8, 16mm Docu, OR Ilford Grain filter is active
@@ -7812,6 +8345,102 @@ class MainActivity : AppCompatActivity() {
             }
 
             return finalBmp
+    }
+
+    /**
+     * Extracts bright highlight pixels above lumaThreshold into a smooth downscaled bloom buffer
+     * so Soft Halation, Light Painting, and Star Trails react genuinely to actual light sources.
+     */
+    private fun extractHighlightBitmap(src: Bitmap, lumaThreshold: Int, tintR: Float, tintG: Float, tintB: Float): Bitmap {
+        val sw = (src.width / 6).coerceIn(64, 240)
+        val sh = (src.height / 6).coerceIn(64, 320)
+        val small = Bitmap.createScaledBitmap(src, sw, sh, true)
+        val px = IntArray(sw * sh)
+        small.getPixels(px, 0, sw, 0, 0, sw, sh)
+        val range = (255 - lumaThreshold).coerceAtLeast(10).toFloat()
+        for (i in px.indices) {
+            val c = px[i]
+            val r = (c shr 16) and 0xFF
+            val g = (c shr 8) and 0xFF
+            val b = c and 0xFF
+            val lum = (r * 77 + g * 150 + b * 29) shr 8
+            if (lum > lumaThreshold) {
+                val strength = ((lum - lumaThreshold) / range).coerceIn(0f, 1f)
+                val nr = (r * tintR * strength).roundToInt().coerceIn(0, 255)
+                val ng = (g * tintG * strength).roundToInt().coerceIn(0, 255)
+                val nb = (b * tintB * strength).roundToInt().coerceIn(0, 255)
+                px[i] = (0xFF shl 24) or (nr shl 16) or (ng shl 8) or nb
+            } else {
+                px[i] = 0xFF000000.toInt()
+            }
+        }
+        small.setPixels(px, 0, sw, 0, 0, sw, sh)
+        val tinyW = (sw / 2).coerceAtLeast(32)
+        val tinyH = (sh / 2).coerceAtLeast(32)
+        val soft = Bitmap.createScaledBitmap(small, tinyW, tinyH, true)
+        small.recycle()
+        return soft
+    }
+
+    /**
+     * Scans actual bright light sources in the captured photo and renders horizontal cyan/white anamorphic streaks
+     * centered on those real bright sources (no hardcoded streaks in dark scenes).
+     */
+    private fun applyHighlightAnamorphicFlare(canvas: Canvas, src: Bitmap, intensity: Float) {
+        if (intensity <= 0.02f) return
+        val sw = 72
+        val sh = 96
+        val sample = Bitmap.createScaledBitmap(src, sw, sh, true)
+        val px = IntArray(sw * sh)
+        sample.getPixels(px, 0, sw, 0, 0, sw, sh)
+        sample.recycle()
+
+        // Find up to 3 distinct brightest light peaks above threshold 220
+        val peaks = mutableListOf<Triple<Float, Float, Float>>() // normX, normY, strength
+        for (y in 2 until sh - 2 step 2) {
+            val rowOff = y * sw
+            for (x in 2 until sw - 2 step 2) {
+                val c = px[rowOff + x]
+                val lum = (((c shr 16) and 0xFF) * 77 + ((c shr 8) and 0xFF) * 150 + (c and 0xFF) * 29) shr 8
+                if (lum >= 224) {
+                    val nx = x / sw.toFloat()
+                    val ny = y / sh.toFloat()
+                    val strength = ((lum - 216) / 39f).coerceIn(0.25f, 1f)
+                    val tooClose = peaks.any { Math.abs(it.second - ny) < 0.09f }
+                    if (!tooClose) {
+                        peaks.add(Triple(nx, ny, strength))
+                    }
+                }
+            }
+        }
+        if (peaks.isEmpty()) return
+        val topPeaks = peaks.sortedByDescending { it.third }.take(3)
+        val fw = src.width.toFloat()
+        val fh = src.height.toFloat()
+        val flarePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            xfermode = PorterDuffXfermode(PorterDuff.Mode.SCREEN)
+        }
+        for ((nx, ny, strength) in topPeaks) {
+            val cy = fh * ny
+            val cx = fw * nx
+            val streakH = fh * (0.011f + 0.008f * strength) * intensity
+            val aCore = (210f * strength * intensity).roundToInt().coerceIn(0, 255)
+            val aCyan = (155f * strength * intensity).roundToInt().coerceIn(0, 255)
+            val span = fw * (0.42f + 0.18f * strength)
+            flarePaint.shader = LinearGradient(
+                cx - span, cy, cx + span, cy,
+                intArrayOf(
+                    Color.TRANSPARENT,
+                    Color.argb(aCyan, 0, 212, 255),
+                    Color.argb(aCore, 255, 255, 255),
+                    Color.argb(aCyan, 0, 212, 255),
+                    Color.TRANSPARENT
+                ),
+                floatArrayOf(0f, 0.34f, 0.5f, 0.66f, 1f),
+                Shader.TileMode.CLAMP
+            )
+            canvas.drawRect(0f, cy - streakH, fw, cy + streakH, flarePaint)
+        }
     }
 
     private val allCameraModes = listOf(
@@ -8103,6 +8732,7 @@ class MainActivity : AppCompatActivity() {
             viewBinding.tvArRecLockBadge.visibility = View.GONE
             viewBinding.tvArRecLockBadge.translationY = 0f
             if (currentArLensName != "none") {
+                saveCurrentLensTransform()
                 lastActiveArLensName = currentArLensName
             }
             stopBatchLoop()
@@ -8112,8 +8742,19 @@ class MainActivity : AppCompatActivity() {
             viewBinding.arLensModeDock.btnArBatch.setTextColor(Color.parseColor("#94A3B8"))
             viewBinding.arLensModeDock.root.visibility = View.GONE
             viewBinding.arCalibrationDrawer.visibility = View.GONE
-            // Preserve activeArFamily when switching out of AR_LENS so returning restores the user's AR mode!
+            // Turn off ALL active AR overlays (Face, Hand, Body, Snap Magic, World, Beauty) when leaving AR_LENS
+            // so silhouettes/gauntlets/planes NEVER bleed into SLOW-MO, PHOTO, VIDEO, or PANORAMA!
+            val ov = viewBinding.arFaceOverlayView
             setArLens("none", showNotice = false, syncFloatingMenu = false)
+            ov.applyHandArPreset("off")
+            ov.applyBodyArPreset("off")
+            ov.applyWorldArPreset("off")
+            ov.applyFaceBeautyPreset("off")
+            ov.snapGauntletEnabled = false
+            ov.snapGlbEnabled = false
+            ov.clear()
+            syncWorldArLifecycleAndPower()
+            syncOverlayToVideoProcessor()
         }
         cameraMode = mode
         if (prevMode != mode) {
@@ -8152,7 +8793,7 @@ class MainActivity : AppCompatActivity() {
             viewBinding.tvRecordingStatus.setTextColor(Color.parseColor("#E879F9"))
             viewBinding.chronometer.text = "TAP PHOTO · HOLD 0.5S VID"
             viewBinding.chronometer.setTextColor(Color.parseColor("#F0ABFC"))
-            // Entering AR LENS from another mode wakes up Face AR if left on Off so swipe & lenses work immediately!
+            // Entering AR LENS from another mode wakes Face AR only if left on Off (respects user's last active family)
             if (prevMode != CameraMode.AR_LENS && activeArFamily == "off") {
                 activeArFamily = "face"
             }
@@ -8197,10 +8838,17 @@ class MainActivity : AppCompatActivity() {
             viewBinding.btnPauseResume.visibility = View.GONE
             viewBinding.recordingDot.setBackgroundResource(R.drawable.bg_green_dot)
             viewBinding.recordingDot.visibility = View.VISIBLE
-            viewBinding.tvRecordingStatus.text = "STANDBY"
-            viewBinding.tvRecordingStatus.setTextColor(Color.parseColor("#10B981"))
-            viewBinding.chronometer.text = "00:00:00"
-            viewBinding.chronometer.setTextColor(Color.parseColor("#FFFFFF"))
+            if (mode == CameraMode.SLOW_MO) {
+                viewBinding.tvRecordingStatus.text = "SLOW-MO"
+                viewBinding.tvRecordingStatus.setTextColor(Color.parseColor("#FACC15"))
+                viewBinding.chronometer.text = activeSlowMoFpsLabel
+                viewBinding.chronometer.setTextColor(Color.parseColor("#FEF08A"))
+            } else {
+                viewBinding.tvRecordingStatus.text = "STANDBY"
+                viewBinding.tvRecordingStatus.setTextColor(Color.parseColor("#10B981"))
+                viewBinding.chronometer.text = "00:00:00"
+                viewBinding.chronometer.setTextColor(Color.parseColor("#FFFFFF"))
+            }
             updateAutoLoopHud()
             // Non-AR modes keep right floating bar collapsed by default
             activeFloatingSettingId = null
@@ -8246,9 +8894,17 @@ class MainActivity : AppCompatActivity() {
             MediaStore.MediaColumns.DATE_ADDED,
             MediaStore.MediaColumns.MIME_TYPE
         )
-        // Match files saved in CameraX folders or with CameraX file naming
-        val selection = "${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ? OR ${MediaStore.MediaColumns.DISPLAY_NAME} LIKE ?"
-        val selectionArgs = arrayOf("%CameraX%", "%CameraX%")
+        // Match files saved in CameraX folders (API 29+) or with CameraX file naming (API 24-28 safe)
+        val selection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            "${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ? OR ${MediaStore.MediaColumns.DISPLAY_NAME} LIKE ?"
+        } else {
+            "${MediaStore.MediaColumns.DISPLAY_NAME} LIKE ?"
+        }
+        val selectionArgs = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            arrayOf("%CameraX%", "%CameraX%")
+        } else {
+            arrayOf("%CameraX%")
+        }
         val sortOrder = "${MediaStore.MediaColumns.DATE_ADDED} DESC"
 
         try {
@@ -8382,38 +9038,134 @@ class MainActivity : AppCompatActivity() {
         window.decorView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
     }
 
-    private fun navigateNextArLens() {
-        val currentIdx = arLensOrder.indexOf(currentArLensName)
-        val safeIdx = if (currentIdx >= 0) currentIdx else 0
-        // At 'none' (index 0): swiping left exits AR Lens mode to the next camera mode
-        if (safeIdx == 0) {
-            navigateNextCameraMode()
-            return
-        }
-        val nextIdx = if (safeIdx + 1 >= arLensOrder.size) 0 else safeIdx + 1
-        val targetLens = arLensOrder[nextIdx]
-        setArLens(targetLens, showNotice = targetLens != "none")
-        if (targetLens == "none") {
-            showHudNotice("AR LENS: NONE · Swipe left to exit AR mode")
+    private fun navigateArFamilySwipe(step: Int) {
+        val ov = viewBinding.arFaceOverlayView
+        when (activeArFamily) {
+            "off" -> {
+                if (step > 0) navigateNextCameraMode() else navigatePreviousCameraMode()
+                return
+            }
+            "face" -> {
+                val faceIds = listOf("mesh_contour", "cyberpunk_visor", "golden_crown", "scifi_hud", "comic_frame") +
+                    getCategoryGlbs("face").map { it.id } +
+                    injectedCustomLenses.filter { it.category == "face" && !it.style.equals("glb_3d", ignoreCase = true) }.map { it.id }
+                val distinctIds = faceIds.distinct()
+                if (distinctIds.isEmpty()) return
+                val curIdx = distinctIds.indexOf(currentArLensName)
+                val nextIdx = if (curIdx < 0) 0 else (curIdx + step + distinctIds.size) % distinctIds.size
+                setArLens(distinctIds[nextIdx], showNotice = true, syncFloatingMenu = false)
+                refreshFloatingModeMenu()
+            }
+            "hand" -> {
+                val builtIn = listOf("luxury_jewelry", "cyber_gauntlet", "arcane_orb", "pyro_wand")
+                val glbs = getCategoryGlbs("hand")
+                val allIds = builtIn + glbs.map { it.id }
+                val currentKey = activeHandGlbId.ifEmpty { ov.handPresetId }
+                val curIdx = allIds.indexOf(currentKey)
+                val nextIdx = if (curIdx < 0) 0 else (curIdx + step + allIds.size) % allIds.size
+                val targetId = allIds[nextIdx]
+                val glb = glbs.find { it.id == targetId }
+                if (glb != null) {
+                    activateCategoryGlb("hand", glb)
+                } else {
+                    activeHandGlbId = ""
+                    ov.applyHandArPreset(targetId)
+                    showHudNotice("Hand AR: ${targetId.replace('_', ' ').uppercase(Locale.ROOT)}")
+                }
+                refreshFloatingModeMenu()
+            }
+            "body" -> {
+                val builtIn = listOf("cyber_angel", "hero_cape", "mecha_armor", "chroma_studio")
+                val glbs = getCategoryGlbs("body")
+                val allIds = builtIn + glbs.map { it.id }
+                val currentKey = activeBodyGlbId.ifEmpty { ov.bodyPresetId }
+                val curIdx = allIds.indexOf(currentKey)
+                val nextIdx = if (curIdx < 0) 0 else (curIdx + step + allIds.size) % allIds.size
+                val targetId = allIds[nextIdx]
+                val glb = glbs.find { it.id == targetId }
+                if (glb != null) {
+                    activateCategoryGlb("body", glb)
+                } else {
+                    activeBodyGlbId = ""
+                    ov.applyBodyArPreset(targetId)
+                    showHudNotice("Body AR: ${targetId.replace('_', ' ').uppercase(Locale.ROOT)}")
+                }
+                refreshFloatingModeMenu()
+            }
+            "world" -> {
+                val builtIn = listOf("holo_showcase", "cyber_portal", "ar_measure", "glb_world_stage")
+                val glbs = getCategoryGlbs("world")
+                val allIds = builtIn + glbs.map { it.id }
+                val currentKey = activeWorldGlbId.ifEmpty { ov.worldPresetId }
+                val curIdx = allIds.indexOf(currentKey)
+                val nextIdx = if (curIdx < 0) 0 else (curIdx + step + allIds.size) % allIds.size
+                val targetId = allIds[nextIdx]
+                val glb = glbs.find { it.id == targetId }
+                if (glb != null) {
+                    activateCategoryGlb("world", glb)
+                } else {
+                    activeWorldGlbId = ""
+                    ov.applyWorldArPreset(targetId)
+                    syncWorldArLifecycleAndPower()
+                    showHudNotice("World AR: ${targetId.replace('_', ' ').uppercase(Locale.ROOT)}")
+                }
+                refreshFloatingModeMenu()
+            }
+            "beauty" -> {
+                val builtIn = listOf("natural_glow", "red_carpet", "cyber_neon", "kitsune_spirit", "golden_circuit")
+                val glbs = getCategoryGlbs("beauty")
+                val allIds = builtIn + glbs.map { it.id }
+                val currentKey = activeBeautyGlbId.ifEmpty { ov.faceBeautyPresetId }
+                val curIdx = allIds.indexOf(currentKey)
+                val nextIdx = if (curIdx < 0) 0 else (curIdx + step + allIds.size) % allIds.size
+                val targetId = allIds[nextIdx]
+                val glb = glbs.find { it.id == targetId }
+                if (glb != null) {
+                    activateCategoryGlb("beauty", glb)
+                } else {
+                    activeBeautyGlbId = ""
+                    ov.currentLens = ARFaceOverlayView.ArLensMode.NONE
+                    ov.applyFaceBeautyPreset(targetId)
+                    showHudNotice("Beauty AR: ${targetId.replace('_', ' ').uppercase(Locale.ROOT)}")
+                }
+                refreshFloatingModeMenu()
+            }
+            "snap_magic" -> {
+                val glbs = getCategoryGlbs("snap_magic")
+                if (glbs.isEmpty()) {
+                    if (step > 0) navigateNextCameraMode() else navigatePreviousCameraMode()
+                    return
+                }
+                val allIds = listOf("default_gauntlet") + glbs.map { it.id }
+                val currentKey = activeSnapGlbId.ifEmpty { "default_gauntlet" }
+                val curIdx = allIds.indexOf(currentKey)
+                val nextIdx = if (curIdx < 0) 0 else (curIdx + step + allIds.size) % allIds.size
+                val targetId = allIds[nextIdx]
+                val glb = glbs.find { it.id == targetId }
+                if (glb != null) {
+                    activateCategoryGlb("snap_magic", glb)
+                } else {
+                    activeSnapGlbId = ""
+                    ov.snapGlbEnabled = false
+                    ov.snapGauntletEnabled = true
+                    showHudNotice("Snap Magic: 6-Stone Gauntlet")
+                }
+                refreshFloatingModeMenu()
+            }
+            else -> {
+                if (step > 0) navigateNextCameraMode() else navigatePreviousCameraMode()
+                return
+            }
         }
         window.decorView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
     }
 
+    private fun navigateNextArLens() {
+        navigateArFamilySwipe(1)
+    }
+
     private fun navigatePreviousArLens() {
-        val currentIdx = arLensOrder.indexOf(currentArLensName)
-        val safeIdx = if (currentIdx >= 0) currentIdx else 0
-        // Right swipe steps backward toward 'none'; once already at 'none', exits AR mode to previous camera mode
-        if (safeIdx == 0) {
-            navigatePreviousCameraMode()
-            return
-        }
-        val prevIdx = (safeIdx - 1).coerceAtLeast(0)
-        val targetLens = arLensOrder[prevIdx]
-        setArLens(targetLens, showNotice = targetLens != "none")
-        if (targetLens == "none") {
-            showHudNotice("AR LENS: NONE · Swipe left to exit AR mode")
-        }
-        window.decorView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+        navigateArFamilySwipe(-1)
     }
 
     private fun navigateNextEffectOrFilter() {
@@ -8497,8 +9249,7 @@ class MainActivity : AppCompatActivity() {
         } else {
             CameraSelector.DEFAULT_BACK_CAMERA
         }
-        viewBinding.arFaceOverlayView.clearHandLandmarks()
-        viewBinding.arFaceOverlayView.clearBodyPose()
+        viewBinding.arFaceOverlayView.clear()
         lastStableBodyStance = ""
         stableBodyStanceStartMs = 0L
         stableBodyStanceFired = false
@@ -8506,6 +9257,51 @@ class MainActivity : AppCompatActivity() {
         stableHandGestureStartMs = 0L
         stableHandGestureFired = false
         bindCameraUseCases()
+    }
+
+    /**
+     * System Back / Predictive Back handler: dismisses open panels, drawers, or clean-screen
+     * gracefully instead of abruptly exiting the camera app.
+     */
+    private fun setupBackPressHandling() {
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                when {
+                    viewBinding.proOverlayView.isCleanScreen -> {
+                        viewBinding.proOverlayView.isCleanScreen = false
+                        viewBinding.btnExitCleanScreen.visibility = View.GONE
+                        viewBinding.proModeBar.visibility = View.VISIBLE
+                        viewBinding.bottomControls.visibility = View.VISIBLE
+                        refreshFloatingModeMenu()
+                    }
+                    viewBinding.arCalibrationDrawer.visibility == View.VISIBLE -> {
+                        viewBinding.arCalibrationDrawer.visibility = View.GONE
+                    }
+                    viewBinding.layoutGuideFloatingBar.visibility == View.VISIBLE -> {
+                        viewBinding.layoutGuideFloatingBar.visibility = View.GONE
+                    }
+                    viewBinding.proStudioDrawer.root.visibility == View.VISIBLE -> {
+                        viewBinding.proStudioDrawer.root.visibility = View.GONE
+                    }
+                    viewBinding.effectsStudioDrawer.root.visibility == View.VISIBLE -> {
+                        viewBinding.effectsStudioDrawer.root.visibility = View.GONE
+                        isLastActionCreative = false
+                    }
+                    activeFloatingSettingId != null -> {
+                        activeFloatingSettingId = null
+                        refreshFloatingModeMenu()
+                    }
+                    isFloatingMenuOpen -> {
+                        isFloatingMenuOpen = false
+                        refreshFloatingModeMenu()
+                    }
+                    else -> {
+                        isEnabled = false
+                        onBackPressedDispatcher.onBackPressed()
+                    }
+                }
+            }
+        })
     }
 
     private fun toggleFlashMode() {
@@ -9215,7 +10011,19 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun getCategoryGlbs(category: String): List<CustomLensDef> {
+        return injectedCustomLenses.filter {
+            it.style.equals("glb_3d", ignoreCase = true) && it.category.equals(category, ignoreCase = true)
+        }
+    }
+
+    private fun shortBadgeForName(name: String): String {
+        val words = name.trim().split(' ').filter { it.isNotEmpty() && it.any { ch -> ch.isLetter() } }
+        return (words.lastOrNull() ?: name.trim().ifEmpty { "3D" }).take(7)
+    }
+
     private fun addCustomLensChipIfMissing(cl: CustomLensDef) {
+        if (!cl.category.equals("face", ignoreCase = true)) return
         if (!arLensOrder.contains(cl.id)) {
             arLensOrder.add(cl.id)
             val label = if (cl.style.equals("glb_3d", ignoreCase = true)) "3D · ${cl.name}" else cl.name
@@ -9233,6 +10041,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupDynamicConfigChips() {
+        loadPersistedLensTransforms()
         loadPersistedDeviceGlbLenses()
         val builtInFilterAliases = setOf(
             "filter_lut_rec709", "filter_lut_flat_log", "filter_lut_blockbuster_teal_orange",
@@ -9260,7 +10069,124 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun launchGlbLensPicker() {
+    private fun openCategoryGlbMenu(category: String = activeArFamily) {
+        val safeCat = if (category in setOf("face", "hand", "body", "world", "snap_magic", "beauty")) category else "face"
+        val savedInCat = getCategoryGlbs(safeCat).filter { it.glbFilePath.isNotEmpty() }
+        if (savedInCat.isEmpty()) {
+            launchGlbLensPicker(safeCat)
+            return
+        }
+        val catTitle = when (safeCat) {
+            "hand" -> "Hand AR"
+            "body" -> "Body AR"
+            "world" -> "World AR"
+            "snap_magic" -> "Snap Magic"
+            "beauty" -> "Beauty AR"
+            else -> "Face AR"
+        }
+        val choices = arrayOf(
+            "Import New .glb Model",
+            "Delete Saved $catTitle Models (${savedInCat.size})"
+        )
+        AlertDialog.Builder(this)
+            .setTitle("$catTitle · 3D GLB Models")
+            .setItems(choices) { _, which ->
+                if (which == 0) {
+                    launchGlbLensPicker(safeCat)
+                } else {
+                    showManageCategoryGlbsDialog(safeCat)
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun showManageCategoryGlbsDialog(category: String) {
+        val savedInCat = getCategoryGlbs(category).filter { it.glbFilePath.isNotEmpty() }
+        if (savedInCat.isEmpty()) {
+            showHudNotice("No imported 3D models in this category")
+            return
+        }
+        val names = savedInCat.map { "🗑  ${it.name}" }.toTypedArray()
+        AlertDialog.Builder(this)
+            .setTitle("Tap a Model to Delete")
+            .setItems(names) { _, which ->
+                val target = savedInCat.getOrNull(which) ?: return@setItems
+                deleteCategoryGlb(category, target)
+            }
+            .setNegativeButton("Done", null)
+            .show()
+    }
+
+    private fun deleteCategoryGlb(category: String, glb: CustomLensDef) {
+        try {
+            if (glb.glbFilePath.isNotEmpty()) {
+                File(glb.glbFilePath).delete()
+            }
+        } catch (_: Exception) {}
+        injectedCustomLenses.removeAll { it.id == glb.id }
+        arLensOrder.remove(glb.id)
+        perLensTransforms.remove("$category:${glb.id}")
+        val chipIter = dynamicLensChips.iterator()
+        while (chipIter.hasNext()) {
+            val (chipView, id) = chipIter.next()
+            if (id == glb.id) {
+                viewBinding.arLensModeDock.layoutArModeLensesContainer.removeView(chipView)
+                chipIter.remove()
+            }
+        }
+        savePersistedDeviceGlbLenses()
+        savePersistedLensTransforms()
+
+        val ov = viewBinding.arFaceOverlayView
+        when (category) {
+            "face" -> {
+                if (currentArLensName == glb.id) {
+                    setArLens("cyberpunk_visor", showNotice = false, syncFloatingMenu = false)
+                }
+            }
+            "hand" -> {
+                if (activeHandGlbId == glb.id) {
+                    activeHandGlbId = ""
+                    ov.applyHandArPreset("cyber_gauntlet")
+                }
+            }
+            "body" -> {
+                if (activeBodyGlbId == glb.id) {
+                    activeBodyGlbId = ""
+                    ov.applyBodyArPreset("cyber_angel")
+                }
+            }
+            "world" -> {
+                if (activeWorldGlbId == glb.id) {
+                    activeWorldGlbId = ""
+                    ov.applyWorldArPreset("holo_showcase")
+                }
+            }
+            "snap_magic" -> {
+                if (activeSnapGlbId == glb.id) {
+                    activeSnapGlbId = ""
+                    ov.snapGlbEnabled = false
+                    ov.snapGauntletEnabled = true
+                }
+            }
+            "beauty" -> {
+                if (activeBeautyGlbId == glb.id) {
+                    activeBeautyGlbId = ""
+                    ov.currentLens = ARFaceOverlayView.ArLensMode.NONE
+                }
+            }
+        }
+        refreshFloatingModeMenu()
+        showHudNotice("Deleted 3D model: ${glb.name}")
+    }
+
+    private fun launchGlbLensPicker(category: String = activeArFamily) {
+        pendingGlbImportCategory = if (category in setOf("face", "hand", "body", "world", "snap_magic", "beauty")) {
+            category
+        } else {
+            "face"
+        }
         try {
             importGlbLensLauncher.launch(arrayOf("model/gltf-binary", "application/octet-stream", "*/*"))
         } catch (e: Exception) {
@@ -9285,14 +10211,123 @@ class MainActivity : AppCompatActivity() {
         return name
     }
 
+    private fun activateCategoryGlb(category: String, glb: CustomLensDef): Boolean {
+        val ov = viewBinding.arFaceOverlayView
+        val key = "$category:${glb.id}"
+        val savedTf = perLensTransforms[key] ?: ArLensTransform()
+        val isFaceBased = (category == "face" || category == "beauty")
+        val loaded = if (glb.glbFilePath.isNotEmpty()) {
+            ov.loadGlbModelFromFile(
+                filePath = glb.glbFilePath,
+                anchor = glb.anchor,
+                modelScale = glb.modelScale,
+                offsetY = glb.modelOffsetY,
+                rotYDeg = glb.modelRotationY,
+                rotXDeg = glb.modelRotationX,
+                autoSpin = glb.autoSpin,
+                activateFaceLens = isFaceBased
+            )
+        } else if (glb.glbAssetPath.isNotEmpty()) {
+            ov.loadGlbModelFromAsset(
+                assetPath = glb.glbAssetPath,
+                anchor = glb.anchor,
+                modelScale = glb.modelScale,
+                offsetY = glb.modelOffsetY,
+                rotYDeg = glb.modelRotationY,
+                rotXDeg = glb.modelRotationX,
+                autoSpin = glb.autoSpin,
+                activateFaceLens = isFaceBased
+            )
+        } else {
+            false
+        }
+        if (!loaded) {
+            val errDetail = ov.getLastGlbError()
+            showHudNotice(
+                if (errDetail.isNotEmpty()) "GLB '${glb.name}': $errDetail" else "Failed to load 3D GLB: ${glb.name}",
+                isWarning = true
+            )
+            return false
+        }
+        when (category) {
+            "hand" -> {
+                activeHandGlbId = glb.id
+                ov.handArEnabled = true
+                ov.handPresetId = "custom_glb"
+                ov.handPropType = ARFaceOverlayView.HandPropType.CUSTOM_GLB
+                ov.handPropAnchor = when (glb.anchor.lowercase(Locale.ROOT)) {
+                    "wrist" -> ARFaceOverlayView.HandAnchorPoint.WRIST
+                    "index_tip" -> ARFaceOverlayView.HandAnchorPoint.INDEX_TIP
+                    "ring_finger" -> ARFaceOverlayView.HandAnchorPoint.RING_FINGER
+                    else -> ARFaceOverlayView.HandAnchorPoint.PALM
+                }
+                ov.handGlbScale = savedTf.scale
+                ov.handGlbOffsetY = savedTf.offsetY
+                activeTransformKey = key
+                showHudNotice("Hand 3D GLB: ${glb.name}")
+            }
+            "body" -> {
+                activeBodyGlbId = glb.id
+                ov.bodyArEnabled = true
+                ov.bodyPresetId = "custom_glb"
+                ov.bodyAccessoryStyle = ARFaceOverlayView.BodyAccessoryStyle.CUSTOM_GLB
+                ov.bodyGlbAnchor = glb.anchor
+                ov.bodyGlbScale = savedTf.scale
+                ov.bodyGlbOffsetY = savedTf.offsetY
+                activeTransformKey = key
+                showHudNotice("Body 3D GLB: ${glb.name}")
+            }
+            "world" -> {
+                activeWorldGlbId = glb.id
+                ov.applyWorldArPreset("glb_world_stage")
+                ov.worldObjectScale = savedTf.scale
+                ov.worldGlbOffsetY = savedTf.offsetY
+                activeTransformKey = key
+                syncWorldArLifecycleAndPower()
+                showHudNotice("World 3D GLB: ${glb.name}")
+            }
+            "snap_magic" -> {
+                activeSnapGlbId = glb.id
+                ov.snapGauntletEnabled = true
+                ov.snapGlbEnabled = true
+                ov.snapGlbAnchor = glb.anchor
+                ov.snapGlbScale = savedTf.scale
+                ov.snapGlbOffsetY = savedTf.offsetY
+                activeTransformKey = key
+                showHudNotice("Snap Magic 3D GLB: ${glb.name}")
+            }
+            "beauty" -> {
+                activeBeautyGlbId = glb.id
+                ov.faceBeautyEnabled = true
+                loadTransformForKey(key)
+                ov.currentLens = ARFaceOverlayView.ArLensMode.GLB_3D
+                showHudNotice("Beauty 3D GLB: ${glb.name}")
+            }
+            else -> {
+                setArLens(glb.id, showNotice = true, syncFloatingMenu = false)
+            }
+        }
+        ov.postInvalidateOnAnimation()
+        syncOverlayToVideoProcessor()
+        return true
+    }
+
     private fun importGlbLensFromUri(uri: Uri) {
         try {
+            val targetCategory = pendingGlbImportCategory.ifEmpty { "face" }
             val rawName = resolveDisplayName(uri)
-            val cleanBase = rawName.replace(Regex("\\.glb$", RegexOption.IGNORE_CASE), "")
+            val withoutExt = if (rawName.lowercase(Locale.ROOT).endsWith(".glb")) {
+                rawName.substring(0, rawName.length - 4)
+            } else {
+                rawName
+            }
+            val cleanBase = withoutExt
                 .replace('_', ' ')
-                .replace(Regex("[^a-zA-Z0-9 -]"), " ")
-                .replace(Regex("\\s+"), " ")
-                .trim()
+                .map { ch -> if (ch.isLetterOrDigit() || ch == ' ' || ch == '-') ch else ' ' }
+                .joinToString("")
+                .split(' ')
+                .filter { it.isNotEmpty() }
+                .joinToString(" ")
                 .ifEmpty { "3D Model" }
                 .take(24)
 
@@ -9306,16 +10341,59 @@ class MainActivity : AppCompatActivity() {
                 return
             }
 
-            val modelsDir = File(filesDir, "ar_models").apply { if (!exists()) mkdirs() }
-            val lensId = "glb_${System.currentTimeMillis()}"
+            // Organize each imported .glb inside its own category folder
+            val modelsDir = File(File(filesDir, "ar_models"), targetCategory).apply { if (!exists()) mkdirs() }
+            val lensId = "glb_${targetCategory}_${System.currentTimeMillis()}"
             val outFile = File(modelsDir, "$lensId.glb")
             FileOutputStream(outFile).use { it.write(bytes) }
 
-            val anchorChoices = arrayOf("Forehead / Hat / Crown", "Eyes / Glasses / Visor", "Nose & Cheeks / Mask", "Full Face / Helmet")
-            val anchorKeys = arrayOf("forehead", "eyes", "nose_cheeks", "full_face")
+            // Validate immediately so corrupt/Draco-compressed GLBs give a clear actionable reason instead of saving broken entries
+            val validationError = viewBinding.arFaceOverlayView.testParseGlbFile(outFile.absolutePath)
+            if (validationError != null) {
+                try { outFile.delete() } catch (_: Exception) {}
+                AlertDialog.Builder(this)
+                    .setTitle("Unable to Import '$cleanBase'")
+                    .setMessage("$validationError\n\nTip: If downloaded from Sketchfab, open in Blender or gltf.report and export as standard uncompressed .glb.")
+                    .setPositiveButton("OK", null)
+                    .show()
+                return
+            }
+
+            val (catTitle, anchorChoices, anchorKeys) = when (targetCategory) {
+                "hand" -> Triple(
+                    "Hand AR",
+                    arrayOf("Palm Center", "Back of Hand / Gauntlet", "Wrist / Bracelet", "Index Finger Tip"),
+                    arrayOf("palm", "palm", "wrist", "index_tip")
+                )
+                "body" -> Triple(
+                    "Body AR",
+                    arrayOf("Upper Back / Wings", "Chest / Armor", "Shoulders / Cape", "Above Head / Halo"),
+                    arrayOf("upper_back", "chest", "shoulders", "halo")
+                )
+                "world" -> Triple(
+                    "World AR",
+                    arrayOf("Floor / Table Surface", "Floating Hover", "Hero Stage Pedestal"),
+                    arrayOf("floor", "hover", "pedestal")
+                )
+                "snap_magic" -> Triple(
+                    "Snap Magic",
+                    arrayOf("Back of Hand / Gauntlet", "Palm Relic", "Wrist Artifact"),
+                    arrayOf("back_hand", "palm", "wrist")
+                )
+                "beauty" -> Triple(
+                    "Beauty AR",
+                    arrayOf("Forehead / Tiara", "Eyes / Glamour Accent", "Nose & Cheeks / Jewels", "Full Face"),
+                    arrayOf("forehead", "eyes", "nose_cheeks", "full_face")
+                )
+                else -> Triple(
+                    "Face AR",
+                    arrayOf("Forehead / Hat / Crown", "Eyes / Glasses / Visor", "Nose & Cheeks / Mask", "Full Face / Helmet"),
+                    arrayOf("forehead", "eyes", "nose_cheeks", "full_face")
+                )
+            }
 
             AlertDialog.Builder(this)
-                .setTitle("Anchor for '$cleanBase' (.glb)")
+                .setTitle("$catTitle Anchor for '$cleanBase'")
                 .setItems(anchorChoices) { _, which ->
                     val anchor = anchorKeys[which.coerceIn(anchorKeys.indices)]
                     val newDef = CustomLensDef(
@@ -9331,12 +10409,21 @@ class MainActivity : AppCompatActivity() {
                         modelOffsetY = 0f,
                         modelRotationY = 0f,
                         modelRotationX = 0f,
-                        autoSpin = false
+                        autoSpin = (targetCategory == "world"),
+                        category = targetCategory
                     )
                     injectedCustomLenses.add(newDef)
                     savePersistedDeviceGlbLenses()
-                    addCustomLensChipIfMissing(newDef)
-                    setArLens(lensId)
+                    if (targetCategory == "face") {
+                        addCustomLensChipIfMissing(newDef)
+                    }
+                    activeArFamily = targetCategory
+                    if (targetCategory == "face") {
+                        setArLens(lensId, showNotice = true, syncFloatingMenu = false)
+                    } else {
+                        activateCategoryGlb(targetCategory, newDef)
+                    }
+                    refreshFloatingModeMenu()
                 }
                 .setNegativeButton("Cancel") { _, _ ->
                     try { outFile.delete() } catch (_: Exception) {}
@@ -9358,6 +10445,7 @@ class MainActivity : AppCompatActivity() {
                         put("id", cl.id)
                         put("name", cl.name)
                         put("anchor", cl.anchor)
+                        put("category", cl.category)
                         put("glbFilePath", cl.glbFilePath)
                         put("modelScale", cl.modelScale.toDouble())
                         put("modelOffsetY", cl.modelOffsetY.toDouble())
@@ -9399,7 +10487,8 @@ class MainActivity : AppCompatActivity() {
                         modelOffsetY = obj.optDouble("modelOffsetY", 0.0).toFloat(),
                         modelRotationY = obj.optDouble("modelRotationY", 0.0).toFloat(),
                         modelRotationX = obj.optDouble("modelRotationX", 0.0).toFloat(),
-                        autoSpin = obj.optBoolean("autoSpin", false)
+                        autoSpin = obj.optBoolean("autoSpin", false),
+                        category = obj.optString("category", "face")
                     )
                 )
             }
@@ -9462,6 +10551,7 @@ class MainActivity : AppCompatActivity() {
             viewBinding.proOverlayView.showWatermark = isChecked
             updateActiveInstrumentsCount()
             viewBinding.proOverlayView.invalidate()
+            syncOverlayToVideoProcessor()
             showHudNotice("Watermark ${if (isChecked) "ON" else "OFF"}")
         }
         viewBinding.proStudioDrawer.btnCycleFont.setOnClickListener {
@@ -9488,6 +10578,93 @@ class MainActivity : AppCompatActivity() {
         })
     }
 
+    private fun savePersistedLensTransforms() {
+        try {
+            val prefs = getSharedPreferences("camerax_ar_lens_transforms", Context.MODE_PRIVATE)
+            val root = JSONObject()
+            for ((k, tf) in perLensTransforms) {
+                val obj = JSONObject().apply {
+                    put("ox", tf.offsetX.toDouble())
+                    put("oy", tf.offsetY.toDouble())
+                    put("sc", tf.scale.toDouble())
+                    put("rot", tf.rotDeg.toDouble())
+                    put("es", tf.eyeSpace.toDouble())
+                    put("fh", tf.forehead.toDouble())
+                    put("ch", tf.chin.toDouble())
+                }
+                root.put(k, obj)
+            }
+            prefs.edit().putString("transforms_json", root.toString()).apply()
+        } catch (_: Exception) {}
+    }
+
+    private fun loadPersistedLensTransforms() {
+        try {
+            val prefs = getSharedPreferences("camerax_ar_lens_transforms", Context.MODE_PRIVATE)
+            val raw = prefs.getString("transforms_json", null) ?: return
+            val root = JSONObject(raw)
+            val keys = root.keys()
+            while (keys.hasNext()) {
+                val k = keys.next()
+                val obj = root.optJSONObject(k) ?: continue
+                perLensTransforms[k] = ArLensTransform(
+                    offsetX = obj.optDouble("ox", 0.0).toFloat(),
+                    offsetY = obj.optDouble("oy", 0.0).toFloat(),
+                    scale = obj.optDouble("sc", 1.0).toFloat().coerceIn(0.5f, 2.0f),
+                    rotDeg = obj.optDouble("rot", 0.0).toFloat(),
+                    eyeSpace = obj.optDouble("es", 1.0).toFloat(),
+                    forehead = obj.optDouble("fh", 0.0).toFloat(),
+                    chin = obj.optDouble("ch", 0.0).toFloat()
+                )
+            }
+        } catch (_: Exception) {}
+    }
+
+    private fun saveCurrentLensTransform(explicitKey: String? = null) {
+        val key = explicitKey ?: activeTransformKey
+        if (key.isEmpty()) return
+        perLensTransforms[key] = ArLensTransform(
+            offsetX = calibOffsetX,
+            offsetY = calibOffsetY,
+            scale = calibScale,
+            rotDeg = calibRotDeg,
+            eyeSpace = calibEyeSpace,
+            forehead = calibForehead,
+            chin = calibChin
+        )
+        savePersistedLensTransforms()
+    }
+
+    private fun saveCategoryTransform(key: String, scale: Float, offsetY: Float) {
+        if (key.isEmpty()) return
+        val existing = perLensTransforms[key] ?: ArLensTransform()
+        perLensTransforms[key] = existing.copy(scale = scale, offsetY = offsetY)
+        savePersistedLensTransforms()
+    }
+
+    private fun loadTransformForKey(key: String) {
+        activeTransformKey = key
+        val tf = perLensTransforms[key] ?: ArLensTransform()
+        calibOffsetX = tf.offsetX
+        calibOffsetY = tf.offsetY
+        calibScale = tf.scale
+        calibRotDeg = tf.rotDeg
+        calibEyeSpace = tf.eyeSpace
+        calibForehead = tf.forehead
+        calibChin = tf.chin
+        viewBinding.arFaceOverlayView.setCalibration(
+            offsetX = calibOffsetX,
+            offsetY = calibOffsetY,
+            scale = calibScale,
+            rotationDeg = calibRotDeg,
+            eyeSpacing = calibEyeSpace,
+            forehead = calibForehead,
+            chin = calibChin,
+            debug = calibDebug
+        )
+        syncArDockFromCalibration()
+    }
+
     private fun pushArCalibrationToOverlay() {
         viewBinding.arFaceOverlayView.setCalibration(
             offsetX = calibOffsetX,
@@ -9499,6 +10676,15 @@ class MainActivity : AppCompatActivity() {
             chin = calibChin,
             debug = calibDebug
         )
+        // Save strictly to the active lens key so resizing/moving one lens NEVER affects any other lens
+        val key = when {
+            activeTransformKey.isNotEmpty() -> activeTransformKey
+            currentArLensName != "none" -> "face:$currentArLensName"
+            else -> ""
+        }
+        if (key.isNotEmpty()) {
+            saveCurrentLensTransform(key)
+        }
     }
 
     private fun resetArCalibrationValues() {
@@ -9521,7 +10707,7 @@ class MainActivity : AppCompatActivity() {
         openGLProcessor?.setComicHalftoneParams(1.0f, 1.0f)
         pushArCalibrationToOverlay()
         syncArDockFromCalibration()
-        showHudNotice("AR Calibration Reset")
+        showHudNotice("Active Lens Calibration Reset")
     }
 
     private fun toggleArCalibrationDrawer() {
@@ -11119,17 +12305,25 @@ class MainActivity : AppCompatActivity() {
                 ov.applyBodyArPreset("off")
                 ov.applyWorldArPreset("off")
                 ov.applyFaceBeautyPreset("off")
+                ov.snapGauntletEnabled = false
+                ov.snapGlbEnabled = false
                 syncWorldArLifecycleAndPower()
                 if (fromUser) showHudNotice("AR Effects Off")
             }
             "snap_magic" -> {
-                // All-in-one Snap Magic: 6-Stone Infinity Gauntlet + Finger-Snap Detection + Feathered Dust Wipeout
+                // All-in-one Snap Magic: 6-Stone Infinity Gauntlet (or custom Snap 3D GLB) + Finger-Snap Dust Wipeout
                 setArLens("none", showNotice = false, syncFloatingMenu = false)
                 ov.applyHandArPreset("off")
                 ov.applyWorldArPreset("off")
                 ov.applyFaceBeautyPreset("off")
                 ov.snapGauntletEnabled = true
                 ov.applyBodyArPreset("snap_wipeout")
+                val snapGlb = if (activeSnapGlbId.isNotEmpty()) getCategoryGlbs("snap_magic").find { it.id == activeSnapGlbId } else null
+                if (snapGlb != null) {
+                    activateCategoryGlb("snap_magic", snapGlb)
+                } else {
+                    ov.snapGlbEnabled = false
+                }
                 syncWorldArLifecycleAndPower()
                 if (fromUser) showHudNotice("Snap Magic Ready — Wear Gauntlet & Snap Fingers")
             }
@@ -11138,9 +12332,15 @@ class MainActivity : AppCompatActivity() {
                 ov.applyBodyArPreset("off")
                 ov.applyWorldArPreset("off")
                 ov.applyFaceBeautyPreset("off")
+                ov.snapGauntletEnabled = false
+                ov.snapGlbEnabled = false
                 syncWorldArLifecycleAndPower()
-                val restore = if (lastActiveArLensName == "none") "cyberpunk_visor" else lastActiveArLensName
-                if (currentArLensName == "none") setArLens(restore, showNotice = false, syncFloatingMenu = false)
+                val validFaceIds = setOf("mesh_contour", "cyberpunk_visor", "golden_crown", "scifi_hud", "comic_frame") +
+                    injectedCustomLenses.filter { it.category.equals("face", ignoreCase = true) }.map { it.id }
+                val restore = if (lastActiveArLensName in validFaceIds) lastActiveArLensName else "cyberpunk_visor"
+                if (currentArLensName == "none" || currentArLensName !in validFaceIds) {
+                    setArLens(restore, showNotice = false, syncFloatingMenu = false)
+                }
                 if (fromUser) showHudNotice("Face AR Active")
             }
             "hand" -> {
@@ -11148,7 +12348,14 @@ class MainActivity : AppCompatActivity() {
                 ov.applyBodyArPreset("off")
                 ov.applyWorldArPreset("off")
                 ov.applyFaceBeautyPreset("off")
-                if (!ov.handArEnabled) ov.applyHandArPreset("cyber_gauntlet")
+                ov.snapGauntletEnabled = false
+                ov.snapGlbEnabled = false
+                val handGlb = if (activeHandGlbId.isNotEmpty()) getCategoryGlbs("hand").find { it.id == activeHandGlbId } else null
+                if (handGlb != null) {
+                    activateCategoryGlb("hand", handGlb)
+                } else if (!ov.handArEnabled) {
+                    ov.applyHandArPreset("cyber_gauntlet")
+                }
                 syncWorldArLifecycleAndPower()
                 if (fromUser) showHudNotice("Hand AR Active")
             }
@@ -11157,7 +12364,14 @@ class MainActivity : AppCompatActivity() {
                 ov.applyHandArPreset("off")
                 ov.applyWorldArPreset("off")
                 ov.applyFaceBeautyPreset("off")
-                if (!ov.bodyArEnabled || ov.isSnapWipeoutArmed()) ov.applyBodyArPreset("cyber_angel")
+                ov.snapGauntletEnabled = false
+                ov.snapGlbEnabled = false
+                val bodyGlb = if (activeBodyGlbId.isNotEmpty()) getCategoryGlbs("body").find { it.id == activeBodyGlbId } else null
+                if (bodyGlb != null) {
+                    activateCategoryGlb("body", bodyGlb)
+                } else if (!ov.bodyArEnabled || ov.isSnapWipeoutArmed()) {
+                    ov.applyBodyArPreset("cyber_angel")
+                }
                 syncWorldArLifecycleAndPower()
                 if (fromUser) showHudNotice("Body AR Active")
             }
@@ -11166,7 +12380,14 @@ class MainActivity : AppCompatActivity() {
                 ov.applyHandArPreset("off")
                 ov.applyBodyArPreset("off")
                 ov.applyFaceBeautyPreset("off")
-                if (!ov.worldArEnabled) ov.applyWorldArPreset("holo_showcase")
+                ov.snapGauntletEnabled = false
+                ov.snapGlbEnabled = false
+                val worldGlb = if (activeWorldGlbId.isNotEmpty()) getCategoryGlbs("world").find { it.id == activeWorldGlbId } else null
+                if (worldGlb != null) {
+                    activateCategoryGlb("world", worldGlb)
+                } else if (!ov.worldArEnabled) {
+                    ov.applyWorldArPreset("holo_showcase")
+                }
                 syncWorldArLifecycleAndPower()
                 if (fromUser) showHudNotice("World AR Active")
             }
@@ -11175,7 +12396,13 @@ class MainActivity : AppCompatActivity() {
                 ov.applyHandArPreset("off")
                 ov.applyBodyArPreset("off")
                 ov.applyWorldArPreset("off")
+                ov.snapGauntletEnabled = false
+                ov.snapGlbEnabled = false
                 if (!ov.faceBeautyEnabled) ov.applyFaceBeautyPreset("natural_glow")
+                val beautyGlb = if (activeBeautyGlbId.isNotEmpty()) getCategoryGlbs("beauty").find { it.id == activeBeautyGlbId } else null
+                if (beautyGlb != null) {
+                    activateCategoryGlb("beauty", beautyGlb)
+                }
                 syncWorldArLifecycleAndPower()
                 if (fromUser) showHudNotice("Beauty AR Active")
             }
@@ -11187,409 +12414,805 @@ class MainActivity : AppCompatActivity() {
         if (cameraMode == CameraMode.AR_LENS) {
             return when (activeArFamily) {
                 "off" -> emptyList()
-                "snap_magic" -> listOf(
-                    FloatingMenuSpec(
-                        id = "snap_action",
-                        label = if (ov.isSnapVanishedOrDissolving()) "Reset" else "Snap!",
-                        glyph = if (ov.isSnapVanishedOrDissolving()) "↺" else "✦",
-                        badge = if (ov.isSnapVanishedOrDissolving()) "Dust" else "Armed",
-                        isModified = true,
-                        isAction = true,
-                        onAction = {
-                            triggerSnapWipeoutAction(0.70f, 0.42f, fromManualButton = true)
-                            refreshFloatingModeMenu()
-                        }
-                    ),
-                    FloatingMenuSpec(
-                        id = "snap_sens",
-                        label = "Sens.",
-                        glyph = "◎",
-                        badge = "${((handLandmarkerHelper?.snapPinchThreshold ?: 0.36f) * 100f).toInt().coerceIn(20, 60)}%",
-                        isModified = ((handLandmarkerHelper?.snapPinchThreshold ?: 0.36f) * 100f).toInt() != 36,
-                        isSlider = true,
-                        min = 20,
-                        max = 60,
-                        defaultVal = 36,
-                        currentVal = ((handLandmarkerHelper?.snapPinchThreshold ?: 0.36f) * 100f).toInt().coerceIn(20, 60),
-                        formatVal = { v -> "$v%" },
-                        onSliderChange = { v ->
-                            handLandmarkerHelper?.snapPinchThreshold = v / 100f
-                        }
-                    ),
-                    FloatingMenuSpec(
-                        id = "snap_distance",
-                        label = "Range",
-                        glyph = "↔",
-                        badge = "≤${(13.2f / (handLandmarkerHelper?.minNearHandScale ?: 0.15f).coerceIn(0.08f, 0.28f)).toInt().coerceIn(48, 165)}cm",
-                        isModified = true,
-                        isSlider = true,
-                        min = 48,
-                        max = 165,
-                        defaultVal = 88,
-                        currentVal = (13.2f / (handLandmarkerHelper?.minNearHandScale ?: 0.15f).coerceIn(0.08f, 0.28f)).toInt().coerceIn(48, 165),
-                        formatVal = { v -> "≤${v}cm" },
-                        onSliderChange = { v ->
-                            val minScale = (13.2f / v.toFloat().coerceAtLeast(48f)).coerceIn(0.08f, 0.28f)
-                            handLandmarkerHelper?.nearCameraDistanceEnabled = true
-                            handLandmarkerHelper?.minNearHandScale = minScale
-                            ov.snapMinNearHandScale = minScale
-                        }
-                    ),
-                    FloatingMenuSpec(
-                        id = "snap_density",
-                        label = "Density",
-                        glyph = "❖",
-                        badge = String.format("%.1fx", ov.snapDustDensity),
-                        isModified = (ov.snapDustDensity * 100f).toInt() != 135,
-                        isSlider = true,
-                        min = 40,
-                        max = 250,
-                        defaultVal = 135,
-                        currentVal = (ov.snapDustDensity * 100f).toInt().coerceIn(40, 250),
-                        formatVal = { v -> String.format("%.2fx", v / 100f) },
-                        onSliderChange = { v ->
-                            ov.snapDustDensity = v / 100f
-                        }
-                    ),
-                    FloatingMenuSpec(
-                        id = "snap_wind",
-                        label = "Wind",
-                        glyph = "≈",
-                        badge = String.format("%.1fx", ov.snapWindSpeed),
-                        isModified = (ov.snapWindSpeed * 100f).toInt() != 130,
-                        isSlider = true,
-                        min = 30,
-                        max = 300,
-                        defaultVal = 130,
-                        currentVal = (ov.snapWindSpeed * 100f).toInt().coerceIn(30, 300),
-                        formatVal = { v -> String.format("%.1fx", v / 100f) },
-                        onSliderChange = { v ->
-                            ov.snapWindSpeed = v / 100f
-                        }
-                    ),
-                    FloatingMenuSpec(
-                        id = "snap_lock_bg",
-                        label = if (ov.hasSnapCleanPlate()) "BG OK" else "Lock BG",
-                        glyph = "▣",
-                        badge = if (ov.hasSnapCleanPlate()) "Locked" else "Auto",
-                        isModified = ov.hasSnapCleanPlate(),
-                        isAction = true,
-                        onAction = {
-                            val bmp = try { viewBinding.viewFinder.bitmap } catch (_: Throwable) { null }
-                            if (bmp != null) {
-                                ov.setSnapCleanPlate(bmp)
-                                showHudNotice("Clean background locked for Snap Magic")
+                "snap_magic" -> {
+                    val snapGlbs = getCategoryGlbs("snap_magic")
+                    val activeSnapGlb = snapGlbs.find { it.id == activeSnapGlbId }
+                    val list = mutableListOf(
+                        FloatingMenuSpec(
+                            id = "snap_action",
+                            label = if (ov.isSnapVanishedOrDissolving()) "Reset" else "Snap!",
+                            glyph = if (ov.isSnapVanishedOrDissolving()) "↺" else "✦",
+                            badge = if (ov.isSnapVanishedOrDissolving()) "Dust" else "Armed",
+                            isModified = true,
+                            isAction = true,
+                            onAction = {
+                                triggerSnapWipeoutAction(0.70f, 0.42f, fromManualButton = true)
                                 refreshFloatingModeMenu()
                             }
-                        }
+                        )
                     )
-                )
-                "face" -> listOf(
-                    FloatingMenuSpec(
-                        id = "face_lens",
-                        label = "Lens",
-                        glyph = "◈",
-                        badge = when (currentArLensName) {
-                            "none" -> "Off"
-                            "cyberpunk_visor" -> "Visor"
-                            "golden_crown" -> "Crown"
-                            "scifi_hud" -> "HUD"
-                            "mesh_contour" -> "Mesh"
-                            "comic_frame" -> "Comic"
-                            else -> {
-                                val customName = injectedCustomLenses.find { it.id == currentArLensName }?.name
-                                if (!customName.isNullOrBlank()) {
-                                    val words = customName.trim().split(' ').filter { it.isNotEmpty() && it.any { ch -> ch.isLetter() } }
-                                    (words.lastOrNull() ?: customName).take(7)
-                                } else {
-                                    "Custom"
+                    if (snapGlbs.isNotEmpty()) {
+                        list.add(
+                            FloatingMenuSpec(
+                                id = "snap_artifact",
+                                label = "Model",
+                                glyph = "◈",
+                                badge = if (activeSnapGlb != null) shortBadgeForName(activeSnapGlb.name) else "Gauntlet",
+                                isModified = activeSnapGlb != null,
+                                options = listOf("default_gauntlet" to "Gauntlet") + snapGlbs.map { it.id to "3D · ${it.name.take(10)}" },
+                                activeOptionId = activeSnapGlbId.ifEmpty { "default_gauntlet" },
+                                onOptionSelect = { id ->
+                                    val g = snapGlbs.find { it.id == id }
+                                    if (g != null) {
+                                        activateCategoryGlb("snap_magic", g)
+                                    } else {
+                                        activeSnapGlbId = ""
+                                        ov.snapGlbEnabled = false
+                                        ov.snapGauntletEnabled = true
+                                    }
+                                    refreshFloatingModeMenu()
                                 }
+                            )
+                        )
+                    }
+                    if (activeSnapGlb != null) {
+                        val sKey = "snap_magic:${activeSnapGlb.id}"
+                        list.add(
+                            FloatingMenuSpec(
+                                id = "snap_glb_scale",
+                                label = "Size",
+                                glyph = "⤢",
+                                badge = String.format("%.1fx", ov.snapGlbScale),
+                                isModified = Math.abs(ov.snapGlbScale - 1f) > 0.03f,
+                                isSlider = true,
+                                min = 50,
+                                max = 200,
+                                defaultVal = 100,
+                                currentVal = (ov.snapGlbScale * 100f).toInt().coerceIn(50, 200),
+                                formatVal = { v -> String.format("%.2fx", v / 100f) },
+                                onSliderChange = { v ->
+                                    ov.snapGlbScale = v / 100f
+                                    saveCategoryTransform(sKey, ov.snapGlbScale, ov.snapGlbOffsetY)
+                                }
+                            )
+                        )
+                        list.add(
+                            FloatingMenuSpec(
+                                id = "snap_glb_height",
+                                label = "Height",
+                                glyph = "↕",
+                                badge = "${if ((ov.snapGlbOffsetY * 100f).toInt() > 0) "+" else ""}${(ov.snapGlbOffsetY * 100f).toInt()}",
+                                isModified = (ov.snapGlbOffsetY * 100f).toInt() != 0,
+                                isSlider = true,
+                                min = -40,
+                                max = 40,
+                                defaultVal = 0,
+                                currentVal = (ov.snapGlbOffsetY * 100f).toInt().coerceIn(-40, 40),
+                                formatVal = { v -> "${if (v > 0) "+" else ""}$v" },
+                                onSliderChange = { v ->
+                                    ov.snapGlbOffsetY = v / 100f
+                                    saveCategoryTransform(sKey, ov.snapGlbScale, ov.snapGlbOffsetY)
+                                }
+                            )
+                        )
+                    }
+                    list.addAll(
+                        listOf(
+                            FloatingMenuSpec(
+                                id = "snap_sens",
+                                label = "Sens.",
+                                glyph = "◎",
+                                badge = "${((handLandmarkerHelper?.snapPinchThreshold ?: 0.36f) * 100f).toInt().coerceIn(20, 60)}%",
+                                isModified = ((handLandmarkerHelper?.snapPinchThreshold ?: 0.36f) * 100f).toInt() != 36,
+                                isSlider = true,
+                                min = 20,
+                                max = 60,
+                                defaultVal = 36,
+                                currentVal = ((handLandmarkerHelper?.snapPinchThreshold ?: 0.36f) * 100f).toInt().coerceIn(20, 60),
+                                formatVal = { v -> "$v%" },
+                                onSliderChange = { v ->
+                                    handLandmarkerHelper?.snapPinchThreshold = v / 100f
+                                }
+                            ),
+                            FloatingMenuSpec(
+                                id = "snap_distance",
+                                label = "Range",
+                                glyph = "↔",
+                                badge = "≤${(13.2f / (handLandmarkerHelper?.minNearHandScale ?: 0.15f).coerceIn(0.08f, 0.28f)).toInt().coerceIn(48, 165)}cm",
+                                isModified = true,
+                                isSlider = true,
+                                min = 48,
+                                max = 165,
+                                defaultVal = 88,
+                                currentVal = (13.2f / (handLandmarkerHelper?.minNearHandScale ?: 0.15f).coerceIn(0.08f, 0.28f)).toInt().coerceIn(48, 165),
+                                formatVal = { v -> "≤${v}cm" },
+                                onSliderChange = { v ->
+                                    val minScale = (13.2f / v.toFloat().coerceAtLeast(48f)).coerceIn(0.08f, 0.28f)
+                                    handLandmarkerHelper?.nearCameraDistanceEnabled = true
+                                    handLandmarkerHelper?.minNearHandScale = minScale
+                                    ov.snapMinNearHandScale = minScale
+                                }
+                            ),
+                            FloatingMenuSpec(
+                                id = "snap_density",
+                                label = "Density",
+                                glyph = "❖",
+                                badge = String.format("%.1fx", ov.snapDustDensity),
+                                isModified = (ov.snapDustDensity * 100f).toInt() != 135,
+                                isSlider = true,
+                                min = 40,
+                                max = 250,
+                                defaultVal = 135,
+                                currentVal = (ov.snapDustDensity * 100f).toInt().coerceIn(40, 250),
+                                formatVal = { v -> String.format("%.2fx", v / 100f) },
+                                onSliderChange = { v ->
+                                    ov.snapDustDensity = v / 100f
+                                }
+                            ),
+                            FloatingMenuSpec(
+                                id = "snap_wind",
+                                label = "Wind",
+                                glyph = "≈",
+                                badge = String.format("%.1fx", ov.snapWindSpeed),
+                                isModified = (ov.snapWindSpeed * 100f).toInt() != 130,
+                                isSlider = true,
+                                min = 30,
+                                max = 300,
+                                defaultVal = 130,
+                                currentVal = (ov.snapWindSpeed * 100f).toInt().coerceIn(30, 300),
+                                formatVal = { v -> String.format("%.1fx", v / 100f) },
+                                onSliderChange = { v ->
+                                    ov.snapWindSpeed = v / 100f
+                                }
+                            ),
+                            FloatingMenuSpec(
+                                id = "snap_lock_bg",
+                                label = if (ov.hasSnapCleanPlate()) "BG OK" else "Lock BG",
+                                glyph = "▣",
+                                badge = if (ov.hasSnapCleanPlate()) "Locked" else "Auto",
+                                isModified = ov.hasSnapCleanPlate(),
+                                isAction = true,
+                                onAction = {
+                                    val bmp = try { viewBinding.viewFinder.bitmap } catch (_: Throwable) { null }
+                                    if (bmp != null) {
+                                        ov.setSnapCleanPlate(bmp)
+                                        showHudNotice("Clean background locked for Snap Magic")
+                                        refreshFloatingModeMenu()
+                                    }
+                                }
+                            ),
+                            FloatingMenuSpec(
+                                id = "snap_glb",
+                                label = "3D GLB",
+                                glyph = "⬡",
+                                badge = if (snapGlbs.isNotEmpty()) "${snapGlbs.size}+" else "Load",
+                                isAction = true,
+                                onAction = { openCategoryGlbMenu("snap_magic") }
+                            ),
+                            FloatingMenuSpec(
+                                id = "snap_ar_text",
+                                label = "Text",
+                                glyph = "Aa",
+                                badge = if (ov.hasArTextItems()) "${ov.arTextItems.size}" else "Add",
+                                isModified = ov.hasArTextItems(),
+                                isAction = true,
+                                onAction = { showArTextStudioDialog() }
+                            )
+                        )
+                    )
+                    list
+                }
+                "face" -> {
+                    val faceCustom = injectedCustomLenses.filter { it.category.equals("face", ignoreCase = true) }
+                    listOf(
+                        FloatingMenuSpec(
+                            id = "face_lens",
+                            label = "Lens",
+                            glyph = "◈",
+                            badge = when (currentArLensName) {
+                                "none" -> "Off"
+                                "cyberpunk_visor" -> "Visor"
+                                "golden_crown" -> "Crown"
+                                "scifi_hud" -> "HUD"
+                                "mesh_contour" -> "Mesh"
+                                "comic_frame" -> "Comic"
+                                else -> {
+                                    val customName = faceCustom.find { it.id == currentArLensName }?.name
+                                    if (!customName.isNullOrBlank()) shortBadgeForName(customName) else "Custom"
+                                }
+                            },
+                            isModified = currentArLensName != "none",
+                            options = listOf(
+                                "mesh_contour" to "Mesh",
+                                "cyberpunk_visor" to "Visor",
+                                "golden_crown" to "Crown",
+                                "scifi_hud" to "HUD",
+                                "comic_frame" to "Comic"
+                            ) + faceCustom.map { it.id to it.name.take(12) },
+                            activeOptionId = currentArLensName,
+                            onOptionSelect = { id ->
+                                setArLens(id, showNotice = false, syncFloatingMenu = false)
+                                refreshFloatingModeMenu()
                             }
-                        },
-                        isModified = currentArLensName != "none",
-                        options = listOf(
-                            "mesh_contour" to "Mesh",
-                            "cyberpunk_visor" to "Visor",
-                            "golden_crown" to "Crown",
-                            "scifi_hud" to "HUD",
-                            "comic_frame" to "Comic"
-                        ) + injectedCustomLenses.map { it.id to it.name.take(12) },
-                        activeOptionId = currentArLensName,
-                        onOptionSelect = { id ->
-                            setArLens(id, showNotice = false, syncFloatingMenu = false)
-                            lastActiveArLensName = id
-                            refreshFloatingModeMenu()
-                        }
-                    ),
-                    FloatingMenuSpec(
-                        id = "face_scale",
-                        label = "Size",
-                        glyph = "⤢",
-                        badge = String.format("%.1fx", calibScale),
-                        isModified = Math.abs(calibScale - 1f) > 0.03f,
-                        isSlider = true,
-                        min = 50,
-                        max = 200,
-                        defaultVal = 100,
-                        currentVal = (calibScale * 100f).toInt().coerceIn(50, 200),
-                        formatVal = { v -> String.format("%.2fx", v / 100f) },
-                        onSliderChange = { v ->
-                            calibScale = v / 100f
-                            pushArCalibrationToOverlay()
-                        }
-                    ),
-                    FloatingMenuSpec(
-                        id = "face_offset_y",
-                        label = "Height",
-                        glyph = "↕",
-                        badge = "${if ((calibOffsetY * 100f).toInt() > 0) "+" else ""}${(calibOffsetY * 100f).toInt()}",
-                        isModified = (calibOffsetY * 100f).toInt() != 0,
-                        isSlider = true,
-                        min = -40,
-                        max = 40,
-                        defaultVal = 0,
-                        currentVal = (calibOffsetY * 100f).toInt().coerceIn(-40, 40),
-                        formatVal = { v -> "${if (v > 0) "+" else ""}$v" },
-                        onSliderChange = { v ->
-                            calibOffsetY = v / 100f
-                            pushArCalibrationToOverlay()
-                        }
-                    ),
-                    FloatingMenuSpec(
-                        id = "face_comic",
-                        label = "Comic",
-                        glyph = "★",
-                        badge = if (ov.enableComicOnomatopoeia) "POW!" else "Off",
-                        isModified = ov.enableComicOnomatopoeia,
-                        options = listOf("off" to "Off", "on" to "POW! SFX"),
-                        activeOptionId = if (ov.enableComicOnomatopoeia) "on" else "off",
-                        onOptionSelect = { id ->
-                            ov.enableComicOnomatopoeia = (id == "on")
-                            refreshFloatingModeMenu()
-                        }
-                    ),
-                    FloatingMenuSpec(
-                        id = "face_glb",
-                        label = "3D GLB",
-                        glyph = "⬡",
-                        badge = "Load",
-                        isAction = true,
-                        onAction = { launchGlbLensPicker() }
-                    )
-                )
-                "hand" -> listOf(
-                    FloatingMenuSpec(
-                        id = "hand_style",
-                        label = "Style",
-                        glyph = "✦",
-                        badge = when (ov.handPresetId) {
-                            "luxury_jewelry" -> "Luxe"
-                            "cyber_gauntlet" -> "Cyber"
-                            "arcane_orb" -> "Orb"
-                            "pyro_wand" -> "Flame"
-                            else -> "On"
-                        },
-                        isModified = true,
-                        options = listOf(
-                            "luxury_jewelry" to "Luxe",
-                            "cyber_gauntlet" to "Cyber",
-                            "arcane_orb" to "Orb",
-                            "pyro_wand" to "Flame"
                         ),
-                        activeOptionId = ov.handPresetId,
-                        onOptionSelect = { id ->
-                            ov.applyHandArPreset(id)
-                            refreshFloatingModeMenu()
-                        }
-                    ),
-                    FloatingMenuSpec(
-                        id = "hand_bones",
-                        label = "Bones",
-                        glyph = "⊞",
-                        badge = if (ov.handShowSkeleton) "On" else "Off",
-                        isModified = ov.handShowSkeleton,
-                        options = listOf("off" to "Hidden", "on" to "Skeleton"),
-                        activeOptionId = if (ov.handShowSkeleton) "on" else "off",
-                        onOptionSelect = { id ->
-                            ov.handShowSkeleton = (id == "on")
-                            refreshFloatingModeMenu()
-                        }
-                    )
-                )
-                "body" -> listOf(
-                    FloatingMenuSpec(
-                        id = "body_style",
-                        label = "Style",
-                        glyph = "✦",
-                        badge = when (ov.bodyPresetId) {
-                            "cyber_angel" -> "Wings"
-                            "hero_cape" -> "Cape"
-                            "mecha_armor" -> "Mecha"
-                            "chroma_studio" -> "Chroma"
-                            else -> "On"
-                        },
-                        isModified = true,
-                        options = listOf(
-                            "cyber_angel" to "Wings",
-                            "hero_cape" to "Cape",
-                            "mecha_armor" to "Mecha",
-                            "chroma_studio" to "Chroma"
+                        FloatingMenuSpec(
+                            id = "face_scale",
+                            label = "Size",
+                            glyph = "⤢",
+                            badge = String.format("%.1fx", calibScale),
+                            isModified = Math.abs(calibScale - 1f) > 0.03f,
+                            isSlider = true,
+                            min = 50,
+                            max = 200,
+                            defaultVal = 100,
+                            currentVal = (calibScale * 100f).toInt().coerceIn(50, 200),
+                            formatVal = { v -> String.format("%.2fx", v / 100f) },
+                            onSliderChange = { v ->
+                                calibScale = v / 100f
+                                pushArCalibrationToOverlay()
+                            }
                         ),
-                        activeOptionId = ov.bodyPresetId,
-                        onOptionSelect = { id ->
-                            ov.applyBodyArPreset(id)
-                            refreshFloatingModeMenu()
-                        }
-                    ),
-                    FloatingMenuSpec(
-                        id = "body_bones",
-                        label = "Bones",
-                        glyph = "⊞",
-                        badge = if (ov.bodyShowSkeleton) "On" else "Off",
-                        isModified = ov.bodyShowSkeleton,
-                        options = listOf("off" to "Hidden", "on" to "Skeleton"),
-                        activeOptionId = if (ov.bodyShowSkeleton) "on" else "off",
-                        onOptionSelect = { id ->
-                            ov.bodyShowSkeleton = (id == "on")
-                            refreshFloatingModeMenu()
-                        }
-                    )
-                )
-                "world" -> listOf(
-                    FloatingMenuSpec(
-                        id = "world_scene",
-                        label = "Object",
-                        glyph = "⬡",
-                        badge = when (ov.worldPresetId) {
-                            "holo_showcase" -> "Cube"
-                            "cyber_portal" -> "Portal"
-                            "ar_measure" -> "Ruler"
-                            "glb_world_stage" -> "3D"
-                            else -> "On"
-                        },
-                        isModified = true,
-                        options = listOf(
-                            "holo_showcase" to "Cube",
-                            "cyber_portal" to "Portal",
-                            "ar_measure" to "Ruler",
-                            "glb_world_stage" to "3D Stage"
+                        FloatingMenuSpec(
+                            id = "face_offset_y",
+                            label = "Height",
+                            glyph = "↕",
+                            badge = "${if ((calibOffsetY * 100f).toInt() > 0) "+" else ""}${(calibOffsetY * 100f).toInt()}",
+                            isModified = (calibOffsetY * 100f).toInt() != 0,
+                            isSlider = true,
+                            min = -40,
+                            max = 40,
+                            defaultVal = 0,
+                            currentVal = (calibOffsetY * 100f).toInt().coerceIn(-40, 40),
+                            formatVal = { v -> "${if (v > 0) "+" else ""}$v" },
+                            onSliderChange = { v ->
+                                calibOffsetY = v / 100f
+                                pushArCalibrationToOverlay()
+                            }
                         ),
-                        activeOptionId = ov.worldPresetId,
-                        onOptionSelect = { id ->
-                            ov.applyWorldArPreset(id)
-                            syncWorldArLifecycleAndPower()
-                            refreshFloatingModeMenu()
-                        }
-                    ),
-                    FloatingMenuSpec(
-                        id = "world_scale",
-                        label = "Scale",
-                        glyph = "⤢",
-                        badge = String.format("%.1fx", ov.worldObjectScale),
-                        isModified = Math.abs(ov.worldObjectScale - 1f) > 0.03f,
-                        isSlider = true,
-                        min = 50,
-                        max = 200,
-                        defaultVal = 100,
-                        currentVal = (ov.worldObjectScale * 100f).toInt().coerceIn(50, 200),
-                        formatVal = { v -> String.format("%.2fx", v / 100f) },
-                        onSliderChange = { v ->
-                            ov.worldObjectScale = v / 100f
-                        }
-                    ),
-                    FloatingMenuSpec(
-                        id = "world_ruler",
-                        label = "Ruler",
-                        glyph = "↔",
-                        badge = if (ov.worldShowRuler) "On" else "Off",
-                        isModified = ov.worldShowRuler,
-                        options = listOf("off" to "Off", "on" to "On"),
-                        activeOptionId = if (ov.worldShowRuler) "on" else "off",
-                        onOptionSelect = { id ->
-                            ov.worldShowRuler = (id == "on")
-                            refreshFloatingModeMenu()
-                        }
-                    )
-                )
-                else -> listOf(
-                    FloatingMenuSpec(
-                        id = "beauty_look",
-                        label = "Look",
-                        glyph = "♥",
-                        badge = when (ov.faceBeautyPresetId) {
-                            "natural_glow" -> "Natural"
-                            "red_carpet" -> "Glam"
-                            "cyber_neon" -> "Cyber"
-                            "kitsune_spirit" -> "Kitsune"
-                            "golden_circuit" -> "Gold"
-                            else -> "On"
-                        },
-                        isModified = true,
-                        options = listOf(
-                            "natural_glow" to "Natural",
-                            "red_carpet" to "Glam",
-                            "cyber_neon" to "Cyber",
-                            "kitsune_spirit" to "Kitsune",
-                            "golden_circuit" to "Gold"
+                        FloatingMenuSpec(
+                            id = "face_comic",
+                            label = "Comic",
+                            glyph = "★",
+                            badge = if (ov.enableComicOnomatopoeia) "POW!" else "Off",
+                            isModified = ov.enableComicOnomatopoeia,
+                            options = listOf("off" to "Off", "on" to "POW! SFX"),
+                            activeOptionId = if (ov.enableComicOnomatopoeia) "on" else "off",
+                            onOptionSelect = { id ->
+                                ov.enableComicOnomatopoeia = (id == "on")
+                                refreshFloatingModeMenu()
+                            }
                         ),
-                        activeOptionId = ov.faceBeautyPresetId,
-                        onOptionSelect = { id ->
-                            ov.applyFaceBeautyPreset(id)
-                            refreshFloatingModeMenu()
-                        }
-                    ),
-                    FloatingMenuSpec(
-                        id = "beauty_smooth",
-                        label = "Smooth",
-                        glyph = "✦",
-                        badge = "${(ov.skinSmoothing * 100f).toInt()}%",
-                        isModified = (ov.skinSmoothing * 100f).toInt() != 55,
-                        isSlider = true,
-                        min = 0,
-                        max = 100,
-                        defaultVal = 55,
-                        currentVal = (ov.skinSmoothing * 100f).toInt().coerceIn(0, 100),
-                        formatVal = { v -> "$v%" },
-                        onSliderChange = { v ->
-                            ov.faceBeautyEnabled = true
-                            ov.skinSmoothing = v / 100f
-                        }
-                    ),
-                    FloatingMenuSpec(
-                        id = "beauty_lips",
-                        label = "Lips",
-                        glyph = "◉",
-                        badge = "${(ov.lipOpacity * 100f).toInt()}%",
-                        isModified = (ov.lipOpacity * 100f).toInt() != 35,
-                        isSlider = true,
-                        min = 0,
-                        max = 100,
-                        defaultVal = 35,
-                        currentVal = (ov.lipOpacity * 100f).toInt().coerceIn(0, 100),
-                        formatVal = { v -> "$v%" },
-                        onSliderChange = { v ->
-                            ov.faceBeautyEnabled = true
-                            ov.lipOpacity = v / 100f
-                        }
-                    ),
-                    FloatingMenuSpec(
-                        id = "beauty_eyes",
-                        label = "Eyes",
-                        glyph = "◎",
-                        badge = "${(ov.eyelinerOpacity * 100f).toInt()}%",
-                        isModified = (ov.eyelinerOpacity * 100f).toInt() != 30,
-                        isSlider = true,
-                        min = 0,
-                        max = 100,
-                        defaultVal = 30,
-                        currentVal = (ov.eyelinerOpacity * 100f).toInt().coerceIn(0, 100),
-                        formatVal = { v -> "$v%" },
-                        onSliderChange = { v ->
-                            ov.faceBeautyEnabled = true
-                            ov.eyelinerOpacity = v / 100f
-                        }
+                        FloatingMenuSpec(
+                            id = "face_glb",
+                            label = "3D GLB",
+                            glyph = "⬡",
+                            badge = if (getCategoryGlbs("face").isNotEmpty()) "${getCategoryGlbs("face").size}+" else "Load",
+                            isAction = true,
+                            onAction = { openCategoryGlbMenu("face") }
+                        ),
+                        FloatingMenuSpec(
+                            id = "face_ar_text",
+                            label = "Text",
+                            glyph = "Aa",
+                            badge = if (ov.hasArTextItems()) "${ov.arTextItems.size}" else "Add",
+                            isModified = ov.hasArTextItems(),
+                            isAction = true,
+                            onAction = { showArTextStudioDialog() }
+                        )
                     )
-                )
+                }
+                "hand" -> {
+                    val handGlbs = getCategoryGlbs("hand")
+                    val activeHandGlb = handGlbs.find { it.id == activeHandGlbId }
+                    val list = mutableListOf(
+                        FloatingMenuSpec(
+                            id = "hand_style",
+                            label = "Style",
+                            glyph = "✦",
+                            badge = if (activeHandGlb != null) shortBadgeForName(activeHandGlb.name) else when (ov.handPresetId) {
+                                "luxury_jewelry" -> "Luxe"
+                                "cyber_gauntlet" -> "Cyber"
+                                "arcane_orb" -> "Orb"
+                                "pyro_wand" -> "Flame"
+                                else -> "On"
+                            },
+                            isModified = true,
+                            options = listOf(
+                                "luxury_jewelry" to "Luxe",
+                                "cyber_gauntlet" to "Cyber",
+                                "arcane_orb" to "Orb",
+                                "pyro_wand" to "Flame"
+                            ) + handGlbs.map { it.id to "3D · ${it.name.take(10)}" },
+                            activeOptionId = activeHandGlbId.ifEmpty { ov.handPresetId },
+                            onOptionSelect = { id ->
+                                val g = handGlbs.find { it.id == id }
+                                if (g != null) {
+                                    activateCategoryGlb("hand", g)
+                                } else {
+                                    activeHandGlbId = ""
+                                    ov.applyHandArPreset(id)
+                                }
+                                refreshFloatingModeMenu()
+                            }
+                        )
+                    )
+                    if (activeHandGlb != null) {
+                        val hKey = "hand:${activeHandGlb.id}"
+                        list.add(
+                            FloatingMenuSpec(
+                                id = "hand_glb_scale",
+                                label = "Size",
+                                glyph = "⤢",
+                                badge = String.format("%.1fx", ov.handGlbScale),
+                                isModified = Math.abs(ov.handGlbScale - 1f) > 0.03f,
+                                isSlider = true,
+                                min = 50,
+                                max = 200,
+                                defaultVal = 100,
+                                currentVal = (ov.handGlbScale * 100f).toInt().coerceIn(50, 200),
+                                formatVal = { v -> String.format("%.2fx", v / 100f) },
+                                onSliderChange = { v ->
+                                    ov.handGlbScale = v / 100f
+                                    saveCategoryTransform(hKey, ov.handGlbScale, ov.handGlbOffsetY)
+                                }
+                            )
+                        )
+                        list.add(
+                            FloatingMenuSpec(
+                                id = "hand_glb_height",
+                                label = "Height",
+                                glyph = "↕",
+                                badge = "${if ((ov.handGlbOffsetY * 100f).toInt() > 0) "+" else ""}${(ov.handGlbOffsetY * 100f).toInt()}",
+                                isModified = (ov.handGlbOffsetY * 100f).toInt() != 0,
+                                isSlider = true,
+                                min = -40,
+                                max = 40,
+                                defaultVal = 0,
+                                currentVal = (ov.handGlbOffsetY * 100f).toInt().coerceIn(-40, 40),
+                                formatVal = { v -> "${if (v > 0) "+" else ""}$v" },
+                                onSliderChange = { v ->
+                                    ov.handGlbOffsetY = v / 100f
+                                    saveCategoryTransform(hKey, ov.handGlbScale, ov.handGlbOffsetY)
+                                }
+                            )
+                        )
+                    }
+                    list.add(
+                        FloatingMenuSpec(
+                            id = "hand_bones",
+                            label = "Bones",
+                            glyph = "⊞",
+                            badge = if (ov.handShowSkeleton) "On" else "Off",
+                            isModified = ov.handShowSkeleton,
+                            options = listOf("off" to "Hidden", "on" to "Skeleton"),
+                            activeOptionId = if (ov.handShowSkeleton) "on" else "off",
+                            onOptionSelect = { id ->
+                                ov.handShowSkeleton = (id == "on")
+                                refreshFloatingModeMenu()
+                            }
+                        )
+                    )
+                    list.add(
+                        FloatingMenuSpec(
+                            id = "hand_glb",
+                            label = "3D GLB",
+                            glyph = "⬡",
+                            badge = if (handGlbs.isNotEmpty()) "${handGlbs.size}+" else "Load",
+                            isAction = true,
+                            onAction = { openCategoryGlbMenu("hand") }
+                        )
+                    )
+                    list.add(
+                        FloatingMenuSpec(
+                            id = "hand_ar_text",
+                            label = "Text",
+                            glyph = "Aa",
+                            badge = if (ov.hasArTextItems()) "${ov.arTextItems.size}" else "Add",
+                            isModified = ov.hasArTextItems(),
+                            isAction = true,
+                            onAction = { showArTextStudioDialog() }
+                        )
+                    )
+                    list
+                }
+                "body" -> {
+                    val bodyGlbs = getCategoryGlbs("body")
+                    val activeBodyGlb = bodyGlbs.find { it.id == activeBodyGlbId }
+                    val list = mutableListOf(
+                        FloatingMenuSpec(
+                            id = "body_style",
+                            label = "Style",
+                            glyph = "✦",
+                            badge = if (activeBodyGlb != null) shortBadgeForName(activeBodyGlb.name) else when (ov.bodyPresetId) {
+                                "cyber_angel" -> "Wings"
+                                "hero_cape" -> "Cape"
+                                "mecha_armor" -> "Mecha"
+                                "chroma_studio" -> "Chroma"
+                                else -> "On"
+                            },
+                            isModified = true,
+                            options = listOf(
+                                "cyber_angel" to "Wings",
+                                "hero_cape" to "Cape",
+                                "mecha_armor" to "Mecha",
+                                "chroma_studio" to "Chroma"
+                            ) + bodyGlbs.map { it.id to "3D · ${it.name.take(10)}" },
+                            activeOptionId = activeBodyGlbId.ifEmpty { ov.bodyPresetId },
+                            onOptionSelect = { id ->
+                                val g = bodyGlbs.find { it.id == id }
+                                if (g != null) {
+                                    activateCategoryGlb("body", g)
+                                } else {
+                                    activeBodyGlbId = ""
+                                    ov.applyBodyArPreset(id)
+                                }
+                                refreshFloatingModeMenu()
+                            }
+                        )
+                    )
+                    if (activeBodyGlb != null) {
+                        val bKey = "body:${activeBodyGlb.id}"
+                        list.add(
+                            FloatingMenuSpec(
+                                id = "body_glb_scale",
+                                label = "Size",
+                                glyph = "⤢",
+                                badge = String.format("%.1fx", ov.bodyGlbScale),
+                                isModified = Math.abs(ov.bodyGlbScale - 1f) > 0.03f,
+                                isSlider = true,
+                                min = 50,
+                                max = 200,
+                                defaultVal = 100,
+                                currentVal = (ov.bodyGlbScale * 100f).toInt().coerceIn(50, 200),
+                                formatVal = { v -> String.format("%.2fx", v / 100f) },
+                                onSliderChange = { v ->
+                                    ov.bodyGlbScale = v / 100f
+                                    saveCategoryTransform(bKey, ov.bodyGlbScale, ov.bodyGlbOffsetY)
+                                }
+                            )
+                        )
+                        list.add(
+                            FloatingMenuSpec(
+                                id = "body_glb_height",
+                                label = "Height",
+                                glyph = "↕",
+                                badge = "${if ((ov.bodyGlbOffsetY * 100f).toInt() > 0) "+" else ""}${(ov.bodyGlbOffsetY * 100f).toInt()}",
+                                isModified = (ov.bodyGlbOffsetY * 100f).toInt() != 0,
+                                isSlider = true,
+                                min = -40,
+                                max = 40,
+                                defaultVal = 0,
+                                currentVal = (ov.bodyGlbOffsetY * 100f).toInt().coerceIn(-40, 40),
+                                formatVal = { v -> "${if (v > 0) "+" else ""}$v" },
+                                onSliderChange = { v ->
+                                    ov.bodyGlbOffsetY = v / 100f
+                                    saveCategoryTransform(bKey, ov.bodyGlbScale, ov.bodyGlbOffsetY)
+                                }
+                            )
+                        )
+                    }
+                    list.add(
+                        FloatingMenuSpec(
+                            id = "body_bones",
+                            label = "Bones",
+                            glyph = "⊞",
+                            badge = if (ov.bodyShowSkeleton) "On" else "Off",
+                            isModified = ov.bodyShowSkeleton,
+                            options = listOf("off" to "Hidden", "on" to "Skeleton"),
+                            activeOptionId = if (ov.bodyShowSkeleton) "on" else "off",
+                            onOptionSelect = { id ->
+                                ov.bodyShowSkeleton = (id == "on")
+                                refreshFloatingModeMenu()
+                            }
+                        )
+                    )
+                    list.add(
+                        FloatingMenuSpec(
+                            id = "body_glb",
+                            label = "3D GLB",
+                            glyph = "⬡",
+                            badge = if (bodyGlbs.isNotEmpty()) "${bodyGlbs.size}+" else "Load",
+                            isAction = true,
+                            onAction = { openCategoryGlbMenu("body") }
+                        )
+                    )
+                    list.add(
+                        FloatingMenuSpec(
+                            id = "body_ar_text",
+                            label = "Text",
+                            glyph = "Aa",
+                            badge = if (ov.hasArTextItems()) "${ov.arTextItems.size}" else "Add",
+                            isModified = ov.hasArTextItems(),
+                            isAction = true,
+                            onAction = { showArTextStudioDialog() }
+                        )
+                    )
+                    list
+                }
+                "world" -> {
+                    val worldGlbs = getCategoryGlbs("world")
+                    val activeWorldGlb = worldGlbs.find { it.id == activeWorldGlbId }
+                    val wKey = if (activeWorldGlb != null) "world:${activeWorldGlb.id}" else "world:${ov.worldPresetId}"
+                    val list = mutableListOf(
+                        FloatingMenuSpec(
+                            id = "world_scene",
+                            label = "Object",
+                            glyph = "⬡",
+                            badge = if (activeWorldGlb != null) shortBadgeForName(activeWorldGlb.name) else when (ov.worldPresetId) {
+                                "holo_showcase" -> "Cube"
+                                "cyber_portal" -> "Portal"
+                                "ar_measure" -> "Ruler"
+                                "glb_world_stage" -> "3D"
+                                else -> "On"
+                            },
+                            isModified = true,
+                            options = listOf(
+                                "holo_showcase" to "Cube",
+                                "cyber_portal" to "Portal",
+                                "ar_measure" to "Ruler",
+                                "glb_world_stage" to "3D Stage"
+                            ) + worldGlbs.map { it.id to "3D · ${it.name.take(10)}" },
+                            activeOptionId = activeWorldGlbId.ifEmpty { ov.worldPresetId },
+                            onOptionSelect = { id ->
+                                val g = worldGlbs.find { it.id == id }
+                                if (g != null) {
+                                    activateCategoryGlb("world", g)
+                                } else {
+                                    activeWorldGlbId = ""
+                                    ov.applyWorldArPreset(id)
+                                    val saved = perLensTransforms["world:$id"] ?: ArLensTransform()
+                                    ov.worldObjectScale = saved.scale
+                                    ov.worldGlbOffsetY = saved.offsetY
+                                    syncWorldArLifecycleAndPower()
+                                }
+                                refreshFloatingModeMenu()
+                            }
+                        ),
+                        FloatingMenuSpec(
+                            id = "world_scale",
+                            label = "Scale",
+                            glyph = "⤢",
+                            badge = String.format("%.1fx", ov.worldObjectScale),
+                            isModified = Math.abs(ov.worldObjectScale - 1f) > 0.03f,
+                            isSlider = true,
+                            min = 50,
+                            max = 200,
+                            defaultVal = 100,
+                            currentVal = (ov.worldObjectScale * 100f).toInt().coerceIn(50, 200),
+                            formatVal = { v -> String.format("%.2fx", v / 100f) },
+                            onSliderChange = { v ->
+                                ov.worldObjectScale = v / 100f
+                                saveCategoryTransform(wKey, ov.worldObjectScale, ov.worldGlbOffsetY)
+                            }
+                        )
+                    )
+                    if (activeWorldGlb != null) {
+                        list.add(
+                            FloatingMenuSpec(
+                                id = "world_glb_height",
+                                label = "Height",
+                                glyph = "↕",
+                                badge = "${if ((ov.worldGlbOffsetY * 100f).toInt() > 0) "+" else ""}${(ov.worldGlbOffsetY * 100f).toInt()}",
+                                isModified = (ov.worldGlbOffsetY * 100f).toInt() != 0,
+                                isSlider = true,
+                                min = -40,
+                                max = 40,
+                                defaultVal = 0,
+                                currentVal = (ov.worldGlbOffsetY * 100f).toInt().coerceIn(-40, 40),
+                                formatVal = { v -> "${if (v > 0) "+" else ""}$v" },
+                                onSliderChange = { v ->
+                                    ov.worldGlbOffsetY = v / 100f
+                                    saveCategoryTransform(wKey, ov.worldObjectScale, ov.worldGlbOffsetY)
+                                }
+                            )
+                        )
+                    }
+                    list.add(
+                        FloatingMenuSpec(
+                            id = "world_ruler",
+                            label = "Ruler",
+                            glyph = "↔",
+                            badge = if (ov.worldShowRuler) "On" else "Off",
+                            isModified = ov.worldShowRuler,
+                            options = listOf("off" to "Off", "on" to "On"),
+                            activeOptionId = if (ov.worldShowRuler) "on" else "off",
+                            onOptionSelect = { id ->
+                                ov.worldShowRuler = (id == "on")
+                                refreshFloatingModeMenu()
+                            }
+                        )
+                    )
+                    list.add(
+                        FloatingMenuSpec(
+                            id = "world_glb",
+                            label = "3D GLB",
+                            glyph = "⬡",
+                            badge = if (worldGlbs.isNotEmpty()) "${worldGlbs.size}+" else "Load",
+                            isAction = true,
+                            onAction = { openCategoryGlbMenu("world") }
+                        )
+                    )
+                    list.add(
+                        FloatingMenuSpec(
+                            id = "world_ar_text",
+                            label = "Text",
+                            glyph = "Aa",
+                            badge = if (ov.hasArTextItems()) "${ov.arTextItems.size}" else "Add",
+                            isModified = ov.hasArTextItems(),
+                            isAction = true,
+                            onAction = { showArTextStudioDialog() }
+                        )
+                    )
+                    list
+                }
+                else -> {
+                    val beautyGlbs = getCategoryGlbs("beauty")
+                    val activeBeautyGlb = beautyGlbs.find { it.id == activeBeautyGlbId }
+                    val list = mutableListOf(
+                        FloatingMenuSpec(
+                            id = "beauty_look",
+                            label = "Look",
+                            glyph = "♥",
+                            badge = when (ov.faceBeautyPresetId) {
+                                "natural_glow" -> "Natural"
+                                "red_carpet" -> "Glam"
+                                "cyber_neon" -> "Cyber"
+                                "kitsune_spirit" -> "Kitsune"
+                                "golden_circuit" -> "Gold"
+                                else -> "On"
+                            },
+                            isModified = true,
+                            options = listOf(
+                                "natural_glow" to "Natural",
+                                "red_carpet" to "Glam",
+                                "cyber_neon" to "Cyber",
+                                "kitsune_spirit" to "Kitsune",
+                                "golden_circuit" to "Gold"
+                            ),
+                            activeOptionId = ov.faceBeautyPresetId,
+                            onOptionSelect = { id ->
+                                ov.applyFaceBeautyPreset(id)
+                                refreshFloatingModeMenu()
+                            }
+                        ),
+                        FloatingMenuSpec(
+                            id = "beauty_smooth",
+                            label = "Smooth",
+                            glyph = "✦",
+                            badge = "${(ov.skinSmoothing * 100f).toInt()}%",
+                            isModified = (ov.skinSmoothing * 100f).toInt() != 55,
+                            isSlider = true,
+                            min = 0,
+                            max = 100,
+                            defaultVal = 55,
+                            currentVal = (ov.skinSmoothing * 100f).toInt().coerceIn(0, 100),
+                            formatVal = { v -> "$v%" },
+                            onSliderChange = { v ->
+                                ov.faceBeautyEnabled = true
+                                ov.skinSmoothing = v / 100f
+                            }
+                        ),
+                        FloatingMenuSpec(
+                            id = "beauty_lips",
+                            label = "Lips",
+                            glyph = "◉",
+                            badge = "${(ov.lipOpacity * 100f).toInt()}%",
+                            isModified = (ov.lipOpacity * 100f).toInt() != 35,
+                            isSlider = true,
+                            min = 0,
+                            max = 100,
+                            defaultVal = 35,
+                            currentVal = (ov.lipOpacity * 100f).toInt().coerceIn(0, 100),
+                            formatVal = { v -> "$v%" },
+                            onSliderChange = { v ->
+                                ov.faceBeautyEnabled = true
+                                ov.lipOpacity = v / 100f
+                            }
+                        ),
+                        FloatingMenuSpec(
+                            id = "beauty_eyes",
+                            label = "Eyes",
+                            glyph = "◎",
+                            badge = "${(ov.eyelinerOpacity * 100f).toInt()}%",
+                            isModified = (ov.eyelinerOpacity * 100f).toInt() != 30,
+                            isSlider = true,
+                            min = 0,
+                            max = 100,
+                            defaultVal = 30,
+                            currentVal = (ov.eyelinerOpacity * 100f).toInt().coerceIn(0, 100),
+                            formatVal = { v -> "$v%" },
+                            onSliderChange = { v ->
+                                ov.faceBeautyEnabled = true
+                                ov.eyelinerOpacity = v / 100f
+                            }
+                        )
+                    )
+                    if (beautyGlbs.isNotEmpty()) {
+                        list.add(
+                            FloatingMenuSpec(
+                                id = "beauty_jewel",
+                                label = "Jewel",
+                                glyph = "◈",
+                                badge = if (activeBeautyGlb != null) shortBadgeForName(activeBeautyGlb.name) else "Off",
+                                isModified = activeBeautyGlb != null,
+                                options = listOf("none" to "Off") + beautyGlbs.map { it.id to "3D · ${it.name.take(10)}" },
+                                activeOptionId = activeBeautyGlbId.ifEmpty { "none" },
+                                onOptionSelect = { id ->
+                                    val g = beautyGlbs.find { it.id == id }
+                                    if (g != null) {
+                                        activateCategoryGlb("beauty", g)
+                                    } else {
+                                        activeBeautyGlbId = ""
+                                        ov.currentLens = ARFaceOverlayView.ArLensMode.NONE
+                                    }
+                                    refreshFloatingModeMenu()
+                                }
+                            )
+                        )
+                    }
+                    if (activeBeautyGlb != null) {
+                        list.add(
+                            FloatingMenuSpec(
+                                id = "beauty_glb_scale",
+                                label = "Size",
+                                glyph = "⤢",
+                                badge = String.format("%.1fx", calibScale),
+                                isModified = Math.abs(calibScale - 1f) > 0.03f,
+                                isSlider = true,
+                                min = 50,
+                                max = 200,
+                                defaultVal = 100,
+                                currentVal = (calibScale * 100f).toInt().coerceIn(50, 200),
+                                formatVal = { v -> String.format("%.2fx", v / 100f) },
+                                onSliderChange = { v ->
+                                    calibScale = v / 100f
+                                    pushArCalibrationToOverlay()
+                                }
+                            )
+                        )
+                        list.add(
+                            FloatingMenuSpec(
+                                id = "beauty_glb_height",
+                                label = "Height",
+                                glyph = "↕",
+                                badge = "${if ((calibOffsetY * 100f).toInt() > 0) "+" else ""}${(calibOffsetY * 100f).toInt()}",
+                                isModified = (calibOffsetY * 100f).toInt() != 0,
+                                isSlider = true,
+                                min = -40,
+                                max = 40,
+                                defaultVal = 0,
+                                currentVal = (calibOffsetY * 100f).toInt().coerceIn(-40, 40),
+                                formatVal = { v -> "${if (v > 0) "+" else ""}$v" },
+                                onSliderChange = { v ->
+                                    calibOffsetY = v / 100f
+                                    pushArCalibrationToOverlay()
+                                }
+                            )
+                        )
+                    }
+                    list.add(
+                        FloatingMenuSpec(
+                            id = "beauty_glb",
+                            label = "3D GLB",
+                            glyph = "⬡",
+                            badge = if (beautyGlbs.isNotEmpty()) "${beautyGlbs.size}+" else "Load",
+                            isAction = true,
+                            onAction = { openCategoryGlbMenu("beauty") }
+                        )
+                    )
+                    list.add(
+                        FloatingMenuSpec(
+                            id = "beauty_ar_text",
+                            label = "Text",
+                            glyph = "Aa",
+                            badge = if (ov.hasArTextItems()) "${ov.arTextItems.size}" else "Add",
+                            isModified = ov.hasArTextItems(),
+                            isAction = true,
+                            onAction = { showArTextStudioDialog() }
+                        )
+                    )
+                    list
+                }
             }
         }
 
@@ -12179,14 +13802,55 @@ class MainActivity : AppCompatActivity() {
         val proc = openGLProcessor ?: return
         proc.setOverlayCameraFacing(lensFacing == CameraSelector.DEFAULT_FRONT_CAMERA)
         val overlayView = viewBinding.arFaceOverlayView
-        if ((recording == null && !forceUpload) || !overlayView.hasAnyVisibleOverlay()) {
+        val hasAr = overlayView.hasAnyVisibleOverlay()
+        val hasDateStamp = viewBinding.proOverlayView.enableDateStamp
+        val hasWatermark = viewBinding.proOverlayView.showWatermark && viewBinding.proOverlayView.watermarkText.isNotBlank()
+        if ((recording == null && !forceUpload) || (!hasAr && !hasDateStamp && !hasWatermark)) {
             proc.updateOverlayBitmap(null)
             return
         }
         val w = overlayView.width.takeIf { it > 0 } ?: 720
         val h = overlayView.height.takeIf { it > 0 } ?: 1280
-        val bmp = overlayView.renderExportOverlayBitmap(w, h)
-        proc.updateOverlayBitmap(bmp)
+        var target = videoExportOverlayBmp
+        if (target == null || target.isRecycled || target.width != w || target.height != h) {
+            try { target?.recycle() } catch (_: Throwable) {}
+            target = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+            videoExportOverlayBmp = target
+        }
+        val c = Canvas(target)
+        c.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
+        if (hasAr) {
+            overlayView.drawCompositeOverlay(c, w.toFloat(), h.toFloat(), includeSelectionOutline = false)
+        }
+        if (hasDateStamp) {
+            val sdf = SimpleDateFormat("''yy MM dd  HH:mm", Locale.US)
+            val dateText = viewBinding.proOverlayView.customDateStampText ?: sdf.format(java.util.Date())
+            val stampPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.parseColor("#FFA500")
+                textSize = (w * 0.036f).coerceAtLeast(24f)
+                typeface = Typeface.MONOSPACE
+                isFakeBoldText = true
+                setShadowLayer(4f, 0f, 1f, Color.BLACK)
+            }
+            val tw = stampPaint.measureText(dateText)
+            c.drawText(dateText, w - tw - (w * 0.05f), h - (h * 0.06f), stampPaint)
+        }
+        if (hasWatermark) {
+            val wmPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.parseColor(injectedFonts.getOrNull(activeFontIndex)?.colorHex ?: "#38BDF8")
+                textSize = (w * 0.030f).coerceAtLeast(20f)
+                typeface = resolveFontTypeface(injectedFonts.getOrNull(activeFontIndex))
+                letterSpacing = 0.08f
+            }
+            cameraFontHelper?.drawWatermarkOverlay(
+                c,
+                viewBinding.proOverlayView.watermarkText,
+                w * 0.055f,
+                h - h * 0.055f,
+                wmPaint
+            )
+        }
+        proc.updateOverlayBitmap(target)
     }
 
     private fun showArTextStudioDialog() {
@@ -12261,18 +13925,21 @@ class MainActivity : AppCompatActivity() {
                     overlay.addOrSelectArText(txt, chosenScale, chosenColor, chosenStyle)
                 }
                 viewBinding.arLensModeDock.btnArTextStudio.text = if (overlay.hasArTextItems()) "TEXT (${overlay.arTextItems.size})" else "Aa AR TEXT STUDIO"
+                refreshFloatingModeMenu()
                 showHudNotice("Hold & drag AR text anywhere on screen")
             }
             .setNeutralButton("Add New") { _, _ ->
                 val txt = input.text.toString().trim().ifEmpty { "HELLO AR!" }
                 overlay.addOrSelectArText(txt, chosenScale, chosenColor, chosenStyle)
                 viewBinding.arLensModeDock.btnArTextStudio.text = "TEXT (${overlay.arTextItems.size})"
+                refreshFloatingModeMenu()
                 showHudNotice("Added AR text — hold & drag to move")
             }
         if (selected != null) {
             builder.setNegativeButton("Delete") { _, _ ->
                 overlay.removeSelectedArText()
                 viewBinding.arLensModeDock.btnArTextStudio.text = if (overlay.hasArTextItems()) "TEXT (${overlay.arTextItems.size})" else "Aa AR TEXT STUDIO"
+                refreshFloatingModeMenu()
             }
         } else {
             builder.setNegativeButton("Cancel", null)
@@ -12282,7 +13949,10 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        stopStandbyAudioMeter()
         dollyZoomAnimator?.cancel()
+        try { videoExportOverlayBmp?.recycle() } catch (_: Throwable) {}
+        videoExportOverlayBmp = null
         panoramaFallbackHandler.removeCallbacksAndMessages(null)
         nightHandler.removeCallbacksAndMessages(null)
         if (::ecoPowerManager.isInitialized) {

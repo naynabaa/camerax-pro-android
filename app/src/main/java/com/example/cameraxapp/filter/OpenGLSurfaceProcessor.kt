@@ -73,6 +73,10 @@ class OpenGLSurfaceProcessor : SurfaceProcessor, SurfaceTexture.OnFrameAvailable
     private var locMainMotion = -1
     private var locMainExtraFlags = -1
     private var locMainCustomFilter = -1
+    private var locMainColorMat = -1
+    private var locMainColorOff = -1
+    private var locMainUseColorMat = -1
+    private var locMainDeSqueeze = -1
 
     private var locBilatHAPos = -1
     private var locBilatHATex = -1
@@ -82,6 +86,9 @@ class OpenGLSurfaceProcessor : SurfaceProcessor, SurfaceTexture.OnFrameAvailable
     private var locBilatHFilter = -1
     private var locBilatHNight = -1
     private var locBilatHStep = -1
+    private var locBilatHColorMat = -1
+    private var locBilatHColorOff = -1
+    private var locBilatHUseColorMat = -1
 
     private var locBilatVAPos = -1
     private var locBilatVATex = -1
@@ -308,9 +315,66 @@ class OpenGLSurfaceProcessor : SurfaceProcessor, SurfaceTexture.OnFrameAvailable
     private var customFilterGray: Boolean = false
 
     private var lastStopMotionFrameMs: Long = 0L
+    private var lastTimeLapseFrameMs: Long = 0L
+    private var timeLapsePtsNs: Long = 0L
+
+    @Volatile
+    private var deSqueezeFactor: Float = 1.0f
+
+    @Volatile
+    private var horizonLockRollDeg: Float = 0.0f
+
+    private val colorMatrixLock = Any()
+    private var useExactColorMatrix: Boolean = false
+    private val exactColorMat3 = floatArrayOf(
+        1f, 0f, 0f,
+        0f, 1f, 0f,
+        0f, 0f, 1f
+    )
+    private val exactColorOff3 = floatArrayOf(0f, 0f, 0f)
+    private val glColorMat3Buf = FloatArray(9)
+    private val glColorOff3Buf = FloatArray(3)
 
     fun setFilterPreset(preset: FilterManager.FilterPreset) {
         activePreset = preset
+    }
+
+    /**
+     * Uploads the exact Android 20-float ColorMatrix (from preset or custom filter with sepia/tint/grayscale)
+     * so recorded MP4 videos & live OpenGL preview achieve 1:1 color parity with Photo capture.
+     */
+    fun setExactColorMatrix(matrix20: FloatArray?) {
+        synchronized(colorMatrixLock) {
+            if (matrix20 == null || matrix20.size < 20) {
+                useExactColorMatrix = false
+                exactColorMat3[0] = 1f; exactColorMat3[1] = 0f; exactColorMat3[2] = 0f
+                exactColorMat3[3] = 0f; exactColorMat3[4] = 1f; exactColorMat3[5] = 0f
+                exactColorMat3[6] = 0f; exactColorMat3[7] = 0f; exactColorMat3[8] = 1f
+                exactColorOff3[0] = 0f; exactColorOff3[1] = 0f; exactColorOff3[2] = 0f
+            } else {
+                useExactColorMatrix = true
+                // Convert row-major Android 4x5 ColorMatrix to column-major GLSL mat3 + vec3 offset
+                exactColorMat3[0] = matrix20[0]; exactColorMat3[1] = matrix20[5]; exactColorMat3[2] = matrix20[10]
+                exactColorMat3[3] = matrix20[1]; exactColorMat3[4] = matrix20[6]; exactColorMat3[5] = matrix20[11]
+                exactColorMat3[6] = matrix20[2]; exactColorMat3[7] = matrix20[7]; exactColorMat3[8] = matrix20[12]
+                exactColorOff3[0] = matrix20[4] / 255f
+                exactColorOff3[1] = matrix20[9] / 255f
+                exactColorOff3[2] = matrix20[14] / 255f
+            }
+        }
+    }
+
+    fun setDeSqueezeFactor(factor: Float) {
+        deSqueezeFactor = factor.coerceIn(1.0f, 2.2f)
+    }
+
+    fun setHorizonLockRoll(rollDeg: Float) {
+        horizonLockRollDeg = rollDeg.coerceIn(-45f, 45f)
+    }
+
+    fun resetVideoRecordingTiming() {
+        lastTimeLapseFrameMs = 0L
+        timeLapsePtsNs = 0L
     }
 
     fun setCustomFilterParams(enabled: Boolean, brightnessPct: Int, contrastPct: Int, saturationPct: Int, grayscale: Boolean) {
@@ -410,6 +474,10 @@ class OpenGLSurfaceProcessor : SurfaceProcessor, SurfaceTexture.OnFrameAvailable
         locMainMotion = GLES20.glGetUniformLocation(glProgram, "uMotionVector")
         locMainExtraFlags = GLES20.glGetUniformLocation(glProgram, "uExtraFlags")
         locMainCustomFilter = GLES20.glGetUniformLocation(glProgram, "uCustomFilter")
+        locMainColorMat = GLES20.glGetUniformLocation(glProgram, "uColorMat")
+        locMainColorOff = GLES20.glGetUniformLocation(glProgram, "uColorOff")
+        locMainUseColorMat = GLES20.glGetUniformLocation(glProgram, "uUseColorMat")
+        locMainDeSqueeze = GLES20.glGetUniformLocation(glProgram, "uDeSqueeze")
 
         progOesBilatH = createProgram(VERTEX_SHADER, OES_BILAT_H_FRAGMENT_SHADER)
         locBilatHAPos = GLES20.glGetAttribLocation(progOesBilatH, "aPosition")
@@ -420,6 +488,9 @@ class OpenGLSurfaceProcessor : SurfaceProcessor, SurfaceTexture.OnFrameAvailable
         locBilatHFilter = GLES20.glGetUniformLocation(progOesBilatH, "uFilterMode")
         locBilatHNight = GLES20.glGetUniformLocation(progOesBilatH, "uNightBoost")
         locBilatHStep = GLES20.glGetUniformLocation(progOesBilatH, "uTexelStep")
+        locBilatHColorMat = GLES20.glGetUniformLocation(progOesBilatH, "uColorMat")
+        locBilatHColorOff = GLES20.glGetUniformLocation(progOesBilatH, "uColorOff")
+        locBilatHUseColorMat = GLES20.glGetUniformLocation(progOesBilatH, "uUseColorMat")
 
         progBilatV = createProgram(PASS_VERTEX_SHADER, BILAT_V_FRAGMENT_SHADER)
         locBilatVAPos = GLES20.glGetAttribLocation(progBilatV, "aPosition")
@@ -653,20 +724,62 @@ class OpenGLSurfaceProcessor : SurfaceProcessor, SurfaceTexture.OnFrameAvailable
                 }
             }
 
+            var useMatNow = false
+            synchronized(colorMatrixLock) {
+                useMatNow = useExactColorMatrix
+                if (useMatNow) {
+                    System.arraycopy(exactColorMat3, 0, glColorMat3Buf, 0, 9)
+                    System.arraycopy(exactColorOff3, 0, glColorOff3Buf, 0, 3)
+                }
+            }
+
+            // Real Time-Lapse (12x) & Hyperlapse (5x) video encoder frame-skip cadence (Preview stays smooth!)
+            val isTimeLapseVideoEffect = (activeEffectId == "time_lapse" || activeEffectId == "hyperlapse")
+            val timeLapseIntervalMs = if (activeEffectId == "time_lapse") 400L else 166L
+            var allowVideoFrameNow = true
+            var encodedVideoPtsNs = timestampNs
+            if (isTimeLapseVideoEffect) {
+                if (lastTimeLapseFrameMs != 0L && (nowMs - lastTimeLapseFrameMs) < timeLapseIntervalMs) {
+                    allowVideoFrameNow = false
+                } else {
+                    lastTimeLapseFrameMs = nowMs
+                    if (timeLapsePtsNs == 0L) {
+                        timeLapsePtsNs = timestampNs
+                    } else {
+                        timeLapsePtsNs += 33_333_333L // Compress to smooth 30fps playback
+                    }
+                    encodedVideoPtsNs = timeLapsePtsNs
+                }
+            } else {
+                lastTimeLapseFrameMs = 0L
+                timeLapsePtsNs = 0L
+            }
+
             for (holder in outputSurfaces) {
                 val out = holder.surfaceOutput
+                val isVideoCaptureTarget = (out.targets and CameraEffect.VIDEO_CAPTURE) != 0
+                if (isVideoCaptureTarget && isTimeLapseVideoEffect && !allowVideoFrameNow) {
+                    continue
+                }
                 EGL14.eglMakeCurrent(eglDisplay, holder.eglSurface, holder.eglSurface, eglContext)
 
                 val effectiveZoom = (if (eisEnabled) eisOverscanZoom else 1.0f) * effectZoom
+                val activeHorizonRoll = when (activeEffectId) {
+                    "action_stabilization" -> -horizonLockRollDeg
+                    "hyperlapse" -> -(horizonLockRollDeg * 0.45f).coerceIn(-18f, 18f)
+                    else -> 0f
+                }
+                val combinedRollDeg = (if (eisEnabled) eisRollDeg else 0f) + activeHorizonRoll
+                val useMvpTransform = eisEnabled || effectZoom > 1.001f || Math.abs(combinedRollDeg) > 0.05f
                 GyroStabilizer.buildMvpMatrix(
                     outMatrix = mvpMatrix,
                     surfaceWidth = out.size.width,
                     surfaceHeight = out.size.height,
-                    enabled = eisEnabled || effectZoom > 1.001f,
+                    enabled = useMvpTransform,
                     overscanZoom = effectiveZoom,
                     transXNorm = if (eisEnabled) eisTransX else 0f,
                     transYNorm = if (eisEnabled) eisTransY else 0f,
-                    rollDeg = if (eisEnabled) eisRollDeg else 0f
+                    rollDeg = combinedRollDeg
                 )
                 out.updateTransformMatrix(holderTexMatrix, texMatrix)
 
@@ -680,7 +793,7 @@ class OpenGLSurfaceProcessor : SurfaceProcessor, SurfaceTexture.OnFrameAvailable
                         6 -> 5 // Ligne Claire
                         else -> 0 // FilterPreset.COMIC_BOOK
                     }
-                    val comicIntensity = if (effectCode in 1..6) activeEffectIntensity else 0.92f
+                    val comicIntensity = activeEffectIntensity
 
                     ensureComicFbos(out.size.width, out.size.height)
                     val fboTexelX = 1f / comicFboW.toFloat()
@@ -689,7 +802,7 @@ class OpenGLSurfaceProcessor : SurfaceProcessor, SurfaceTexture.OnFrameAvailable
 
                     GLES20.glViewport(0, 0, comicFboW, comicFboH)
 
-                    // PASS 1: OES Camera -> FBO 0 (NightBoost + Filter + Horizontal 9-tap Bilateral Flatten)
+                    // PASS 1: OES Camera -> FBO 0 (NightBoost + Exact Filter + Horizontal 9-tap Bilateral Flatten)
                     GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, comicFboIds[0])
                     GLES20.glUseProgram(progOesBilatH)
                     bindQuadAttributes(locBilatHAPos, locBilatHATex)
@@ -701,6 +814,11 @@ class OpenGLSurfaceProcessor : SurfaceProcessor, SurfaceTexture.OnFrameAvailable
                     GLES20.glUniform1i(locBilatHFilter, filterCode)
                     GLES20.glUniform1f(locBilatHNight, if (nightBoost) 1f else 0f)
                     GLES20.glUniform2f(locBilatHStep, fboTexelX * 1.45f * fboTexelScale, 0f)
+                    if (locBilatHUseColorMat >= 0) GLES20.glUniform1f(locBilatHUseColorMat, if (useMatNow) 1f else 0f)
+                    if (useMatNow) {
+                        if (locBilatHColorMat >= 0) GLES20.glUniformMatrix3fv(locBilatHColorMat, 1, false, glColorMat3Buf, 0)
+                        if (locBilatHColorOff >= 0) GLES20.glUniform3f(locBilatHColorOff, glColorOff3Buf[0], glColorOff3Buf[1], glColorOff3Buf[2])
+                    }
                     GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
 
                     // PASS 2: FBO 0 -> FBO 1 (Vertical 9-tap Bilateral Flatten)
@@ -788,8 +906,14 @@ class OpenGLSurfaceProcessor : SurfaceProcessor, SurfaceTexture.OnFrameAvailable
                             if (extraCineFlareFlag) 1f else 0f
                         )
                     }
+                    if (locMainUseColorMat >= 0) GLES20.glUniform1f(locMainUseColorMat, if (useMatNow) 1f else 0f)
+                    if (useMatNow) {
+                        if (locMainColorMat >= 0) GLES20.glUniformMatrix3fv(locMainColorMat, 1, false, glColorMat3Buf, 0)
+                        if (locMainColorOff >= 0) GLES20.glUniform3f(locMainColorOff, glColorOff3Buf[0], glColorOff3Buf[1], glColorOff3Buf[2])
+                    }
+                    if (locMainDeSqueeze >= 0) GLES20.glUniform1f(locMainDeSqueeze, deSqueezeFactor)
                     if (locMainCustomFilter >= 0) {
-                        if (customFilterEnabled) {
+                        if (customFilterEnabled && !useMatNow) {
                             GLES20.glUniform4f(
                                 locMainCustomFilter,
                                 customFilterBri,
@@ -805,9 +929,8 @@ class OpenGLSurfaceProcessor : SurfaceProcessor, SurfaceTexture.OnFrameAvailable
                     GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
                 }
 
-                // Alpha-composite AR Text & AR Lens overlay ONLY onto VideoCapture surfaces
-                // (Preview already displays ARFaceOverlayView upright on screen, so drawing on PREVIEW causes a rotated duplicate!)
-                val isVideoCaptureTarget = (out.targets and CameraEffect.VIDEO_CAPTURE) != 0
+                // Alpha-composite AR Text, AR Lens, Date Stamp & Studio Watermark overlay ONLY onto VideoCapture surfaces
+                // (Preview already displays ARFaceOverlayView & ProOverlayView upright on screen, so drawing on PREVIEW would duplicate!)
                 if (isVideoCaptureTarget && hasOverlayTexture && progOverlay != 0 && overlayTextureId != 0) {
                     val rotMode = if (out.size.width > out.size.height && overlayBmpWidth > 0 && overlayBmpWidth < overlayBmpHeight) {
                         if (overlayIsFrontCamera) 3 else 1
@@ -826,7 +949,8 @@ class OpenGLSurfaceProcessor : SurfaceProcessor, SurfaceTexture.OnFrameAvailable
                     GLES20.glDisable(GLES20.GL_BLEND)
                 }
 
-                EGLExt.eglPresentationTimeANDROID(eglDisplay, holder.eglSurface, timestampNs)
+                val outPtsNs = if (isVideoCaptureTarget && isTimeLapseVideoEffect) encodedVideoPtsNs else timestampNs
+                EGLExt.eglPresentationTimeANDROID(eglDisplay, holder.eglSurface, outPtsNs)
                 EGL14.eglSwapBuffers(eglDisplay, holder.eglSurface)
             }
         } catch (e: Exception) {
@@ -894,15 +1018,16 @@ class OpenGLSurfaceProcessor : SurfaceProcessor, SurfaceTexture.OnFrameAvailable
         FilterManager.FilterPreset.CLASSIC_MONO,
         FilterManager.FilterPreset.HIGH_CONTRAST_NOIR,
         FilterManager.FilterPreset.ILFORD_GRAIN,
+        FilterManager.FilterPreset.SILVER_GELATIN,
         FilterManager.FilterPreset.NOIR_CONTRAST,
         FilterManager.FilterPreset.LUT_NOIR_CINEMA -> 1
         FilterManager.FilterPreset.VINTAGE,
         FilterManager.FilterPreset.ANTIQUE_SEPIA,
-        FilterManager.FilterPreset.SILVER_GELATIN,
         FilterManager.FilterPreset.GOLDEN_NOSTALGIA,
         FilterManager.FilterPreset.PORTRA_400,
         FilterManager.FilterPreset.SUNSET_WARMTH,
-        FilterManager.FilterPreset.SUPER8_VINTAGE -> 2
+        FilterManager.FilterPreset.SUPER8_VINTAGE,
+        FilterManager.FilterPreset.LUT_WARM_DOCUMENTARY -> 2
         FilterManager.FilterPreset.CINEMATIC,
         FilterManager.FilterPreset.LUT_TEAL_ORANGE,
         FilterManager.FilterPreset.TEAL_ORANGE -> 3
@@ -910,7 +1035,8 @@ class OpenGLSurfaceProcessor : SurfaceProcessor, SurfaceTexture.OnFrameAvailable
         FilterManager.FilterPreset.LUT_MIDNIGHT_NEON -> 4
         FilterManager.FilterPreset.HDR,
         FilterManager.FilterPreset.VELVIA_LANDSCAPE,
-        FilterManager.FilterPreset.LUT_REC709 -> 5
+        FilterManager.FilterPreset.LUT_REC709,
+        FilterManager.FilterPreset.LUT_BLEACH_BYPASS -> 5
         FilterManager.FilterPreset.LUT_FLAT_LOG,
         FilterManager.FilterPreset.LUT_MATTE_CINEMA,
         FilterManager.FilterPreset.FUJI_400H,
@@ -1030,6 +1156,9 @@ class OpenGLSurfaceProcessor : SurfaceProcessor, SurfaceTexture.OnFrameAvailable
             uniform int uFilterMode;
             uniform float uNightBoost;
             uniform vec2 uTexelStep;
+            uniform mat3 uColorMat;
+            uniform vec3 uColorOff;
+            uniform float uUseColorMat;
 
             float luma(vec3 c) {
                 return dot(c, vec3(0.299, 0.587, 0.114));
@@ -1040,7 +1169,9 @@ class OpenGLSurfaceProcessor : SurfaceProcessor, SurfaceTexture.OnFrameAvailable
                 if (uNightBoost > 0.5) {
                     col = pow(max(col, vec3(0.001)), vec3(0.62)) + vec3(0.03);
                 }
-                if (uFilterMode == 1) {
+                if (uUseColorMat > 0.5) {
+                    col = clamp(uColorMat * col + uColorOff, 0.0, 1.0);
+                } else if (uFilterMode == 1) {
                     float g = luma(col);
                     col = vec3((g - 0.5) * 1.28 + 0.5);
                 } else if (uFilterMode == 2) {
@@ -1300,6 +1431,10 @@ class OpenGLSurfaceProcessor : SurfaceProcessor, SurfaceTexture.OnFrameAvailable
             uniform vec3 uMotionVector;
             uniform vec3 uExtraFlags;
             uniform vec4 uCustomFilter;
+            uniform mat3 uColorMat;
+            uniform vec3 uColorOff;
+            uniform float uUseColorMat;
+            uniform float uDeSqueeze;
 
             float luma(vec3 c) {
                 return dot(c, vec3(0.299, 0.587, 0.114));
@@ -1416,8 +1551,44 @@ class OpenGLSurfaceProcessor : SurfaceProcessor, SurfaceTexture.OnFrameAvailable
                 return (m0 * w0 + m1 * w1 + m2 * w2 + m3 * w3) / max(w0 + w1 + w2 + w3, 0.001);
             }
 
+            vec3 applyColorGrade(vec3 c) {
+                if (uUseColorMat > 0.5) {
+                    return clamp(uColorMat * c + uColorOff, 0.0, 1.0);
+                }
+                if (uFilterMode == 1) {
+                    float g = luma(c);
+                    return vec3((g - 0.5) * 1.28 + 0.5);
+                } else if (uFilterMode == 2) {
+                    float g = luma(c);
+                    return mix(c, vec3(g * 1.08 + 0.05, g * 0.94 + 0.02, g * 0.72), 0.72);
+                } else if (uFilterMode == 3) {
+                    return vec3(c.r * 1.16, c.g * 1.02, c.b * 0.90 + 0.05);
+                } else if (uFilterMode == 4) {
+                    return vec3(c.r * 1.24, c.g * 0.92, c.b * 1.32);
+                } else if (uFilterMode == 5) {
+                    return (c - 0.5) * 1.22 + 0.5;
+                } else if (uFilterMode == 6) {
+                    return c * 0.72 + 0.12;
+                } else if (uFilterMode == 8) {
+                    float gM = luma(c);
+                    return vec3(gM * 0.25, clamp(gM * 1.38 + 0.05, 0.0, 1.0), gM * 0.35);
+                } else if (uFilterMode == 9) {
+                    return vec3(c.r * 0.88, c.g * 1.04, c.b * 1.28 + 0.04);
+                }
+                return c;
+            }
+
             void main() {
                 vec2 uv = clamp(vTexCoord, 0.0, 1.0);
+                // Real Anamorphic De-Squeeze with clean cinema letterbox bars
+                if (uDeSqueeze > 1.01) {
+                    float dy = (uv.y - 0.5) * uDeSqueeze + 0.5;
+                    if (dy < 0.0 || dy > 1.0) {
+                        gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+                        return;
+                    }
+                    uv = vec2(uv.x, dy);
+                }
                 if (uEffectMode == 17) {
                     vec2 d = uv - 0.5;
                     float ang = abs(mod(atan(d.y, d.x) + 3.1415926, 0.785398) - 0.392699);
@@ -1431,26 +1602,7 @@ class OpenGLSurfaceProcessor : SurfaceProcessor, SurfaceTexture.OnFrameAvailable
                     color = pow(max(color, vec3(0.001)), vec3(0.62)) + vec3(0.03);
                 }
 
-                if (uFilterMode == 1) {
-                    float g = luma(color);
-                    color = vec3((g - 0.5) * 1.28 + 0.5);
-                } else if (uFilterMode == 2) {
-                    float g = luma(color);
-                    color = mix(color, vec3(g * 1.08 + 0.05, g * 0.94 + 0.02, g * 0.72), 0.72);
-                } else if (uFilterMode == 3) {
-                    color = vec3(color.r * 1.16, color.g * 1.02, color.b * 0.90 + 0.05);
-                } else if (uFilterMode == 4) {
-                    color = vec3(color.r * 1.24, color.g * 0.92, color.b * 1.32);
-                } else if (uFilterMode == 5) {
-                    color = (color - 0.5) * 1.22 + 0.5;
-                } else if (uFilterMode == 6) {
-                    color = color * 0.72 + 0.12;
-                } else if (uFilterMode == 8) {
-                    float gM = luma(color);
-                    color = vec3(gM * 0.25, clamp(gM * 1.38 + 0.05, 0.0, 1.0), gM * 0.35);
-                } else if (uFilterMode == 9) {
-                    color = vec3(color.r * 0.88, color.g * 1.04, color.b * 1.28 + 0.04);
-                }
+                color = applyColorGrade(color);
 
                 vec3 baseEffectColor = color;
                 if (uEffectMode == 17) {
@@ -1458,26 +1610,7 @@ class OpenGLSurfaceProcessor : SurfaceProcessor, SurfaceTexture.OnFrameAvailable
                     if (uNightBoost > 0.5) {
                         baseEffectColor = pow(max(baseEffectColor, vec3(0.001)), vec3(0.62)) + vec3(0.03);
                     }
-                    if (uFilterMode == 1) {
-                        float g0 = luma(baseEffectColor);
-                        baseEffectColor = vec3((g0 - 0.5) * 1.28 + 0.5);
-                    } else if (uFilterMode == 2) {
-                        float g0 = luma(baseEffectColor);
-                        baseEffectColor = mix(baseEffectColor, vec3(g0 * 1.08 + 0.05, g0 * 0.94 + 0.02, g0 * 0.72), 0.72);
-                    } else if (uFilterMode == 3) {
-                        baseEffectColor = vec3(baseEffectColor.r * 1.16, baseEffectColor.g * 1.02, baseEffectColor.b * 0.90 + 0.05);
-                    } else if (uFilterMode == 4) {
-                        baseEffectColor = vec3(baseEffectColor.r * 1.24, baseEffectColor.g * 0.92, baseEffectColor.b * 1.32);
-                    } else if (uFilterMode == 5) {
-                        baseEffectColor = (baseEffectColor - 0.5) * 1.22 + 0.5;
-                    } else if (uFilterMode == 6) {
-                        baseEffectColor = baseEffectColor * 0.72 + 0.12;
-                    } else if (uFilterMode == 8) {
-                        float gM0 = luma(baseEffectColor);
-                        baseEffectColor = vec3(gM0 * 0.25, clamp(gM0 * 1.38 + 0.05, 0.0, 1.0), gM0 * 0.35);
-                    } else if (uFilterMode == 9) {
-                        baseEffectColor = vec3(baseEffectColor.r * 0.88, baseEffectColor.g * 1.04, baseEffectColor.b * 1.28 + 0.04);
-                    }
+                    baseEffectColor = applyColorGrade(baseEffectColor);
                 }
 
                 // Lazy-gate expensive 13-tap bilateral & 13-tap XDoG edge sampling so normal camera & lightweight effects stay 60fps

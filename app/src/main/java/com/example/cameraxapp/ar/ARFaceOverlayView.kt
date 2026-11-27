@@ -1280,9 +1280,29 @@ class ARFaceOverlayView @JvmOverloads constructor(
     private var activeGlbRotX: Float = 0f
     private var activeGlbAutoSpin: Boolean = true
     private var activeGlbStartMs: Long = System.currentTimeMillis()
+    var handGlbScale: Float = 1.0f
+    var handGlbOffsetY: Float = 0f
+    var bodyGlbAnchor: String = "upper_back"
+    var bodyGlbScale: Float = 1.0f
+    var bodyGlbOffsetY: Float = 0f
+    var worldGlbOffsetY: Float = 0f
+    var snapGlbEnabled: Boolean = false
+    var snapGlbAnchor: String = "back_hand"
+    var snapGlbScale: Float = 1.0f
+    var snapGlbOffsetY: Float = 0f
     @Volatile
     private var latestGlbBitmap: Bitmap? = null
+    @Volatile
+    private var latestSnapGlbBitmap: Bitmap? = null
     private var lastGlbRenderRequestMs: Long = 0L
+    private var lastSnapGlbRenderMs: Long = 0L
+
+    fun getLastGlbError(): String = glbEngine?.lastLoadError ?: ""
+
+    fun testParseGlbFile(filePath: String): String? {
+        val engine = glbEngine ?: GlbArModelEngine(context.applicationContext).also { glbEngine = it }
+        return engine.validateFile(filePath)
+    }
 
     fun loadGlbModelFromAsset(
         assetPath: String,
@@ -1291,7 +1311,8 @@ class ARFaceOverlayView @JvmOverloads constructor(
         offsetY: Float = 0f,
         rotYDeg: Float = 0f,
         rotXDeg: Float = 0f,
-        autoSpin: Boolean = true
+        autoSpin: Boolean = true,
+        activateFaceLens: Boolean = true
     ): Boolean {
         val engine = glbEngine ?: GlbArModelEngine(context.applicationContext).also { glbEngine = it }
         activeGlbAnchor = anchor
@@ -1302,9 +1323,15 @@ class ARFaceOverlayView @JvmOverloads constructor(
         activeGlbAutoSpin = autoSpin
         activeGlbStartMs = System.currentTimeMillis()
         latestGlbBitmap = null
+        latestHandGlbBitmap = null
+        latestBodyGlbBitmap = null
+        latestWorldGlbBitmap = null
+        latestSnapGlbBitmap = null
         val ok = engine.loadFromAsset(assetPath)
         if (ok) {
-            currentLens = ArLensMode.GLB_3D
+            if (activateFaceLens) {
+                currentLens = ArLensMode.GLB_3D
+            }
             postInvalidateOnAnimation()
         }
         return ok
@@ -1317,7 +1344,8 @@ class ARFaceOverlayView @JvmOverloads constructor(
         offsetY: Float = 0f,
         rotYDeg: Float = 0f,
         rotXDeg: Float = 0f,
-        autoSpin: Boolean = true
+        autoSpin: Boolean = true,
+        activateFaceLens: Boolean = true
     ): Boolean {
         val engine = glbEngine ?: GlbArModelEngine(context.applicationContext).also { glbEngine = it }
         activeGlbAnchor = anchor
@@ -1328,9 +1356,15 @@ class ARFaceOverlayView @JvmOverloads constructor(
         activeGlbAutoSpin = autoSpin
         activeGlbStartMs = System.currentTimeMillis()
         latestGlbBitmap = null
+        latestHandGlbBitmap = null
+        latestBodyGlbBitmap = null
+        latestWorldGlbBitmap = null
+        latestSnapGlbBitmap = null
         val ok = engine.loadFromFile(filePath)
         if (ok) {
-            currentLens = ArLensMode.GLB_3D
+            if (activateFaceLens) {
+                currentLens = ArLensMode.GLB_3D
+            }
             postInvalidateOnAnimation()
         }
         return ok
@@ -1340,6 +1374,14 @@ class ARFaceOverlayView @JvmOverloads constructor(
         glbEngine?.release()
         glbEngine = null
         latestGlbBitmap = null
+        latestHandGlbBitmap = null
+        latestBodyGlbBitmap = null
+        latestWorldGlbBitmap = null
+        latestSnapGlbBitmap = null
+        for (i in exportOverlayBuffers.indices) {
+            exportOverlayBuffers[i]?.let { if (!it.isRecycled) it.recycle() }
+            exportOverlayBuffers[i] = null
+        }
     }
 
     var isCartoonShaderActive: Boolean = false
@@ -1622,6 +1664,8 @@ class ARFaceOverlayView @JvmOverloads constructor(
             handArEnabled ||
             bodyArEnabled ||
             worldArEnabled ||
+            snapGauntletEnabled ||
+            snapGlbEnabled ||
             showDebugReticle ||
             enableComicOnomatopoeia ||
             enableComicSpeechBubble ||
@@ -1873,11 +1917,14 @@ class ARFaceOverlayView @JvmOverloads constructor(
         invalidate()
     }
 
+    @Volatile
     private var landmarks: List<NormalizedLandmark>? = null
     private var imageWidth: Int = 1
     private var imageHeight: Int = 1
     private var isFrontCamera: Boolean = true
     private var animTick: Long = 0
+    private val exportOverlayBuffers = arrayOfNulls<Bitmap>(2)
+    private var exportOverlayBufIdx = 0
 
     // Paints
     private val meshLinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -1990,6 +2037,13 @@ class ARFaceOverlayView @JvmOverloads constructor(
     fun clear() {
         landmarks = null
         hasSimpleFace = false
+        clearHandLandmarks()
+        clearBodyPose()
+        latestGlbBitmap = null
+        latestHandGlbBitmap = null
+        latestBodyGlbBitmap = null
+        latestWorldGlbBitmap = null
+        latestSnapGlbBitmap = null
         postInvalidate()
     }
 
@@ -2006,7 +2060,7 @@ class ARFaceOverlayView @JvmOverloads constructor(
     ) {
         if (viewW <= 0f || viewH <= 0f) return
         val hasText = arTextItems.isNotEmpty()
-        if (currentLens == ArLensMode.NONE && !faceBeautyEnabled && !handArEnabled && !bodyArEnabled && !worldArEnabled && !showDebugReticle && !enableComicOnomatopoeia && !enableComicSpeechBubble && !hasText) return
+        if (currentLens == ArLensMode.NONE && !faceBeautyEnabled && !handArEnabled && !bodyArEnabled && !worldArEnabled && !snapGauntletEnabled && !snapGlbEnabled && !showDebugReticle && !enableComicOnomatopoeia && !enableComicSpeechBubble && !hasText) return
 
         // Phase 4: World AR Layer renders first so floor/wall planes, portals & placed 3D objects ground behind subjects
         if (worldArEnabled) {
@@ -2036,9 +2090,9 @@ class ARFaceOverlayView @JvmOverloads constructor(
             drawHandArLayer(canvas, viewW, viewH, System.currentTimeMillis(), syncGlb = !includeSelectionOutline)
         }
 
-        // Phase 2B: 6-Stone Infinity Gauntlet on detected hand(s) during Snap & Wipeout
-        if (isSnapWipeoutArmed() && snapGauntletEnabled) {
-            drawInfinityGauntletLayer(canvas, viewW, viewH, System.currentTimeMillis())
+        // Phase 2B: 6-Stone Infinity Gauntlet / Snap 3D GLB on detected hand(s) during Snap & Wipeout
+        if ((isSnapWipeoutArmed() || snapGlbEnabled) && snapGauntletEnabled) {
+            drawInfinityGauntletLayer(canvas, viewW, viewH, System.currentTimeMillis(), syncGlb = !includeSelectionOutline)
         }
 
         if (hasText) {
@@ -2048,7 +2102,16 @@ class ARFaceOverlayView @JvmOverloads constructor(
 
     fun renderExportOverlayBitmap(targetW: Int, targetH: Int): Bitmap? {
         if (!hasAnyVisibleOverlay() || targetW <= 0 || targetH <= 0) return null
-        val bmp = Bitmap.createBitmap(targetW, targetH, Bitmap.Config.ARGB_8888)
+        val slot = exportOverlayBufIdx and 1
+        exportOverlayBufIdx = (slot + 1) and 1
+        var bmp = exportOverlayBuffers[slot]
+        if (bmp == null || bmp.isRecycled || bmp.width != targetW || bmp.height != targetH) {
+            bmp?.let { if (!it.isRecycled) it.recycle() }
+            bmp = Bitmap.createBitmap(targetW, targetH, Bitmap.Config.ARGB_8888)
+            exportOverlayBuffers[slot] = bmp
+        } else {
+            bmp.eraseColor(Color.TRANSPARENT)
+        }
         val c = Canvas(bmp)
         drawCompositeOverlay(c, targetW.toFloat(), targetH.toFloat(), includeSelectionOutline = false)
         return bmp
@@ -2181,7 +2244,9 @@ class ARFaceOverlayView @JvmOverloads constructor(
         if (viewW <= 0f || viewH <= 0f) return
 
         val now = System.currentTimeMillis()
-        val hasReal = landmarks != null && landmarks!!.size >= 468
+        // Snapshot volatile face landmarks once to prevent NullPointerException if analyzer clears them mid-frame
+        val lmSnapshot = landmarks
+        val hasReal = lmSnapshot != null && lmSnapshot.size >= 468
         val hasSimple = !hasReal && hasSimpleFace && (now - lastSimpleFaceTime < 1500L)
 
         // When no face is visible in frame (e.g. pointing rear camera at floor/desk), keep the viewfinder clean
@@ -2262,12 +2327,12 @@ class ARFaceOverlayView @JvmOverloads constructor(
             viewW * 0.20f
         }
         val rawCenterX = when {
-            hasReal -> projectNormX(landmarks!![1].x())
+            hasReal -> projectNormX(lmSnapshot!![1].x())
             hasSimple -> projectNormX(simpleFaceCenterX)
             else -> viewW * 0.5f
         }
         val rawCenterY = when {
-            hasReal -> projectNormY(landmarks!![1].y())
+            hasReal -> projectNormY(lmSnapshot!![1].y())
             hasSimple -> projectNormY(simpleFaceCenterY) + (trackedEyeDistPx * 0.35f)
             else -> viewH * 0.49f + floatOffset
         }
@@ -2281,8 +2346,8 @@ class ARFaceOverlayView @JvmOverloads constructor(
         }
 
         fun getX(idx: Int): Float {
-            if (hasReal) {
-                val base = projectNormX(landmarks!![idx].x())
+            if (hasReal && lmSnapshot != null && idx in lmSnapshot.indices) {
+                val base = projectNormX(lmSnapshot[idx].x())
                 val dist = base - rawCenterX
                 val isEye = idx == 33 || idx == 263 || idx == 133 || idx == 362
                 val spacing = if (isEye) eyeSpacingFactor else 1.0f
@@ -2314,8 +2379,8 @@ class ARFaceOverlayView @JvmOverloads constructor(
         }
 
         fun getY(idx: Int): Float {
-            if (hasReal) {
-                val base = projectNormY(landmarks!![idx].y())
+            if (hasReal && lmSnapshot != null && idx in lmSnapshot.indices) {
+                val base = projectNormY(lmSnapshot[idx].y())
                 val dist = base - rawCenterY
                 var extraY = 0f
                 if (idx == 10 || idx == 338 || idx == 297) extraY = foreheadOffset * viewH
@@ -4230,18 +4295,19 @@ class ARFaceOverlayView @JvmOverloads constructor(
                             val downScale = minOf(1f, maxEdge / maxOf(viewW, viewH).coerceAtLeast(1f))
                             val renderW = (viewW * downScale).toInt().coerceIn(128, 720)
                             val renderH = (viewH * downScale).toInt().coerceIn(128, 720)
+                            val adjAnchorY = (anchorY + handGlbOffsetY * viewH * 0.45f).coerceIn(viewH * 0.05f, viewH * 0.95f)
                             val pose = GlbArModelEngine.GlbPose(
                                 normAnchorX = (anchorX / viewW).coerceIn(0.05f, 0.95f),
-                                normAnchorY = (anchorY / viewH).coerceIn(0.05f, 0.95f),
-                                normFaceWidth = ((handScale * 1.15f * gestureBoost * pinchBoost) / viewW).coerceIn(0.08f, 1.1f),
-                                modelScale = activeGlbModelScale.coerceIn(0.4f, 2.5f),
+                                normAnchorY = (adjAnchorY / viewH).coerceIn(0.05f, 0.95f),
+                                normFaceWidth = ((handScale * 1.15f * gestureBoost * pinchBoost) / viewW).coerceIn(0.08f, 1.25f),
+                                modelScale = (activeGlbModelScale * handGlbScale).coerceIn(0.35f, 3.0f),
                                 yawDeg = activeGlbRotY + (timeSec * 42f),
                                 pitchDeg = activeGlbRotX,
                                 rollDeg = -handRollDeg.coerceIn(-75f, 75f),
                                 enableHeadOcclusion = false,
                                 normFaceCenterX = (anchorX / viewW).coerceIn(0.05f, 0.95f),
-                                normFaceCenterY = (anchorY / viewH).coerceIn(0.05f, 0.95f),
-                                normFaceHeight = ((handScale * 1.15f) / viewH).coerceIn(0.08f, 1.1f)
+                                normFaceCenterY = (adjAnchorY / viewH).coerceIn(0.05f, 0.95f),
+                                normFaceHeight = ((handScale * 1.15f) / viewH).coerceIn(0.08f, 1.25f)
                             )
                             val bmp = if (syncGlb) {
                                 engine.renderSync(renderW, renderH, pose)
@@ -4669,9 +4735,15 @@ class ARFaceOverlayView @JvmOverloads constructor(
                     }
                 }
                 BodyAccessoryStyle.CUSTOM_GLB -> {
-                    // Tweak 5: Custom 3D .glb Model attached to upper back / shoulder midpoint
+                    // Custom 3D .glb Model attached to chosen Body anchor (upper_back / chest / shoulders / halo)
                     val anchorX = shoulderMidX
-                    val anchorY = shoulderMidY + torsoH * 0.16f
+                    val baseAnchorY = when (bodyGlbAnchor.lowercase()) {
+                        "chest" -> shoulderMidY + torsoH * 0.34f
+                        "shoulders" -> shoulderMidY
+                        "halo" -> shoulderMidY - torsoH * 0.42f
+                        else -> shoulderMidY + torsoH * 0.16f
+                    }
+                    val anchorY = (baseAnchorY + bodyGlbOffsetY * viewH * 0.45f).coerceIn(viewH * 0.05f, viewH * 0.95f)
                     val engine = glbEngine
                     if (engine != null && engine.hasModelLoaded()) {
                         val torsoRollDeg = Math.toDegrees(
@@ -4684,15 +4756,15 @@ class ARFaceOverlayView @JvmOverloads constructor(
                         val pose = GlbArModelEngine.GlbPose(
                             normAnchorX = (anchorX / viewW).coerceIn(0.05f, 0.95f),
                             normAnchorY = (anchorY / viewH).coerceIn(0.05f, 0.95f),
-                            normFaceWidth = ((shoulderW * 1.48f * stanceBoost) / viewW).coerceIn(0.10f, 1.25f),
-                            modelScale = activeGlbModelScale.coerceIn(0.4f, 2.5f),
+                            normFaceWidth = ((shoulderW * 1.48f * stanceBoost) / viewW).coerceIn(0.10f, 1.35f),
+                            modelScale = (activeGlbModelScale * bodyGlbScale).coerceIn(0.35f, 3.0f),
                             yawDeg = activeGlbRotY + (timeSec.toFloat() * 28f),
                             pitchDeg = activeGlbRotX,
                             rollDeg = -torsoRollDeg.coerceIn(-45f, 45f),
                             enableHeadOcclusion = false,
                             normFaceCenterX = (anchorX / viewW).coerceIn(0.05f, 0.95f),
                             normFaceCenterY = (anchorY / viewH).coerceIn(0.05f, 0.95f),
-                            normFaceHeight = ((torsoH * 1.15f) / viewH).coerceIn(0.10f, 1.25f)
+                            normFaceHeight = ((torsoH * 1.15f) / viewH).coerceIn(0.10f, 1.35f)
                         )
                         val bmp = if (syncGlb) {
                             engine.renderSync(renderW, renderH, pose)
@@ -5152,7 +5224,8 @@ class ARFaceOverlayView @JvmOverloads constructor(
         canvas: Canvas,
         viewW: Float,
         viewH: Float,
-        nowMs: Long
+        nowMs: Long,
+        syncGlb: Boolean = false
     ) {
         val hands = trackedHands
         if (hands.isEmpty() || (nowMs - lastHandUpdateMs) >= 900L) {
@@ -5264,6 +5337,60 @@ class ARFaceOverlayView @JvmOverloads constructor(
         val handScale = Math.hypot((midMcp.x - wrist.x).toDouble(), (midMcp.y - wrist.y).toDouble()).toFloat().coerceAtLeast(52f)
         val palmCx = (pts[0].x * 1.05f + pts[5].x + pts[9].x * 1.15f + pts[13].x + pts[17].x) / 5.2f
         val palmCy = (pts[0].y * 1.05f + pts[5].y + pts[9].y * 1.15f + pts[13].y + pts[17].y) / 5.2f
+
+        // If user loaded a custom Snap Magic 3D GLB artifact, render it anchored to the snapping hand
+        if (snapGlbEnabled) {
+            val engine = glbEngine
+            if (engine != null && engine.hasModelLoaded()) {
+                val snapAx = when (snapGlbAnchor.lowercase()) {
+                    "wrist" -> wrist.x
+                    else -> palmCx
+                }
+                val snapAyBase = when (snapGlbAnchor.lowercase()) {
+                    "wrist" -> wrist.y
+                    "palm" -> palmCy - handScale * 0.08f
+                    else -> palmCy
+                }
+                val snapAy = (snapAyBase + snapGlbOffsetY * viewH * 0.45f).coerceIn(viewH * 0.05f, viewH * 0.95f)
+                val handRollDeg = Math.toDegrees(
+                    Math.atan2((midMcp.y - wrist.y).toDouble(), (midMcp.x - wrist.x).toDouble())
+                ).toFloat() + 90f
+                val maxEdge = 720f
+                val downScale = minOf(1f, maxEdge / maxOf(viewW, viewH).coerceAtLeast(1f))
+                val renderW = (viewW * downScale).toInt().coerceIn(128, 720)
+                val renderH = (viewH * downScale).toInt().coerceIn(128, 720)
+                val pose = GlbArModelEngine.GlbPose(
+                    normAnchorX = (snapAx / viewW).coerceIn(0.05f, 0.95f),
+                    normAnchorY = (snapAy / viewH).coerceIn(0.05f, 0.95f),
+                    normFaceWidth = ((handScale * 1.32f * (1f + snapFlare * 0.25f)) / viewW).coerceIn(0.08f, 1.3f),
+                    modelScale = (activeGlbModelScale * snapGlbScale).coerceIn(0.35f, 3.0f),
+                    yawDeg = activeGlbRotY + (timeSec * 30f),
+                    pitchDeg = activeGlbRotX,
+                    rollDeg = -handRollDeg.coerceIn(-75f, 75f),
+                    enableHeadOcclusion = false,
+                    normFaceCenterX = (snapAx / viewW).coerceIn(0.05f, 0.95f),
+                    normFaceCenterY = (snapAy / viewH).coerceIn(0.05f, 0.95f),
+                    normFaceHeight = ((handScale * 1.32f) / viewH).coerceIn(0.08f, 1.3f)
+                )
+                val bmp = if (syncGlb) {
+                    engine.renderSync(renderW, renderH, pose)?.also { latestSnapGlbBitmap = it } ?: latestSnapGlbBitmap
+                } else {
+                    if (nowMs - lastSnapGlbRenderMs >= 32L) {
+                        lastSnapGlbRenderMs = nowMs
+                        engine.renderAsync(renderW, renderH, pose) { rendered ->
+                            latestSnapGlbBitmap = rendered
+                            postInvalidateOnAnimation()
+                        }
+                    }
+                    latestSnapGlbBitmap ?: engine.renderSync(renderW, renderH, pose)?.also { latestSnapGlbBitmap = it }
+                }
+                if (bmp != null && !bmp.isRecycled) {
+                    handTempRect.set(0f, 0f, viewW, viewH)
+                    canvas.drawBitmap(bmp, null, handTempRect, null)
+                }
+                return
+            }
+        }
 
         // Detect palm vs dorsal back-of-hand orientation
         val ax = pts[5].x - pts[0].x
@@ -6040,19 +6167,19 @@ class ARFaceOverlayView @JvmOverloads constructor(
                         val downScale = minOf(1f, maxEdge / maxOf(viewW, viewH).coerceAtLeast(1f))
                         val renderW = (viewW * downScale).toInt().coerceIn(128, 720)
                         val renderH = (viewH * downScale).toInt().coerceIn(128, 720)
-                        val anchorCenterY = (pt.y - drawSize * 0.42f).coerceIn(viewH * 0.08f, viewH * 0.92f)
+                        val anchorCenterY = (pt.y - drawSize * 0.42f + worldGlbOffsetY * viewH * 0.45f).coerceIn(viewH * 0.08f, viewH * 0.92f)
                         val pose = GlbArModelEngine.GlbPose(
                             normAnchorX = (pt.x / viewW).coerceIn(0.05f, 0.95f),
                             normAnchorY = (anchorCenterY / viewH).coerceIn(0.05f, 0.95f),
-                            normFaceWidth = (drawSize / viewW).coerceIn(0.10f, 1.25f),
-                            modelScale = (activeGlbModelScale * anchor.scale).coerceIn(0.4f, 2.5f),
+                            normFaceWidth = (drawSize / viewW).coerceIn(0.10f, 1.35f),
+                            modelScale = (activeGlbModelScale * anchor.scale * worldObjectScale).coerceIn(0.35f, 3.0f),
                             yawDeg = activeGlbRotY + ((t * 36f) % 360f),
                             pitchDeg = activeGlbRotX + (worldPitchDeg * 0.25f),
                             rollDeg = worldRollDeg * 0.20f,
                             enableHeadOcclusion = false,
                             normFaceCenterX = (pt.x / viewW).coerceIn(0.05f, 0.95f),
                             normFaceCenterY = (anchorCenterY / viewH).coerceIn(0.05f, 0.95f),
-                            normFaceHeight = (drawSize / viewH).coerceIn(0.10f, 1.25f)
+                            normFaceHeight = (drawSize / viewH).coerceIn(0.10f, 1.35f)
                         )
                         val bmp = if (syncGlb) {
                             engine.renderSync(renderW, renderH, pose)
