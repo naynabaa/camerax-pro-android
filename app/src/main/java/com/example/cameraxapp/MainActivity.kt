@@ -9268,8 +9268,7 @@ class MainActivity : AppCompatActivity() {
             override fun handleOnBackPressed() {
                 when {
                     viewBinding.proOverlayView.isCleanScreen -> {
-                        viewBinding.proOverlayView.isCleanScreen = false
-                        viewBinding.btnExitCleanScreen.visibility = View.GONE
+                        toggleCleanScreen()
                         viewBinding.proModeBar.visibility = View.VISIBLE
                         viewBinding.bottomControls.visibility = View.VISIBLE
                         refreshFloatingModeMenu()
