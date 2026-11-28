@@ -5022,6 +5022,7 @@ class MainActivity : AppCompatActivity() {
                 hudNoticeRunnable = null
                 viewBinding.layoutHudNotice.animate().cancel()
                 viewBinding.layoutHudNotice.visibility = View.GONE
+                viewBinding.proOverlayView.isHudNoticeVisible = false
             } catch (_: Exception) {}
         }
     }
@@ -5030,6 +5031,7 @@ class MainActivity : AppCompatActivity() {
         runOnUiThread {
             try {
                 hudNoticeRunnable?.let { hudNoticeHandler.removeCallbacks(it) }
+                viewBinding.proOverlayView.isHudNoticeVisible = true
                 viewBinding.tvHudNotice.text = text
                 viewBinding.tvHudNotice.setTextColor(if (isWarning) Color.parseColor("#F59E0B") else Color.parseColor("#34D399"))
                 viewBinding.layoutHudNotice.visibility = View.VISIBLE
@@ -5038,7 +5040,10 @@ class MainActivity : AppCompatActivity() {
                     viewBinding.layoutHudNotice.animate()
                         .alpha(0f)
                         .setDuration(250)
-                        .withEndAction { viewBinding.layoutHudNotice.visibility = View.GONE }
+                        .withEndAction {
+                            viewBinding.layoutHudNotice.visibility = View.GONE
+                            viewBinding.proOverlayView.isHudNoticeVisible = false
+                        }
                         .start()
                 }
                 hudNoticeHandler.postDelayed(hudNoticeRunnable!!, 1700)
@@ -8762,6 +8767,7 @@ class MainActivity : AppCompatActivity() {
         }
         nightExposureStacker.clearDarkEpisodeLock()
         viewBinding.proOverlayView.isNightModeHudActive = (mode == CameraMode.NIGHT || currentShootingEffect == "night_sight")
+        viewBinding.proOverlayView.isArOrVideoMode = (mode == CameraMode.AR_LENS || mode == CameraMode.VIDEO || mode == CameraMode.SLOW_MO)
         isLastActionCreative = false
         // Mode switch is already reflected cleanly by the center carousel pill, shutter icon, and top badge (no overlapping Mode toast)
         viewBinding.proOverlayView.isPanoramaModeActive = (mode == CameraMode.PANORAMA)
@@ -8793,9 +8799,15 @@ class MainActivity : AppCompatActivity() {
             viewBinding.tvRecordingStatus.setTextColor(Color.parseColor("#E879F9"))
             viewBinding.chronometer.text = "TAP PHOTO · HOLD 0.5S VID"
             viewBinding.chronometer.setTextColor(Color.parseColor("#F0ABFC"))
-            // Entering AR LENS from another mode wakes Face AR only if left on Off (respects user's last active family)
-            if (prevMode != CameraMode.AR_LENS && activeArFamily == "off") {
-                activeArFamily = "face"
+            // Sliding horizontally into AR LENS from an adjacent mode MUST NOT auto-activate an AR family
+            // (otherwise sliding SLOW-MO <-> AR LENS <-> PANORAMA traps the user in 8 lens swipes).
+            // Tapping the AR LENS tab directly wakes Face AR only if the user hadn't explicitly turned AR off.
+            if (prevMode != CameraMode.AR_LENS) {
+                if (slideDirection != 0) {
+                    activeArFamily = "off"
+                } else if (activeArFamily == "off" && !userTurnedArOff) {
+                    activeArFamily = "face"
+                }
             }
             // Auto-open right floating settings menu ONLY in AR mode when an effect is active
             activeFloatingSettingId = null
@@ -9768,6 +9780,7 @@ class MainActivity : AppCompatActivity() {
     private var downInModeCarousel = false
     private var downInIgnoredControl = false
     private var suppressNextTapFocus = false
+    private var lastHorizontalSwipeMs = 0L
 
     private fun isPointInView(view: View, rawX: Float, rawY: Float): Boolean {
         if (view.visibility != View.VISIBLE) return false
@@ -9841,8 +9854,11 @@ class MainActivity : AppCompatActivity() {
                 if (!isSwipeConsumed && !isMultiTouchGesture && !downInIgnoredControl && recording == null) {
                     val dx = ev.rawX - touchDownX
                     val dy = ev.rawY - touchDownY
+                    val density = resources.displayMetrics.density
+                    val moveThresholdPx = 46f * density
+                    val nowMs = SystemClock.uptimeMillis()
 
-                    if (Math.abs(dx) > 42 && Math.abs(dx) > Math.abs(dy) * 1.25f) {
+                    if (Math.abs(dx) > moveThresholdPx && Math.abs(dx) > Math.abs(dy) * 1.3f && (nowMs - lastHorizontalSwipeMs) >= 180L) {
                         val topToolbarRect = Rect()
                         viewBinding.proModeBar.getGlobalVisibleRect(topToolbarRect)
                         val bottomControlsRect = Rect()
@@ -9854,6 +9870,7 @@ class MainActivity : AppCompatActivity() {
 
                         if (inSwipeZone) {
                             isSwipeConsumed = true
+                            lastHorizontalSwipeMs = nowMs
                             val cancelEv = MotionEvent.obtain(ev)
                             cancelEv.action = MotionEvent.ACTION_CANCEL
                             super.dispatchTouchEvent(cancelEv)
@@ -9871,10 +9888,13 @@ class MainActivity : AppCompatActivity() {
                 }
                 val diffX = ev.rawX - touchDownX
                 val diffY = ev.rawY - touchDownY
-                val duration = SystemClock.uptimeMillis() - touchDownTime
+                val nowMs = SystemClock.uptimeMillis()
+                val duration = nowMs - touchDownTime
+                val flickThresholdPx = 32f * resources.displayMetrics.density
 
                 if (!isMultiTouchGesture && !downInIgnoredControl && recording == null &&
-                    Math.abs(diffX) > 30 && Math.abs(diffX) > Math.abs(diffY) * 1.2f && duration < 450
+                    Math.abs(diffX) > flickThresholdPx && Math.abs(diffX) > Math.abs(diffY) * 1.25f &&
+                    duration < 420 && (nowMs - lastHorizontalSwipeMs) >= 180L
                 ) {
                     val topToolbarRect = Rect()
                     viewBinding.proModeBar.getGlobalVisibleRect(topToolbarRect)
@@ -9887,6 +9907,7 @@ class MainActivity : AppCompatActivity() {
 
                     if (inSwipeZone) {
                         isSwipeConsumed = true
+                        lastHorizontalSwipeMs = nowMs
                         routeHorizontalSwipe(isNext = diffX < 0)
                         return true
                     }
@@ -12304,6 +12325,7 @@ class MainActivity : AppCompatActivity() {
     private var isFloatingMenuOpen: Boolean = false
     private var activeFloatingSettingId: String? = null
     private var activeArFamily: String = "face"
+    private var userTurnedArOff: Boolean = false
 
     private data class FloatingMenuSpec(
         val id: String,
@@ -12357,6 +12379,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun selectArFamily(family: String) {
         activeArFamily = family
+        userTurnedArOff = (family == "off")
         activeFloatingSettingId = null
         // Auto-open right floating settings menu ONLY in AR mode when an effect is selected
         isFloatingMenuOpen = (cameraMode == CameraMode.AR_LENS && family != "off")

@@ -427,6 +427,20 @@ class ProOverlayView @JvmOverloads constructor(
                 invalidate()
             }
         }
+    var isArOrVideoMode: Boolean = false
+        set(value) {
+            if (field != value) {
+                field = value
+                invalidate()
+            }
+        }
+    var isHudNoticeVisible: Boolean = false
+        set(value) {
+            if (field != value) {
+                field = value
+                invalidate()
+            }
+        }
     var nightSceneIsLowLight: Boolean = false
     var nightAvgLuma: Float = 128f
     var nightDarkRatio: Float = 0f
@@ -455,7 +469,7 @@ class ProOverlayView @JvmOverloads constructor(
         nightDwellProgress = dwellProgress.coerceIn(0f, 1f)
         nightRecommendedFrames = recommendedFrames.coerceIn(3, 7)
         nightStatusLabel = statusLabel
-        if (!isCleanScreen && (isNightModeHudActive || isLowLight || isNightStackCapturing || isNightStackFusing)) {
+        if (!isCleanScreen && !isArOrVideoMode && !isHudNoticeVisible && (isNightModeHudActive || isLowLight || isNightStackCapturing || isNightStackFusing)) {
             postInvalidateOnAnimation()
         }
     }
@@ -3338,7 +3352,7 @@ class ProOverlayView @JvmOverloads constructor(
         }
 
         // Low-Light ImageAnalysis Detection, Clean Non-Flickering Night Banner & Live Hand-Stability Reticle
-        if (!isCleanScreen && !isPanoramaModeActive && (isNightModeHudActive || nightSceneIsLowLight || isNightStackCapturing || isNightStackFusing)) {
+        if (!isCleanScreen && !isPanoramaModeActive && !isArOrVideoMode && !isHudNoticeVisible && (isNightModeHudActive || nightSceneIsLowLight || isNightStackCapturing || isNightStackFusing)) {
             val cardW = (w * 0.72f).coerceAtMost(dpToPx(308f))
             val cardH = dpToPx(38f)
             val left = (w - cardW) * 0.5f
