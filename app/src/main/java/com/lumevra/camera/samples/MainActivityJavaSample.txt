@@ -1,0 +1,1218 @@
+package com.lumevra.camera;
+
+import android.Manifest;
+import android.content.ContentValues;
+import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.net.Uri;
+import android.os.Build;
+import android.os.Bundle;
+import android.os.CountDownTimer;
+import android.os.Handler;
+import android.os.Looper;
+import android.os.SystemClock;
+import android.provider.MediaStore;
+import android.util.Log;
+import android.view.MotionEvent;
+import android.view.View;
+import android.widget.Chronometer;
+import android.widget.ImageButton;
+import android.widget.SeekBar;
+import android.widget.TextView;
+import android.widget.Toast;
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
+import androidx.annotation.NonNull;
+import androidx.appcompat.app.AppCompatActivity;
+import androidx.camera.core.Camera;
+import androidx.camera.core.CameraSelector;
+import androidx.camera.core.ExposureState;
+import androidx.camera.core.ImageAnalysis;
+import androidx.camera.core.ImageCapture;
+import androidx.camera.core.ImageCaptureException;
+import androidx.camera.core.ImageProxy;
+import androidx.camera.core.Preview;
+import androidx.camera.core.resolutionselector.ResolutionSelector;
+import androidx.camera.core.resolutionselector.ResolutionStrategy;
+import androidx.camera.lifecycle.ProcessCameraProvider;
+import androidx.camera.video.MediaStoreOutputOptions;
+import androidx.camera.video.Quality;
+import androidx.camera.video.QualitySelector;
+import androidx.camera.video.Recorder;
+import androidx.camera.video.Recording;
+import androidx.camera.video.VideoCapture;
+import androidx.camera.video.VideoRecordEvent;
+import androidx.camera.view.PreviewView;
+import androidx.core.content.ContextCompat;
+import androidx.core.content.PermissionChecker;
+import android.graphics.Bitmap;
+import android.graphics.Color;
+import android.graphics.Typeface;
+import com.lumevra.camera.night.NightExposureStacker;
+import com.lumevra.camera.overlay.ProOverlayView;
+import com.lumevra.camera.panorama.PanoramaStitcher;
+import com.lumevra.camera.power.EcoPowerManager;
+import com.lumevra.camera.power.ThermalGuardManager;
+import com.lumevra.camera.stabilization.GyroStabilizer;
+import com.google.common.util.concurrent.ListenableFuture;
+import java.io.OutputStream;
+
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
+import java.util.Locale;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
+/**
+ * CameraX Java Implementation with Multi-Mode Carousel (SLOW-MO, VIDEO, PHOTO, PORTRAIT, NIGHT, PANORAMA),
+ * Automated Panorama Stitching, Night Exposure Stacking, and Eco Power Scaling.
+ */
+public class MainActivity extends AppCompatActivity {
+
+    public enum CameraMode { SLOW_MO, VIDEO, PHOTO, PORTRAIT, NIGHT, PANORAMA, AR_LENS }
+
+    private static final List<CameraMode> ALL_MODES = Arrays.asList(
+            CameraMode.SLOW_MO,
+            CameraMode.VIDEO,
+            CameraMode.PHOTO,
+            CameraMode.PORTRAIT,
+            CameraMode.NIGHT,
+            CameraMode.PANORAMA,
+            CameraMode.AR_LENS
+    );
+
+    private static final String TAG = "CameraXProJava";
+    private static final String FILENAME_FORMAT = "yyyy-MM-dd-HH-mm-ss-SSS";
+
+    private PreviewView viewFinder;
+    private ImageButton btnCapture, btnSwitchCamera, btnPauseResume, btnProStudio, btnTimer;
+    private TextView tabSlowMo, tabVideo, tabPhoto, tabPortrait, tabNight, tabPanorama, tabArLens;
+    private TextView tabSlotFarLeft, tabSlotLeft, tabSlotCenter, tabSlotRight, tabSlotFarRight;
+    private TextView tvExposureValue, tvCountdown, tvBurstBadge, tvArRecLockBadge, tvRecordingStatus;
+    private View recordingTimer, proModeBar, gridOverlay, exposureLayout, layoutBtnTimer, recordingDot, arLensModeDock;
+    private ProOverlayView proOverlayView;
+    private Chronometer chronometer;
+    private SeekBar exposureSlider;
+
+    private ImageCapture imageCapture;
+    private VideoCapture<Recorder> videoCapture;
+    private Recording recording;
+    private CameraMode cameraMode = CameraMode.PHOTO;
+
+    private boolean isRecordingPaused = false;
+    private long timeWhenStopped = 0;
+    private Uri lastCapturedUri = null;
+    private String lastCapturedMimeType = null;
+
+    private int countdownSeconds = 0;
+    private boolean isCountingDown = false;
+    private boolean isBurstCapturing = false;
+    private int burstCount = 0;
+    private final Handler burstHandler = new Handler(Looper.getMainLooper());
+    private Runnable burstRunnable;
+
+    // AR Lens Mode Hold (>=0.5s) Video Recording & Slide-Up Lock State
+    private boolean isArHoldRecording = false;
+    private boolean isArRecordingLocked = false;
+    private boolean arStopOnShutterUp = false;
+    private float arTouchDownRawY = 0f;
+    private final Handler arHoldHandler = new Handler(Looper.getMainLooper());
+    private Runnable arHoldRunnable;
+
+    // Automated Panorama Mode ImageAnalysis & Stitching State
+    private final PanoramaStitcher panoramaStitcher = new PanoramaStitcher();
+    private final List<PanoramaStitcher.Slice> panoramaSlices = Collections.synchronizedList(new ArrayList<>());
+    private volatile boolean isPanoramaCapturing = false;
+    private volatile boolean isPanoramaStitching = false;
+    private static final int MAX_PANORAMA_SLICES = 14;
+
+    // Automated Night Mode Low-Light ImageAnalysis & Multi-Frame Stacking State
+    private final NightExposureStacker nightExposureStacker = new NightExposureStacker();
+    private volatile boolean isNightStacking = false;
+    private volatile boolean isAutoNightStackEnabled = true;
+    private final Handler nightHandler = new Handler(Looper.getMainLooper());
+    private ImageAnalysis imageAnalysis;
+    private EcoPowerManager ecoPowerManager;
+    private EcoPowerManager.EcoTier lastEcoTier = EcoPowerManager.EcoTier.NORMAL;
+    private ThermalGuardManager thermalGuardManager;
+    private ThermalGuardManager.ThermalTier lastThermalTier = ThermalGuardManager.ThermalTier.NOMINAL;
+    private GyroStabilizer gyroStabilizer;
+    private boolean isGyroEisEnabled = false;
+
+    private Camera camera;
+    private ProcessCameraProvider cameraProvider;
+    private CameraSelector cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA;
+    private ExecutorService cameraExecutor;
+
+    private final ActivityResultLauncher<String[]> activityResultLauncher =
+            registerForActivityResult(new ActivityResultContracts.RequestMultiplePermissions(), permissions -> {
+                Boolean cameraGranted = permissions.get(Manifest.permission.CAMERA);
+                if (cameraGranted != null && cameraGranted) {
+                    startCamera();
+                } else {
+                    Toast.makeText(this, "Camera permission required.", Toast.LENGTH_SHORT).show();
+                    finish();
+                }
+            });
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_main);
+
+        bindViews();
+        cameraExecutor = Executors.newSingleThreadExecutor();
+        ecoPowerManager = new EcoPowerManager(this, policy -> runOnUiThread(() -> applyEcoPolicy(policy)));
+        thermalGuardManager = new ThermalGuardManager(this, policy -> runOnUiThread(() -> applyThermalPolicy(policy)));
+        gyroStabilizer = new GyroStabilizer(this, telemetry -> runOnUiThread(() -> applyGyroEisTelemetry(telemetry)));
+
+        setupListeners();
+        setupBurstMode();
+        setupExposureSlider();
+        updateModeCarouselSlots();
+
+        if (allPermissionsGranted()) {
+            startCamera();
+        } else {
+            activityResultLauncher.launch(getRequiredPermissions());
+        }
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (ecoPowerManager != null) ecoPowerManager.register();
+        if (thermalGuardManager != null) thermalGuardManager.register();
+        if (gyroStabilizer != null) gyroStabilizer.register();
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        if (ecoPowerManager != null) ecoPowerManager.unregister();
+        if (thermalGuardManager != null) thermalGuardManager.unregister();
+        if (gyroStabilizer != null) gyroStabilizer.unregister();
+    }
+
+    private void applyGyroEisTelemetry(@NonNull GyroStabilizer.StabilizationTelemetry telemetry) {
+        if (proOverlayView != null) {
+            proOverlayView.updateGyroEisTelemetry(
+                    telemetry.isEnabled,
+                    telemetry.isSyntheticDemo,
+                    telemetry.overscanZoom,
+                    telemetry.compXNorm,
+                    telemetry.compYNorm,
+                    telemetry.rawDeflectionX,
+                    telemetry.rawDeflectionY,
+                    telemetry.compRollDeg,
+                    telemetry.shakeReductionPct
+            );
+        }
+        TextView tvEis = findViewById(R.id.tvGyroEisStatus);
+        if (tvEis != null) {
+            if (telemetry.isEnabled) {
+                String tag = telemetry.isSyntheticDemo ? "SIM" : (telemetry.gyroAvailable ? "GYRO" : "ROT");
+                tvEis.setText(String.format(Locale.US, "%s EIS · -%d%% shake · %.1f°/s", tag, telemetry.shakeReductionPct, telemetry.angularVelocityDegPerSec));
+            } else {
+                tvEis.setText("Sensor.TYPE_GYROSCOPE · Preview & Video EIS");
+            }
+        }
+        if (viewFinder != null) {
+            if (telemetry.isEnabled) {
+                float vw = Math.max(1f, viewFinder.getWidth());
+                float vh = Math.max(1f, viewFinder.getHeight());
+                viewFinder.setScaleX(telemetry.overscanZoom);
+                viewFinder.setScaleY(telemetry.overscanZoom);
+                viewFinder.setTranslationX(telemetry.compXNorm * vw * 0.5f);
+                viewFinder.setTranslationY(-telemetry.compYNorm * vh * 0.5f);
+                viewFinder.setRotation(telemetry.compRollDeg);
+            } else {
+                viewFinder.setScaleX(1.0f);
+                viewFinder.setScaleY(1.0f);
+                viewFinder.setTranslationX(0f);
+                viewFinder.setTranslationY(0f);
+                viewFinder.setRotation(0f);
+            }
+        }
+    }
+
+    private void applyEcoPolicy(@NonNull EcoPowerManager.EcoPolicy policy) {
+        if (policy.tier == lastEcoTier) return;
+        lastEcoTier = policy.tier;
+        boolean thermalBlocksAr = (thermalGuardManager != null && thermalGuardManager.getCurrentPolicy().disableHeavyAr);
+        View arOverlay = findViewById(R.id.arFaceOverlayView);
+        if ((policy.disableHeavyAr || thermalBlocksAr) && arOverlay != null) {
+            arOverlay.setVisibility(View.GONE);
+        } else if (arOverlay != null) {
+            arOverlay.setVisibility(View.VISIBLE);
+        }
+        if (cameraProvider != null && !isNightStacking && !isPanoramaCapturing && recording == null) {
+            bindCameraUseCases();
+        }
+        if (policy.tier != EcoPowerManager.EcoTier.NORMAL) {
+            Toast.makeText(this, "Eco Mode (" + policy.batteryPercent + "%): ImageAnalysis " + policy.targetAnalysisFps + " FPS, AR OFF", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private void applyThermalPolicy(@NonNull ThermalGuardManager.ThermalPolicy policy) {
+        boolean throttled = policy.tier.severityRank >= ThermalGuardManager.ThermalTier.MODERATE.severityRank;
+        String capLabel = (policy.tier == ThermalGuardManager.ThermalTier.CRITICAL || policy.tier == ThermalGuardManager.ThermalTier.EMERGENCY)
+                ? "720p/HD" : (policy.tier == ThermalGuardManager.ThermalTier.SEVERE ? "1080p/FHD" : "FULL");
+        if (proOverlayView != null) {
+            proOverlayView.updateThermalStatus(throttled, policy.statusLabel, policy.targetAnalysisFps, capLabel);
+        }
+        if (policy.tier == lastThermalTier) return;
+        lastThermalTier = policy.tier;
+
+        boolean ecoBlocksAr = (ecoPowerManager != null && ecoPowerManager.getCurrentPolicy().disableHeavyAr);
+        View arOverlay = findViewById(R.id.arFaceOverlayView);
+        if ((policy.disableHeavyAr || ecoBlocksAr) && arOverlay != null) {
+            arOverlay.setVisibility(View.GONE);
+        } else if (arOverlay != null) {
+            arOverlay.setVisibility(View.VISIBLE);
+        }
+        if (cameraProvider != null && !isNightStacking && !isPanoramaCapturing && recording == null) {
+            bindCameraUseCases();
+        }
+        if (throttled) {
+            Toast.makeText(this, "Thermal " + policy.statusLabel + ": Analysis " + policy.targetAnalysisFps + " FPS, Capture " + capLabel, Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private void bindViews() {
+        viewFinder = findViewById(R.id.viewFinder);
+        btnCapture = findViewById(R.id.btnCapture);
+        btnSwitchCamera = findViewById(R.id.btnSwitchCamera);
+        btnPauseResume = findViewById(R.id.btnPauseResume);
+        btnProStudio = findViewById(R.id.btnProStudio);
+        btnTimer = findViewById(R.id.btnTimer);
+        layoutBtnTimer = findViewById(R.id.layoutBtnTimer);
+        tabSlowMo = findViewById(R.id.tabSlowMo);
+        tabVideo = findViewById(R.id.tabVideo);
+        tabPhoto = findViewById(R.id.tabPhoto);
+        tabPortrait = findViewById(R.id.tabPortrait);
+        tabNight = findViewById(R.id.tabNight);
+        tabPanorama = findViewById(R.id.tabPanorama);
+        tabArLens = findViewById(R.id.tabArLens);
+        arLensModeDock = findViewById(R.id.arLensModeDock);
+        tabSlotFarLeft = findViewById(R.id.tabSlotFarLeft);
+        tabSlotLeft = findViewById(R.id.tabSlotLeft);
+        tabSlotCenter = findViewById(R.id.tabSlotCenter);
+        tabSlotRight = findViewById(R.id.tabSlotRight);
+        tabSlotFarRight = findViewById(R.id.tabSlotFarRight);
+        tvExposureValue = findViewById(R.id.tvExposureValue);
+        tvCountdown = findViewById(R.id.tvCountdown);
+        tvBurstBadge = findViewById(R.id.tvBurstBadge);
+        tvArRecLockBadge = findViewById(R.id.tvArRecLockBadge);
+        tvRecordingStatus = findViewById(R.id.tvRecordingStatus);
+        recordingTimer = findViewById(R.id.recordingTimer);
+        recordingDot = findViewById(R.id.recordingDot);
+        proModeBar = findViewById(R.id.proModeBar);
+        gridOverlay = findViewById(R.id.proOverlayView);
+        if (gridOverlay instanceof ProOverlayView) {
+            proOverlayView = (ProOverlayView) gridOverlay;
+        }
+        exposureLayout = findViewById(R.id.exposureLayout);
+        chronometer = findViewById(R.id.chronometer);
+        exposureSlider = findViewById(R.id.exposureSlider);
+    }
+
+    private void setupListeners() {
+        btnSwitchCamera.setOnClickListener(v -> switchCamera());
+        btnPauseResume.setOnClickListener(v -> toggleVideoPauseResume());
+
+        if (tabSlowMo != null) tabSlowMo.setOnClickListener(v -> setMode(CameraMode.SLOW_MO));
+        if (tabVideo != null) tabVideo.setOnClickListener(v -> setMode(CameraMode.VIDEO));
+        if (tabPhoto != null) tabPhoto.setOnClickListener(v -> setMode(CameraMode.PHOTO));
+        if (tabPortrait != null) tabPortrait.setOnClickListener(v -> setMode(CameraMode.PORTRAIT));
+        if (tabNight != null) tabNight.setOnClickListener(v -> setMode(CameraMode.NIGHT));
+        if (tabPanorama != null) tabPanorama.setOnClickListener(v -> setMode(CameraMode.PANORAMA));
+        if (tabArLens != null) tabArLens.setOnClickListener(v -> setMode(CameraMode.AR_LENS));
+
+        if (tabSlotFarLeft != null) tabSlotFarLeft.setOnClickListener(v -> shiftModeBy(-2));
+        if (tabSlotLeft != null) tabSlotLeft.setOnClickListener(v -> shiftModeBy(-1));
+        if (tabSlotCenter != null) tabSlotCenter.setOnClickListener(v -> shiftModeBy(0));
+        if (tabSlotRight != null) tabSlotRight.setOnClickListener(v -> shiftModeBy(1));
+        if (tabSlotFarRight != null) tabSlotFarRight.setOnClickListener(v -> shiftModeBy(2));
+
+        btnTimer.setOnClickListener(v -> {
+            if (countdownSeconds == 0) countdownSeconds = 3;
+            else if (countdownSeconds == 3) countdownSeconds = 5;
+            else if (countdownSeconds == 5) countdownSeconds = 10;
+            else countdownSeconds = 0;
+            Toast.makeText(this, "Timer: " + (countdownSeconds == 0 ? "Off" : countdownSeconds + "s"), Toast.LENGTH_SHORT).show();
+        });
+
+        btnProStudio.setOnClickListener(v -> {
+            View drawer = findViewById(R.id.proStudioDrawer);
+            if (drawer != null) {
+                drawer.setVisibility(drawer.getVisibility() == View.VISIBLE ? View.GONE : View.VISIBLE);
+            }
+        });
+
+        View btnGallery = findViewById(R.id.btnGallery);
+        if (btnGallery != null) {
+            btnGallery.setOnClickListener(v -> openAppMediaGallery());
+        }
+
+        View btnGuide = findViewById(R.id.btnGuide);
+        if (btnGuide != null) {
+            btnGuide.setOnClickListener(v -> {
+                View guideBar = findViewById(R.id.layoutGuideFloatingBar);
+                if (guideBar != null) {
+                    guideBar.setVisibility(guideBar.getVisibility() == View.VISIBLE ? View.GONE : View.VISIBLE);
+                }
+            });
+        }
+
+        View btnCloseGuideBar = findViewById(R.id.btnCloseGuideBar);
+        if (btnCloseGuideBar != null) {
+            btnCloseGuideBar.setOnClickListener(v -> {
+                View guideBar = findViewById(R.id.layoutGuideFloatingBar);
+                if (guideBar != null) guideBar.setVisibility(View.GONE);
+            });
+        }
+
+        androidx.appcompat.widget.SwitchCompat switchGyroEis = findViewById(R.id.switchGyroEis);
+        TextView btnGyroSimShake = findViewById(R.id.btnGyroSimShake);
+        if (switchGyroEis != null) {
+            switchGyroEis.setOnCheckedChangeListener((buttonView, isChecked) -> {
+                isGyroEisEnabled = isChecked;
+                if (gyroStabilizer != null) {
+                    if (isChecked && !gyroStabilizer.isGyroHardwareAvailable() && !gyroStabilizer.isSyntheticShakeDemo()) {
+                        gyroStabilizer.setSyntheticShakeDemo(true);
+                        if (btnGyroSimShake != null) {
+                            btnGyroSimShake.setBackgroundResource(R.drawable.bg_cinema_button_active);
+                            btnGyroSimShake.setTextColor(Color.parseColor("#0F172A"));
+                        }
+                    }
+                    gyroStabilizer.setEnabled(isChecked);
+                }
+            });
+        }
+        if (btnGyroSimShake != null) {
+            btnGyroSimShake.setOnClickListener(v -> {
+                if (gyroStabilizer == null) return;
+                boolean nextDemo = !gyroStabilizer.isSyntheticShakeDemo();
+                gyroStabilizer.setSyntheticShakeDemo(nextDemo);
+                if (nextDemo && !isGyroEisEnabled && switchGyroEis != null) {
+                    switchGyroEis.setChecked(true);
+                }
+                btnGyroSimShake.setBackgroundResource(nextDemo ? R.drawable.bg_cinema_button_active : R.drawable.bg_cinema_button_inactive);
+                btnGyroSimShake.setTextColor(Color.parseColor(nextDemo ? "#0F172A" : "#94A3B8"));
+            });
+        }
+    }
+
+    private void shiftModeBy(int offset) {
+        if (offset == 0) return;
+        int cur = ALL_MODES.indexOf(cameraMode);
+        if (cur < 0) cur = 2;
+        int next = (cur + offset + ALL_MODES.size() * 10) % ALL_MODES.size();
+        setMode(ALL_MODES.get(next));
+    }
+
+    private String getModeLabel(CameraMode mode) {
+        switch (mode) {
+            case SLOW_MO: return "SLOW-MO";
+            case VIDEO: return "VIDEO";
+            case PORTRAIT: return "PORTRAIT";
+            case NIGHT: return "NIGHT";
+            case PANORAMA: return "PANORAMA";
+            case AR_LENS: return "AR LENS";
+            case PHOTO:
+            default:
+                return "PHOTO";
+        }
+    }
+
+    private void updateModeCarouselSlots() {
+        int curIdx = ALL_MODES.indexOf(cameraMode);
+        if (curIdx < 0) curIdx = 2;
+        int total = ALL_MODES.size();
+        if (tabSlotFarLeft != null) tabSlotFarLeft.setText(getModeLabel(ALL_MODES.get((curIdx - 2 + total * 10) % total)));
+        if (tabSlotLeft != null) tabSlotLeft.setText(getModeLabel(ALL_MODES.get((curIdx - 1 + total * 10) % total)));
+        if (tabSlotCenter != null) tabSlotCenter.setText(getModeLabel(ALL_MODES.get(curIdx)));
+        if (tabSlotRight != null) tabSlotRight.setText(getModeLabel(ALL_MODES.get((curIdx + 1) % total)));
+        if (tabSlotFarRight != null) tabSlotFarRight.setText(getModeLabel(ALL_MODES.get((curIdx + 2) % total)));
+
+        TextView[] tabs = new TextView[]{tabSlowMo, tabVideo, tabPhoto, tabPortrait, tabNight, tabPanorama, tabArLens};
+        for (int i = 0; i < tabs.length; i++) {
+            if (tabs[i] == null) continue;
+            boolean active = (ALL_MODES.get(i) == cameraMode);
+            tabs[i].setTextColor(active ? Color.WHITE : Color.parseColor("#94A3B8"));
+            tabs[i].setTypeface(null, active ? Typeface.BOLD : Typeface.NORMAL);
+        }
+    }
+
+    private boolean isPhotoStyleMode(CameraMode mode) {
+        return mode == CameraMode.PHOTO || mode == CameraMode.PORTRAIT
+                || mode == CameraMode.NIGHT || mode == CameraMode.PANORAMA;
+    }
+
+    private void setupBurstMode() {
+        btnCapture.setOnTouchListener((v, event) -> {
+            if (event.getAction() == MotionEvent.ACTION_DOWN) {
+                v.animate().scaleX(0.92f).scaleY(0.92f).setDuration(75L).start();
+            } else if (event.getAction() == MotionEvent.ACTION_UP || event.getAction() == MotionEvent.ACTION_CANCEL) {
+                v.animate().scaleX(1f).scaleY(1f).setDuration(90L).start();
+            }
+            if (cameraMode == CameraMode.AR_LENS) {
+                // AR LENS Mode: Tap (< 500ms) -> Photo; Hold (>= 500ms) -> AR Video; Slide UP -> Hands-Free Lock
+                if (event.getAction() == MotionEvent.ACTION_DOWN) {
+                    if (recording != null && isArRecordingLocked) {
+                        arStopOnShutterUp = true;
+                        return true;
+                    }
+                    arStopOnShutterUp = false;
+                    isArHoldRecording = false;
+                    isArRecordingLocked = false;
+                    arTouchDownRawY = event.getRawY();
+                    if (arHoldRunnable != null) arHoldHandler.removeCallbacks(arHoldRunnable);
+                    arHoldRunnable = () -> {
+                        if (cameraMode == CameraMode.AR_LENS && recording == null && !isCountingDown) {
+                            isArHoldRecording = true;
+                            if (arLensModeDock != null) arLensModeDock.setVisibility(View.GONE);
+                            if (tvArRecLockBadge != null) {
+                                tvArRecLockBadge.setTranslationY(0f);
+                                tvArRecLockBadge.setText("▲ SLIDE UP TO LOCK");
+                                tvArRecLockBadge.setTextColor(Color.parseColor("#FACC15"));
+                                tvArRecLockBadge.setVisibility(View.VISIBLE);
+                            }
+                            captureVideo();
+                        }
+                    };
+                    arHoldHandler.postDelayed(arHoldRunnable, 500L);
+                    return true;
+                } else if (event.getAction() == MotionEvent.ACTION_MOVE) {
+                    if (isArHoldRecording && !isArRecordingLocked) {
+                        float slideUpPx = arTouchDownRawY - event.getRawY();
+                        float lockThresholdPx = 56f * getResources().getDisplayMetrics().density;
+                        if (tvArRecLockBadge != null) {
+                            float clamped = Math.max(0f, Math.min(slideUpPx, lockThresholdPx));
+                            tvArRecLockBadge.setTranslationY(-clamped * 0.45f);
+                        }
+                        if (slideUpPx >= lockThresholdPx) {
+                            isArRecordingLocked = true;
+                            if (tvArRecLockBadge != null) {
+                                tvArRecLockBadge.setTranslationY(0f);
+                                tvArRecLockBadge.setText("LOCKED · TAP SHUTTER TO STOP");
+                                tvArRecLockBadge.setTextColor(Color.parseColor("#34D399"));
+                            }
+                            if (tvRecordingStatus != null) tvRecordingStatus.setText("AR REC · LOCK");
+                            btnPauseResume.setVisibility(View.VISIBLE);
+                        }
+                    }
+                    return true;
+                } else if (event.getAction() == MotionEvent.ACTION_UP || event.getAction() == MotionEvent.ACTION_CANCEL) {
+                    if (arHoldRunnable != null) {
+                        arHoldHandler.removeCallbacks(arHoldRunnable);
+                        arHoldRunnable = null;
+                    }
+                    if (tvArRecLockBadge != null) tvArRecLockBadge.setTranslationY(0f);
+                    if (arStopOnShutterUp) {
+                        arStopOnShutterUp = false;
+                        isArRecordingLocked = false;
+                        isArHoldRecording = false;
+                        if (tvArRecLockBadge != null) tvArRecLockBadge.setVisibility(View.GONE);
+                        if (recording != null) captureVideo();
+                    } else if (isArRecordingLocked) {
+                        // Keep recording hands-free after thumb lifts
+                    } else if (isArHoldRecording || recording != null) {
+                        isArHoldRecording = false;
+                        if (tvArRecLockBadge != null) tvArRecLockBadge.setVisibility(View.GONE);
+                        if (recording != null) captureVideo();
+                    } else if (event.getAction() == MotionEvent.ACTION_UP) {
+                        onShutterClick();
+                    }
+                    return true;
+                }
+                return true;
+            }
+            if (!isPhotoStyleMode(cameraMode)) {
+                if (event.getAction() == MotionEvent.ACTION_UP) captureVideo();
+                return true;
+            }
+            if (cameraMode == CameraMode.PANORAMA) {
+                if (event.getAction() == MotionEvent.ACTION_UP) togglePanoramaCapture();
+                return true;
+            }
+
+            if (event.getAction() == MotionEvent.ACTION_DOWN) {
+                isBurstCapturing = false;
+                burstCount = 0;
+                burstRunnable = () -> {
+                    if (!isCountingDown && cameraMode == CameraMode.PHOTO) {
+                        isBurstCapturing = true;
+                        tvBurstBadge.setVisibility(View.VISIBLE);
+                        startBurstLoop();
+                    }
+                };
+                burstHandler.postDelayed(burstRunnable, 400);
+                return true;
+            } else if (event.getAction() == MotionEvent.ACTION_UP || event.getAction() == MotionEvent.ACTION_CANCEL) {
+                if (burstRunnable != null) burstHandler.removeCallbacks(burstRunnable);
+                if (isBurstCapturing) {
+                    isBurstCapturing = false;
+                    tvBurstBadge.setVisibility(View.GONE);
+                    Toast.makeText(this, "Captured " + burstCount + " burst photos", Toast.LENGTH_SHORT).show();
+                } else if (event.getAction() == MotionEvent.ACTION_UP) {
+                    onShutterClick();
+                }
+                return true;
+            }
+            return false;
+        });
+    }
+
+    private void startBurstLoop() {
+        if (!isBurstCapturing || cameraMode != CameraMode.PHOTO) return;
+        burstCount++;
+        tvBurstBadge.setText("BURST: " + burstCount);
+        takePhoto();
+        burstHandler.postDelayed(this::startBurstLoop, 250);
+    }
+
+    private void onShutterClick() {
+        if (isCountingDown) return;
+        if (cameraMode == CameraMode.NIGHT) {
+            if (!isNightStacking) {
+                startNightExposureStacking(false, nightExposureStacker.lastRecommendedFrameCount);
+            }
+            return;
+        }
+        if (countdownSeconds > 0) {
+            isCountingDown = true;
+            tvCountdown.setVisibility(View.VISIBLE);
+            new CountDownTimer(countdownSeconds * 1000L, 1000) {
+                @Override
+                public void onTick(long millisUntilFinished) {
+                    tvCountdown.setText(String.valueOf((millisUntilFinished / 1000) + 1));
+                }
+
+                @Override
+                public void onFinish() {
+                    tvCountdown.setVisibility(View.GONE);
+                    isCountingDown = false;
+                    takePhoto();
+                }
+            }.start();
+        } else {
+            takePhoto();
+        }
+    }
+
+    private void setupExposureSlider() {
+        exposureSlider.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                if (!fromUser || camera == null) return;
+                ExposureState state = camera.getCameraInfo().getExposureState();
+                int min = state.getExposureCompensationRange().getLower();
+                int target = min + progress;
+                camera.getCameraControl().setExposureCompensationIndex(target);
+                float ev = target * state.getExposureCompensationStep().floatValue();
+                tvExposureValue.setText(String.format(Locale.US, "EV %s%.1f", ev > 0 ? "+" : "", ev));
+            }
+            @Override public void onStartTrackingTouch(SeekBar seekBar) {}
+            @Override public void onStopTrackingTouch(SeekBar seekBar) {}
+        });
+    }
+
+    private void startCamera() {
+        ListenableFuture<ProcessCameraProvider> future = ProcessCameraProvider.getInstance(this);
+        future.addListener(() -> {
+            try {
+                cameraProvider = future.get();
+                bindCameraUseCases();
+            } catch (ExecutionException | InterruptedException e) {
+                Log.e(TAG, "Provider error", e);
+            }
+        }, ContextCompat.getMainExecutor(this));
+    }
+
+    private void bindCameraUseCases() {
+        if (cameraProvider == null) return;
+
+        Preview preview = new Preview.Builder().build();
+        preview.setSurfaceProvider(viewFinder.getSurfaceProvider());
+
+        int captureMode = (thermalGuardManager != null)
+                ? thermalGuardManager.effectiveCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+                : ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY;
+        ImageCapture.Builder captureBuilder = new ImageCapture.Builder().setCaptureMode(captureMode);
+        if (thermalGuardManager != null && thermalGuardManager.getCurrentPolicy().maxImageCaptureResolution != null) {
+            ResolutionSelector capResSelector = new ResolutionSelector.Builder()
+                    .setResolutionStrategy(new ResolutionStrategy(
+                            thermalGuardManager.getCurrentPolicy().maxImageCaptureResolution,
+                            ResolutionStrategy.FALLBACK_RULE_CLOSEST_LOWER_THEN_HIGHER))
+                    .build();
+            captureBuilder.setResolutionSelector(capResSelector);
+        }
+        imageCapture = captureBuilder.build();
+
+        Quality requestedQuality = Quality.HD;
+        Quality constrainedQuality = (thermalGuardManager != null)
+                ? thermalGuardManager.constrainVideoQuality(requestedQuality)
+                : requestedQuality;
+        Recorder recorder = new Recorder.Builder()
+                .setQualitySelector(QualitySelector.from(constrainedQuality)).build();
+        videoCapture = VideoCapture.withOutput(recorder);
+
+        android.util.Size ecoRes = (ecoPowerManager != null)
+                ? ecoPowerManager.getCurrentPolicy().targetAnalysisResolution
+                : new android.util.Size(640, 480);
+        android.util.Size thermalRes = (thermalGuardManager != null)
+                ? thermalGuardManager.getCurrentPolicy().targetAnalysisResolution
+                : new android.util.Size(640, 480);
+        int baseW = Math.min(ecoRes.getWidth(), thermalRes.getWidth());
+        int baseH = Math.min(ecoRes.getHeight(), thermalRes.getHeight());
+        android.util.Size targetAnalysisSize = (cameraMode == CameraMode.PANORAMA && baseW >= 640)
+                ? new android.util.Size(1280, 960)
+                : new android.util.Size(baseW, baseH);
+        ResolutionSelector analysisResSelector = new ResolutionSelector.Builder()
+                .setResolutionStrategy(new ResolutionStrategy(
+                        targetAnalysisSize,
+                        ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER))
+                .build();
+        ImageAnalysis.Builder analysisBuilder = new ImageAnalysis.Builder()
+                .setResolutionSelector(analysisResSelector)
+                .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST);
+        imageAnalysis = analysisBuilder.build();
+        imageAnalysis.setAnalyzer(cameraExecutor, imageProxy -> {
+            if (ecoPowerManager != null && !ecoPowerManager.shouldProcessAnalysisFrame()) {
+                imageProxy.close();
+                return;
+            }
+            if (thermalGuardManager != null && !thermalGuardManager.shouldProcessAnalysisFrame()) {
+                imageProxy.close();
+                return;
+            }
+            boolean thermalSimplify = (thermalGuardManager != null && thermalGuardManager.shouldReduceComplexity());
+            boolean isFront = (cameraSelector == CameraSelector.DEFAULT_FRONT_CAMERA);
+
+            if (cameraMode == CameraMode.PANORAMA && isPanoramaCapturing && !isPanoramaStitching) {
+                PanoramaStitcher.AlignmentResult align = panoramaStitcher.analyzeFrame(imageProxy, isFront);
+                if (align.shouldAutoCapture && panoramaSlices.size() < MAX_PANORAMA_SLICES) {
+                    Bitmap sliceBmp = panoramaStitcher.imageProxyToBitmap(imageProxy, isFront, 1080);
+                    if (sliceBmp != null) {
+                        panoramaSlices.add(new PanoramaStitcher.Slice(sliceBmp, align.dxNorm, align.dyNorm));
+                        panoramaStitcher.lockCurrentFrameAsAnchor();
+                    }
+                }
+                int sliceCount = panoramaSlices.size();
+                float progress = Math.min(1f, sliceCount / (float) MAX_PANORAMA_SLICES);
+                int overlapPct = Math.round(align.overlapRatio * 100f);
+                runOnUiThread(() -> {
+                    if (proOverlayView != null) {
+                        proOverlayView.updatePanoramaAnalysis(
+                                align.guidance.name(),
+                                progress,
+                                overlapPct,
+                                align.dxNorm,
+                                align.dyNorm,
+                                0.85f,
+                                progress * 110f,
+                                align.dyNorm * 18f,
+                                sliceCount,
+                                align.dxNorm >= 0f ? 1 : -1
+                        );
+                    }
+                    if (isPanoramaCapturing && sliceCount >= MAX_PANORAMA_SLICES) {
+                        finishPanoramaCapture();
+                    }
+                });
+            } else if (!thermalSimplify && (cameraMode == CameraMode.PHOTO || cameraMode == CameraMode.NIGHT)
+                    && isAutoNightStackEnabled && !isNightStacking && !isCountingDown && !isBurstCapturing) {
+                NightExposureStacker.LowLightAnalysis nightInfo = nightExposureStacker.analyzeLowLight(imageProxy);
+                if (nightInfo.shouldAutoTriggerStack) {
+                    nightExposureStacker.markAutoTriggered();
+                    int targetFrames = nightInfo.recommendedFrameCount;
+                    runOnUiThread(() -> {
+                        if (!isNightStacking && recording == null) {
+                            startNightExposureStacking(true, targetFrames);
+                        }
+                    });
+                }
+            }
+            imageProxy.close();
+        });
+
+        try {
+            cameraProvider.unbindAll();
+            if (cameraMode == CameraMode.AR_LENS) {
+                try {
+                    camera = cameraProvider.bindToLifecycle(this, cameraSelector, preview, imageCapture, videoCapture, imageAnalysis);
+                } catch (Exception comboErr) {
+                    camera = cameraProvider.bindToLifecycle(this, cameraSelector, preview, imageCapture, videoCapture);
+                }
+            } else if (isPhotoStyleMode(cameraMode)) {
+                camera = cameraProvider.bindToLifecycle(this, cameraSelector, preview, imageCapture, imageAnalysis);
+            } else {
+                camera = cameraProvider.bindToLifecycle(this, cameraSelector, preview, videoCapture);
+            }
+
+            ExposureState state = camera.getCameraInfo().getExposureState();
+            if (state.isExposureCompensationSupported()) {
+                int min = state.getExposureCompensationRange().getLower();
+                int max = state.getExposureCompensationRange().getUpper();
+                exposureSlider.setMax(max - min);
+                exposureSlider.setProgress(state.getExposureCompensationIndex() - min);
+            }
+        } catch (Exception exc) {
+            Log.e(TAG, "Binding error", exc);
+        }
+    }
+
+    private void togglePanoramaCapture() {
+        if (isPanoramaStitching) return;
+        if (!isPanoramaCapturing) {
+            clearPanoramaSlices();
+            panoramaStitcher.reset();
+            isPanoramaCapturing = true;
+            if (proOverlayView != null) {
+                proOverlayView.setPanoramaCapturing(true);
+            }
+            btnCapture.setImageResource(R.drawable.bg_record_button_active);
+            Toast.makeText(this, "Panorama: Slowly pan horizontally along the guide arrow", Toast.LENGTH_SHORT).show();
+        } else {
+            finishPanoramaCapture();
+        }
+    }
+
+    private void cancelPanoramaCapture() {
+        isPanoramaCapturing = false;
+        panoramaStitcher.reset();
+        clearPanoramaSlices();
+        if (proOverlayView != null) {
+            proOverlayView.setPanoramaCapturing(false);
+        }
+        btnCapture.setImageResource(R.drawable.bg_shutter_button);
+    }
+
+    private void clearPanoramaSlices() {
+        synchronized (panoramaSlices) {
+            for (PanoramaStitcher.Slice s : panoramaSlices) {
+                if (s != null && s.bitmap != null && !s.bitmap.isRecycled()) {
+                    s.bitmap.recycle();
+                }
+            }
+            panoramaSlices.clear();
+        }
+    }
+
+    private void finishPanoramaCapture() {
+        if (!isPanoramaCapturing || isPanoramaStitching) return;
+        isPanoramaCapturing = false;
+        isPanoramaStitching = true;
+        if (proOverlayView != null) {
+            proOverlayView.setPanoramaCapturing(false);
+        }
+        btnCapture.setImageResource(R.drawable.bg_shutter_button);
+
+        final List<PanoramaStitcher.Slice> snapshot;
+        synchronized (panoramaSlices) {
+            snapshot = new ArrayList<>(panoramaSlices);
+            panoramaSlices.clear();
+        }
+        if (snapshot.isEmpty()) {
+            isPanoramaStitching = false;
+            Toast.makeText(this, "Panorama canceled (no frames captured)", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        Toast.makeText(this, "Stitching " + snapshot.size() + " panorama slices...", Toast.LENGTH_SHORT).show();
+        cameraExecutor.execute(() -> {
+            Bitmap stitched = null;
+            try {
+                stitched = panoramaStitcher.stitchSlices(snapshot);
+                if (stitched != null) {
+                    String name = "PANO_" + new SimpleDateFormat(FILENAME_FORMAT, Locale.US).format(System.currentTimeMillis());
+                    ContentValues cv = new ContentValues();
+                    cv.put(MediaStore.MediaColumns.DISPLAY_NAME, name);
+                    cv.put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg");
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        cv.put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/CameraX-Image");
+                    }
+                    Uri uri = getContentResolver().insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, cv);
+                    if (uri != null) {
+                        try (OutputStream out = getContentResolver().openOutputStream(uri, "wt")) {
+                            if (out != null) stitched.compress(Bitmap.CompressFormat.JPEG, 95, out);
+                        }
+                        lastCapturedUri = uri;
+                        lastCapturedMimeType = "image/jpeg";
+                        android.widget.ImageView ivThumb = findViewById(R.id.ivGalleryThumbnail);
+                        runOnUiThread(() -> {
+                            if (ivThumb != null) ivThumb.setImageURI(uri);
+                            Toast.makeText(this, "Saved Panorama (" + snapshot.size() + " frames)", Toast.LENGTH_SHORT).show();
+                        });
+                    }
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "Panorama stitch save failed", e);
+            } finally {
+                for (PanoramaStitcher.Slice s : snapshot) {
+                    if (s != null && s.bitmap != null && !s.bitmap.isRecycled()) s.bitmap.recycle();
+                }
+                if (stitched != null && !stitched.isRecycled()) stitched.recycle();
+                panoramaStitcher.reset();
+                isPanoramaStitching = false;
+            }
+        });
+    }
+
+    private void captureVideo() {
+        if (videoCapture == null) return;
+        if (recording != null) {
+            recording.stop();
+            recording = null;
+            return;
+        }
+
+        String name = new SimpleDateFormat(FILENAME_FORMAT, Locale.US).format(System.currentTimeMillis());
+        ContentValues values = new ContentValues();
+        values.put(MediaStore.MediaColumns.DISPLAY_NAME, name);
+        values.put(MediaStore.MediaColumns.MIME_TYPE, "video/mp4");
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            values.put(MediaStore.Video.Media.RELATIVE_PATH, "Movies/CameraX-Video");
+        }
+
+        MediaStoreOutputOptions options = new MediaStoreOutputOptions.Builder(
+                getContentResolver(), MediaStore.Video.Media.EXTERNAL_CONTENT_URI)
+                .setContentValues(values).build();
+
+        var pending = videoCapture.getOutput().prepareRecording(this, options);
+        if (PermissionChecker.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PermissionChecker.PERMISSION_GRANTED) {
+            pending.withAudioEnabled();
+        }
+
+        recording = pending.start(ContextCompat.getMainExecutor(this), recordEvent -> {
+            if (recordEvent instanceof VideoRecordEvent.Start) {
+                isRecordingPaused = false;
+                btnCapture.setImageResource(R.drawable.bg_record_button_active);
+                recordingTimer.setVisibility(View.VISIBLE);
+                btnPauseResume.setVisibility(View.VISIBLE);
+                btnPauseResume.setImageResource(R.drawable.ic_pause);
+                timeWhenStopped = 0L;
+                chronometer.setBase(SystemClock.elapsedRealtime());
+                chronometer.start();
+            } else if (recordEvent instanceof VideoRecordEvent.Pause) {
+                isRecordingPaused = true;
+                timeWhenStopped = SystemClock.elapsedRealtime() - chronometer.getBase();
+                chronometer.stop();
+                btnPauseResume.setImageResource(R.drawable.ic_play_arrow);
+            } else if (recordEvent instanceof VideoRecordEvent.Resume) {
+                isRecordingPaused = false;
+                chronometer.setBase(SystemClock.elapsedRealtime() - timeWhenStopped);
+                chronometer.start();
+                btnPauseResume.setImageResource(R.drawable.ic_pause);
+            } else if (recordEvent instanceof VideoRecordEvent.Finalize) {
+                var finalizeEvent = (VideoRecordEvent.Finalize) recordEvent;
+                if (!finalizeEvent.hasError()) {
+                    lastCapturedUri = finalizeEvent.getOutputResults().getOutputUri();
+                    lastCapturedMimeType = "video/mp4";
+                    android.widget.ImageView ivThumb = findViewById(R.id.ivGalleryThumbnail);
+                    if (ivThumb != null && lastCapturedUri != null) {
+                        runOnUiThread(() -> ivThumb.setImageURI(lastCapturedUri));
+                    }
+                }
+                chronometer.stop();
+                timeWhenStopped = 0L;
+                isArHoldRecording = false;
+                isArRecordingLocked = false;
+                arStopOnShutterUp = false;
+                if (tvArRecLockBadge != null) {
+                    tvArRecLockBadge.setVisibility(View.GONE);
+                    tvArRecLockBadge.setTranslationY(0f);
+                }
+                btnPauseResume.setVisibility(View.GONE);
+                if (cameraMode == CameraMode.AR_LENS) {
+                    if (recordingTimer != null) recordingTimer.setVisibility(View.VISIBLE);
+                    if (tvRecordingStatus != null) {
+                        tvRecordingStatus.setText("AR LENS");
+                        tvRecordingStatus.setTextColor(Color.parseColor("#E879F9"));
+                    }
+                    if (chronometer != null) chronometer.setText("TAP PHOTO · HOLD 0.5S VID");
+                    btnCapture.setImageResource(R.drawable.bg_shutter_button);
+                    if (arLensModeDock != null) arLensModeDock.setVisibility(View.VISIBLE);
+                } else {
+                    recordingTimer.setVisibility(View.GONE);
+                    btnCapture.setImageResource(R.drawable.bg_record_button_idle);
+                }
+            }
+        });
+    }
+
+    private void toggleVideoPauseResume() {
+        if (recording == null) return;
+        if (isRecordingPaused) {
+            recording.resume();
+        } else {
+            recording.pause();
+        }
+    }
+
+    private void openAppMediaGallery() {
+        if (lastCapturedUri != null && lastCapturedMimeType != null) {
+            try {
+                Intent intent = new Intent(Intent.ACTION_VIEW);
+                intent.setDataAndType(lastCapturedUri, lastCapturedMimeType);
+                intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                startActivity(intent);
+                return;
+            } catch (Exception e) {
+                Log.e(TAG, "Could not open app media", e);
+            }
+        }
+        Toast.makeText(this, "No CameraX photos or videos captured yet. Capture a photo or video to view in app gallery!", Toast.LENGTH_SHORT).show();
+    }
+
+    private void startNightExposureStacking(boolean autoTriggered, int targetFrameCount) {
+        if (imageCapture == null || camera == null || isNightStacking || isPanoramaCapturing || recording != null) return;
+        isNightStacking = true;
+
+        ExposureState state = camera.getCameraInfo().getExposureState();
+        int savedEv = state.isExposureCompensationSupported() ? state.getExposureCompensationIndex() : 0;
+        int minEv = state.isExposureCompensationSupported() ? state.getExposureCompensationRange().getLower() : 0;
+        int maxEv = state.isExposureCompensationSupported() ? state.getExposureCompensationRange().getUpper() : 0;
+        int[] brackets = nightExposureStacker.buildExposureBracketIndices(minEv, maxEv, targetFrameCount);
+        float avgLumaHint = nightExposureStacker.lastAvgLuma;
+        List<Bitmap> frames = java.util.Collections.synchronizedList(new ArrayList<>());
+
+        Toast.makeText(this,
+                autoTriggered
+                        ? "Low light detected: auto-stacking " + brackets.length + " Night exposures..."
+                        : "Night Stack: capturing " + brackets.length + " frames...",
+                Toast.LENGTH_SHORT).show();
+
+        captureNextNightBracket(0, brackets, savedEv, state.isExposureCompensationSupported(), avgLumaHint, frames);
+    }
+
+    private void captureNextNightBracket(int idx, int[] brackets, int savedEv, boolean evSupported,
+                                         float avgLumaHint, List<Bitmap> frames) {
+        if (idx >= brackets.length) {
+            if (evSupported && camera != null) {
+                camera.getCameraControl().setExposureCompensationIndex(savedEv);
+            }
+            cameraExecutor.execute(() -> {
+                Bitmap stacked = null;
+                try {
+                    stacked = nightExposureStacker.stackExposureFrames(frames, avgLumaHint);
+                    if (stacked != null) {
+                        String name = "NIGHT_" + new SimpleDateFormat(FILENAME_FORMAT, Locale.US).format(System.currentTimeMillis());
+                        ContentValues cv = new ContentValues();
+                        cv.put(MediaStore.MediaColumns.DISPLAY_NAME, name);
+                        cv.put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg");
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                            cv.put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/CameraX-Image");
+                        }
+                        Uri uri = getContentResolver().insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, cv);
+                        if (uri != null) {
+                            try (OutputStream out = getContentResolver().openOutputStream(uri, "wt")) {
+                                if (out != null) {
+                                    stacked.compress(Bitmap.CompressFormat.JPEG, 95, out);
+                                }
+                            }
+                            lastCapturedUri = uri;
+                            lastCapturedMimeType = "image/jpeg";
+                            android.widget.ImageView ivThumb = findViewById(R.id.ivGalleryThumbnail);
+                            runOnUiThread(() -> {
+                                if (ivThumb != null) ivThumb.setImageURI(uri);
+                                Toast.makeText(this, "Saved Night Stack (" + frames.size() + " frames)", Toast.LENGTH_SHORT).show();
+                            });
+                        }
+                    }
+                } catch (Exception e) {
+                    Log.e(TAG, "Night stack save failed", e);
+                } finally {
+                    for (Bitmap b : frames) {
+                        if (b != null && !b.isRecycled()) b.recycle();
+                    }
+                    if (stacked != null && !stacked.isRecycled()) stacked.recycle();
+                    isNightStacking = false;
+                }
+            });
+            return;
+        }
+
+        if (evSupported && camera != null) {
+            camera.getCameraControl().setExposureCompensationIndex(brackets[idx]);
+        }
+        nightHandler.postDelayed(() -> imageCapture.takePicture(cameraExecutor, new ImageCapture.OnImageCapturedCallback() {
+            @Override
+            public void onCaptureSuccess(@NonNull ImageProxy image) {
+                try {
+                    Bitmap bmp = nightExposureStacker.decodeCapturedProxyToBitmap(image, 1920);
+                    if (bmp != null) frames.add(bmp);
+                } finally {
+                    image.close();
+                }
+                nightHandler.post(() -> captureNextNightBracket(idx + 1, brackets, savedEv, evSupported, avgLumaHint, frames));
+            }
+
+            @Override
+            public void onError(@NonNull ImageCaptureException exc) {
+                Log.e(TAG, "Night frame error", exc);
+                nightHandler.post(() -> captureNextNightBracket(idx + 1, brackets, savedEv, evSupported, avgLumaHint, frames));
+            }
+        }), idx == 0 ? 40L : 105L);
+    }
+
+    private void takePhoto() {
+        if (imageCapture == null) return;
+        String name = new SimpleDateFormat(FILENAME_FORMAT, Locale.US).format(System.currentTimeMillis());
+        ContentValues values = new ContentValues();
+        values.put(MediaStore.MediaColumns.DISPLAY_NAME, name);
+        values.put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg");
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            values.put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/CameraX-Image");
+        }
+
+        ImageCapture.OutputFileOptions options = new ImageCapture.OutputFileOptions.Builder(
+                getContentResolver(), MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values).build();
+
+        imageCapture.takePicture(options, ContextCompat.getMainExecutor(this), new ImageCapture.OnImageSavedCallback() {
+            @Override
+            public void onImageSaved(@NonNull ImageCapture.OutputFileResults results) {
+                Uri savedUri = results.getSavedUri();
+                if (savedUri != null) {
+                    lastCapturedUri = savedUri;
+                    lastCapturedMimeType = "image/jpeg";
+                    android.widget.ImageView ivThumb = findViewById(R.id.ivGalleryThumbnail);
+                    if (ivThumb != null) {
+                        runOnUiThread(() -> ivThumb.setImageURI(savedUri));
+                    }
+                }
+                Log.d(TAG, "Saved: " + savedUri);
+            }
+
+            @Override
+            public void onError(@NonNull ImageCaptureException exc) {
+                Log.e(TAG, "Error: " + exc.getMessage());
+            }
+        });
+    }
+
+    private void setMode(CameraMode mode) {
+        if (recording != null || isNightStacking) return;
+        if (isPanoramaCapturing && mode != CameraMode.PANORAMA) {
+            cancelPanoramaCapture();
+        }
+        if (cameraMode == CameraMode.AR_LENS && mode != CameraMode.AR_LENS) {
+            if (arHoldRunnable != null) {
+                arHoldHandler.removeCallbacks(arHoldRunnable);
+                arHoldRunnable = null;
+            }
+            isArHoldRecording = false;
+            isArRecordingLocked = false;
+            arStopOnShutterUp = false;
+            if (tvArRecLockBadge != null) {
+                tvArRecLockBadge.setVisibility(View.GONE);
+                tvArRecLockBadge.setTranslationY(0f);
+            }
+            if (arLensModeDock != null) arLensModeDock.setVisibility(View.GONE);
+        }
+        cameraMode = mode;
+        updateModeCarouselSlots();
+
+        if (proOverlayView != null) {
+            proOverlayView.setPanoramaModeActive(mode == CameraMode.PANORAMA);
+            proOverlayView.setNightModeHudActive(mode == CameraMode.NIGHT);
+        }
+
+        View zoomBar = findViewById(R.id.zoomControls);
+        if (zoomBar != null) zoomBar.setVisibility(mode == CameraMode.AR_LENS ? View.GONE : View.VISIBLE);
+
+        if (mode == CameraMode.AR_LENS) {
+            btnCapture.setImageResource(R.drawable.bg_shutter_button);
+            btnPauseResume.setVisibility(View.GONE);
+            if (layoutBtnTimer != null) layoutBtnTimer.setVisibility(View.VISIBLE);
+            proModeBar.setVisibility(View.VISIBLE);
+            if (recordingTimer != null) recordingTimer.setVisibility(View.VISIBLE);
+            if (arLensModeDock != null) arLensModeDock.setVisibility(View.VISIBLE);
+            if (tvRecordingStatus != null) {
+                tvRecordingStatus.setText("AR LENS");
+                tvRecordingStatus.setTextColor(Color.parseColor("#E879F9"));
+                if (chronometer != null) chronometer.setText("TAP PHOTO · HOLD 0.5S VID");
+            }
+        } else if (isPhotoStyleMode(mode)) {
+            btnCapture.setImageResource(R.drawable.bg_shutter_button);
+            btnPauseResume.setVisibility(View.GONE);
+            if (layoutBtnTimer != null) {
+                layoutBtnTimer.setVisibility(mode == CameraMode.PANORAMA ? View.GONE : View.VISIBLE);
+            }
+            proModeBar.setVisibility(View.VISIBLE);
+            if (recordingTimer != null) recordingTimer.setVisibility(View.VISIBLE);
+            if (tvRecordingStatus != null) {
+                if (mode == CameraMode.PANORAMA) {
+                    tvRecordingStatus.setText("PANO");
+                    tvRecordingStatus.setTextColor(Color.parseColor("#38BDF8"));
+                    if (chronometer != null) chronometer.setText("110° SWEEP");
+                } else if (mode == CameraMode.NIGHT) {
+                    tvRecordingStatus.setText("NIGHT");
+                    tvRecordingStatus.setTextColor(Color.parseColor("#818CF8"));
+                    if (chronometer != null) chronometer.setText("MULTI-EXP");
+                } else if (mode == CameraMode.PORTRAIT) {
+                    tvRecordingStatus.setText("PORTRAIT");
+                    tvRecordingStatus.setTextColor(Color.parseColor("#FBBF24"));
+                    if (chronometer != null) chronometer.setText("DEPTH · 4:3");
+                } else {
+                    tvRecordingStatus.setText("READY");
+                    tvRecordingStatus.setTextColor(Color.parseColor("#10B981"));
+                    if (chronometer != null) chronometer.setText("12MP 4:3");
+                }
+            }
+        } else {
+            btnCapture.setImageResource(R.drawable.bg_record_button_idle);
+            if (layoutBtnTimer != null) layoutBtnTimer.setVisibility(View.GONE);
+            proModeBar.setVisibility(View.GONE);
+            if (recordingTimer != null) recordingTimer.setVisibility(View.GONE);
+        }
+        bindCameraUseCases();
+    }
+
+    private void switchCamera() {
+        if (recording != null || isNightStacking) return;
+        if (isPanoramaCapturing) cancelPanoramaCapture();
+        panoramaStitcher.reset();
+        cameraSelector = (cameraSelector == CameraSelector.DEFAULT_BACK_CAMERA)
+                ? CameraSelector.DEFAULT_FRONT_CAMERA : CameraSelector.DEFAULT_BACK_CAMERA;
+        bindCameraUseCases();
+    }
+
+    private boolean allPermissionsGranted() {
+        for (String perm : getRequiredPermissions()) {
+            if (ContextCompat.checkSelfPermission(this, perm) != PackageManager.PERMISSION_GRANTED) return false;
+        }
+        return true;
+    }
+
+    private String[] getRequiredPermissions() {
+        List<String> list = new ArrayList<>();
+        list.add(Manifest.permission.CAMERA);
+        list.add(Manifest.permission.RECORD_AUDIO);
+        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
+            list.add(Manifest.permission.WRITE_EXTERNAL_STORAGE);
+        }
+        return list.toArray(new String[0]);
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        cameraExecutor.shutdown();
+        burstHandler.removeCallbacksAndMessages(null);
+        arHoldHandler.removeCallbacksAndMessages(null);
+        nightHandler.removeCallbacksAndMessages(null);
+        panoramaStitcher.reset();
+        clearPanoramaSlices();
+        nightExposureStacker.reset();
+        if (ecoPowerManager != null) ecoPowerManager.unregister();
+        if (thermalGuardManager != null) thermalGuardManager.unregister();
+        if (gyroStabilizer != null) gyroStabilizer.unregister();
+    }
+}

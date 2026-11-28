@@ -1,0 +1,460 @@
+package com.lumevra.camera.panorama;
+
+import android.graphics.Bitmap;
+import android.graphics.Canvas;
+import android.graphics.Color;
+import android.graphics.LinearGradient;
+import android.graphics.Matrix;
+import android.graphics.Paint;
+import android.graphics.PorterDuff;
+import android.graphics.PorterDuffXfermode;
+import android.graphics.Shader;
+import androidx.annotation.NonNull;
+import androidx.camera.core.ImageProxy;
+import java.nio.ByteBuffer;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+
+/**
+ * Java Reference: Automated Panorama Capture & Stitching with CameraX ImageAnalysis + Standard Android Graphics APIs.
+ */
+public class PanoramaStitcher {
+
+    public enum Guidance {
+        READY, PAN_RIGHT, PAN_LEFT, TILT_UP, TILT_DOWN, SLOW_DOWN, AUTO_CAPTURED, FINISHING
+    }
+
+    public static class Slice {
+        public final Bitmap bitmap;
+        public final float stepDxNorm;
+        public final float stepDyNorm;
+
+        public Slice(@NonNull Bitmap bitmap, float stepDxNorm, float stepDyNorm) {
+            this.bitmap = bitmap;
+            this.stepDxNorm = stepDxNorm;
+            this.stepDyNorm = stepDyNorm;
+        }
+    }
+
+    public static class AlignmentResult {
+        public final float dxNorm;
+        public final float dyNorm;
+        public final float overlapRatio;
+        public final Guidance guidance;
+        public final boolean shouldAutoCapture;
+
+        public AlignmentResult(float dxNorm, float dyNorm, float overlapRatio,
+                               Guidance guidance, boolean shouldAutoCapture) {
+            this.dxNorm = dxNorm;
+            this.dyNorm = dyNorm;
+            this.overlapRatio = overlapRatio;
+            this.guidance = guidance;
+            this.shouldAutoCapture = shouldAutoCapture;
+        }
+    }
+
+    private static final int GRID_W = 64;
+    private static final int GRID_H = 48;
+    private static final int GRID_SIZE = GRID_W * GRID_H;
+
+    private final int[] anchorGrid = new int[GRID_SIZE];
+    private final int[] currGrid = new int[GRID_SIZE];
+    private boolean hasAnchor = false;
+    private int panDirection = 0; // +1 right, -1 left
+    private long lastCaptureMs = 0L;
+
+    public void reset() {
+        hasAnchor = false;
+        panDirection = 0;
+        lastCaptureMs = 0L;
+    }
+
+    public void lockCurrentFrameAsAnchor() {
+        System.arraycopy(currGrid, 0, anchorGrid, 0, GRID_SIZE);
+        hasAnchor = true;
+        lastCaptureMs = System.currentTimeMillis();
+    }
+
+    /**
+     * Step 1: CameraX ImageAnalysis Y-Plane Overlap & Alignment Analyzer.
+     */
+    @NonNull
+    public AlignmentResult analyzeFrame(@NonNull ImageProxy imageProxy, boolean isFrontFacing) {
+        extractLumaGrid(imageProxy, isFrontFacing);
+        if (!hasAnchor) {
+            return new AlignmentResult(0f, 0f, 1.0f, Guidance.PAN_RIGHT, true);
+        }
+
+        int bestDx = 0;
+        int bestDy = 0;
+        float bestSad = Float.MAX_VALUE;
+        int minCol = GRID_W / 5;
+        int maxCol = GRID_W - minCol;
+
+        for (int dy = -4; dy <= 4; dy++) {
+            for (int dx = -28; dx <= 28; dx++) {
+                if (panDirection > 0 && dx < -3) continue;
+                if (panDirection < 0 && dx > 3) continue;
+                long sumErr = 0;
+                int count = 0;
+                for (int y = 6; y < GRID_H - 6; y += 2) {
+                    int ay = y + dy;
+                    if (ay < 0 || ay >= GRID_H) continue;
+                    for (int x = minCol; x < maxCol; x += 2) {
+                        int ax = x + dx;
+                        if (ax < 0 || ax >= GRID_W) continue;
+                        sumErr += Math.abs(currGrid[y * GRID_W + x] - anchorGrid[ay * GRID_W + ax]);
+                        count++;
+                    }
+                }
+                if (count > 32) {
+                    float sad = (float) sumErr / count;
+                    if (sad < bestSad) {
+                        bestSad = sad;
+                        bestDx = dx;
+                        bestDy = dy;
+                    }
+                }
+            }
+        }
+
+        float absShift = Math.abs(bestDx) / (float) GRID_W;
+        float dyNorm = bestDy / (float) GRID_H;
+        float overlapRatio = Math.max(0f, Math.min(1f, 1.0f - absShift));
+
+        if (panDirection == 0 && Math.abs(bestDx) >= 4) {
+            panDirection = bestDx >= 0 ? 1 : -1;
+        }
+
+        boolean cooldownOk = (System.currentTimeMillis() - lastCaptureMs) >= 260L;
+        boolean triggerCapture = cooldownOk && overlapRatio <= 0.70f;
+
+        Guidance guidance;
+        if (triggerCapture) {
+            guidance = Guidance.AUTO_CAPTURED;
+        } else if (Math.abs(dyNorm) > 0.065f) {
+            guidance = dyNorm < 0 ? Guidance.TILT_DOWN : Guidance.TILT_UP;
+        } else if (overlapRatio < 0.45f) {
+            guidance = Guidance.SLOW_DOWN;
+        } else {
+            guidance = (panDirection < 0) ? Guidance.PAN_LEFT : Guidance.PAN_RIGHT;
+        }
+
+        float signedDx = (panDirection < 0) ? -absShift : absShift;
+        return new AlignmentResult(signedDx, dyNorm, overlapRatio, guidance, triggerCapture);
+    }
+
+    /**
+     * Step 2: Convert ImageProxy (YUV_420_888) directly to upright lossless ARGB Bitmap.
+     */
+    public Bitmap imageProxyToBitmap(@NonNull ImageProxy image, int targetHeight) {
+        return imageProxyToBitmap(image, false, targetHeight);
+    }
+
+    public Bitmap imageProxyToBitmap(@NonNull ImageProxy image, boolean isFrontFacing, int targetHeight) {
+        Bitmap raw = yuv420888ToArgbBitmap(image);
+        if (raw == null) return null;
+
+        int rot = image.getImageInfo().getRotationDegrees();
+        boolean sideways = (rot == 90 || rot == 270);
+        int uprightH = Math.max(1, sideways ? raw.getWidth() : raw.getHeight());
+        float scale = Math.min(1.0f, targetHeight / (float) uprightH);
+        if (rot == 0 && !isFrontFacing && scale >= 0.98f) {
+            return raw;
+        }
+        Matrix m = new Matrix();
+        if (rot != 0) m.postRotate(rot);
+        if (isFrontFacing) m.postScale(-1f, 1f);
+        if (scale < 0.98f) m.postScale(scale, scale);
+        Bitmap out = Bitmap.createBitmap(raw, 0, 0, raw.getWidth(), raw.getHeight(), m, true);
+        if (out != raw) raw.recycle();
+        return out;
+    }
+
+    /**
+     * Step 3: Stitch Aligned Slices with 2-Stage Seam Refinement, Narrow Feather Blend & Unsharp Pass.
+     */
+    public Bitmap stitchSlices(@NonNull List<Slice> rawSlices) {
+        if (rawSlices.isEmpty()) return null;
+        List<Slice> ordered = new ArrayList<>(rawSlices);
+        if (panDirection < 0) {
+            Collections.reverse(ordered);
+        }
+        if (ordered.size() == 1) {
+            return sharpenBitmap(ordered.get(0).bitmap.copy(Bitmap.Config.ARGB_8888, true), 0.28f);
+        }
+
+        int sliceW = Math.max(64, ordered.get(0).bitmap.getWidth());
+        int sliceH = Math.max(64, ordered.get(0).bitmap.getHeight());
+        float[] xPos = new float[ordered.size()];
+        float[] yPos = new float[ordered.size()];
+        for (int i = 1; i < ordered.size(); i++) {
+            float stepNorm = Math.max(0.16f, Math.min(0.52f, Math.abs(ordered.get(i).stepDxNorm)));
+            int roughStepPx = Math.round(stepNorm * sliceW);
+            int[] refined = refineSeamOffsetPx(ordered.get(i - 1).bitmap, ordered.get(i).bitmap, roughStepPx);
+            float stepX = Math.max(sliceW * 0.14f, Math.min(sliceW * 0.58f, refined[0]));
+            xPos[i] = xPos[i - 1] + stepX;
+            float dyHint = -ordered.get(i).stepDyNorm * sliceH * 0.45f;
+            float relY = (refined[1] != 0) ? refined[1] : dyHint;
+            yPos[i] = Math.max(-sliceH * 0.14f, Math.min(sliceH * 0.14f, yPos[i - 1] + relY));
+        }
+
+        int totalW = Math.min(5120, Math.max(sliceW, Math.round(xPos[ordered.size() - 1] + sliceW)));
+        Bitmap result = Bitmap.createBitmap(totalW, sliceH, Bitmap.Config.ARGB_8888);
+        Canvas canvas = new Canvas(result);
+        canvas.drawColor(Color.BLACK);
+
+        Paint maskPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        maskPaint.setXfermode(new PorterDuffXfermode(PorterDuff.Mode.DST_IN));
+        Paint clearPaint = new Paint();
+        clearPaint.setXfermode(new PorterDuffXfermode(PorterDuff.Mode.CLEAR));
+        Paint slicePaint = new Paint(Paint.FILTER_BITMAP_FLAG);
+
+        for (int i = 0; i < ordered.size(); i++) {
+            Bitmap bmp = ordered.get(i).bitmap;
+            float drawX = xPos[i];
+            float drawY = yPos[i];
+            if (i == 0) {
+                canvas.drawBitmap(bmp, drawX, drawY, slicePaint);
+            } else {
+                float overlapPx = Math.max(28f, Math.min(bmp.getWidth() * 0.80f,
+                        (xPos[i - 1] + ordered.get(i - 1).bitmap.getWidth()) - drawX));
+                float seamCenter = overlapPx * 0.50f;
+                float featherHalf = Math.min(overlapPx * 0.42f, Math.max(14f, Math.min(32f, overlapPx * 0.16f)));
+                float gradStart = Math.max(0f, seamCenter - featherHalf);
+                float gradEnd = Math.min(overlapPx, seamCenter + featherHalf);
+
+                Bitmap feather = Bitmap.createBitmap(bmp.getWidth(), bmp.getHeight(), Bitmap.Config.ARGB_8888);
+                Canvas fCanvas = new Canvas(feather);
+                fCanvas.drawBitmap(bmp, 0f, 0f, slicePaint);
+
+                if (gradStart > 0.5f) {
+                    fCanvas.drawRect(0f, 0f, gradStart, bmp.getHeight(), clearPaint);
+                }
+                maskPaint.setShader(new LinearGradient(
+                        gradStart, 0f, gradEnd, 0f,
+                        new int[]{Color.TRANSPARENT, Color.BLACK},
+                        null, Shader.TileMode.CLAMP
+                ));
+                fCanvas.drawRect(gradStart, 0f, gradEnd, bmp.getHeight(), maskPaint);
+                canvas.drawBitmap(feather, drawX, drawY, slicePaint);
+                feather.recycle();
+            }
+        }
+
+        int validTop = 0;
+        int validBottom = sliceH;
+        for (int i = 0; i < ordered.size(); i++) {
+            int top = (int) Math.ceil(yPos[i]);
+            int bot = (int) Math.floor(yPos[i] + ordered.get(i).bitmap.getHeight());
+            if (top > validTop) validTop = top;
+            if (bot < validBottom) validBottom = bot;
+        }
+        int topCrop = Math.max(0, Math.min(sliceH / 3, validTop));
+        int bottomCrop = Math.max(Math.min(sliceH, topCrop + 64), Math.min(sliceH, validBottom));
+        int cropH = Math.max(64, bottomCrop - topCrop);
+        if (topCrop > 0 || cropH < sliceH) {
+            Bitmap cropped = Bitmap.createBitmap(result, 0, topCrop, result.getWidth(), cropH);
+            if (cropped != result && !result.isRecycled()) result.recycle();
+            result = cropped;
+        }
+        return sharpenBitmap(result, 0.28f);
+    }
+
+    private int[] refineSeamOffsetPx(Bitmap prevBmp, Bitmap currBmp, int roughStepPx) {
+        int w = Math.min(prevBmp.getWidth(), currBmp.getWidth());
+        int h = Math.min(prevBmp.getHeight(), currBmp.getHeight());
+        if (w < 64 || h < 64) return new int[]{roughStepPx, 0};
+
+        int bandW = Math.max(28, Math.min(84, w / 3));
+        int bandH = Math.max(48, Math.round(h * 0.60f));
+        int yStart = (h - bandH) / 2;
+        int currStripX = Math.min(28, Math.max(8, w - bandW - 1));
+        int rowStep = Math.max(2, bandH / 22);
+        int[] prevRow = new int[w];
+        int[] currRow = new int[bandW];
+
+        int bestStep = roughStepPx;
+        int bestDy = 0;
+        long bestScore = Long.MAX_VALUE;
+
+        for (int dy = -12; dy <= 12; dy += 3) {
+            for (int dStep = -28; dStep <= 28; dStep += 3) {
+                int cand = roughStepPx + dStep;
+                long score = evalOffset(prevBmp, currBmp, prevRow, currRow, w, h, bandW, bandH, yStart, currStripX, rowStep, cand, dy, 4);
+                if (score < bestScore) {
+                    bestScore = score;
+                    bestStep = cand;
+                    bestDy = dy;
+                }
+            }
+        }
+        int coarseStep = bestStep;
+        int coarseDy = bestDy;
+        for (int dy = coarseDy - 3; dy <= coarseDy + 3; dy++) {
+            for (int dStep = -4; dStep <= 4; dStep++) {
+                int cand = coarseStep + dStep;
+                long score = evalOffset(prevBmp, currBmp, prevRow, currRow, w, h, bandW, bandH, yStart, currStripX, rowStep, cand, dy, 2);
+                if (score < bestScore) {
+                    bestScore = score;
+                    bestStep = cand;
+                    bestDy = dy;
+                }
+            }
+        }
+        return new int[]{bestStep, bestDy};
+    }
+
+    private long evalOffset(Bitmap prevBmp, Bitmap currBmp, int[] prevRow, int[] currRow,
+                            int w, int h, int bandW, int bandH, int yStart, int currStripX,
+                            int rowStep, int candStep, int dy, int xStride) {
+        int prevMatchX = candStep + currStripX;
+        if (prevMatchX < 0 || prevMatchX >= w - bandW) return Long.MAX_VALUE;
+        long err = 0;
+        int count = 0;
+        for (int ry = yStart; ry < yStart + bandH; ry += rowStep) {
+            int py = Math.max(0, Math.min(h - 1, ry + dy));
+            prevBmp.getPixels(prevRow, 0, w, 0, py, w, 1);
+            currBmp.getPixels(currRow, 0, bandW, currStripX, ry, bandW, 1);
+            for (int rx = 0; rx < bandW; rx += xStride) {
+                int c1 = prevRow[prevMatchX + rx];
+                int c2 = currRow[rx];
+                int l1 = (((c1 >>> 16) & 0xFF) * 3 + ((c1 >>> 8) & 0xFF) * 6 + (c1 & 0xFF)) / 10;
+                int l2 = (((c2 >>> 16) & 0xFF) * 3 + ((c2 >>> 8) & 0xFF) * 6 + (c2 & 0xFF)) / 10;
+                err += Math.abs(l1 - l2);
+                count++;
+            }
+        }
+        return (count > 0) ? (err / count) : Long.MAX_VALUE;
+    }
+
+    private Bitmap sharpenBitmap(Bitmap src, float amount) {
+        int w = src.getWidth();
+        int h = src.getHeight();
+        if (w < 8 || h < 8 || amount <= 0.01f) return src;
+        int[] px = new int[w * h];
+        int[] out = new int[w * h];
+        src.getPixels(px, 0, w, 0, 0, w, h);
+        for (int x = 0; x < w; x++) {
+            out[x] = px[x];
+            out[(h - 1) * w + x] = px[(h - 1) * w + x];
+        }
+        for (int y = 1; y < h - 1; y++) {
+            int row = y * w;
+            int rowUp = (y - 1) * w;
+            int rowDn = (y + 1) * w;
+            out[row] = px[row];
+            out[row + w - 1] = px[row + w - 1];
+            for (int x = 1; x < w - 1; x++) {
+                int c = px[row + x];
+                int u = px[rowUp + x];
+                int d = px[rowDn + x];
+                int l = px[row + x - 1];
+                int r = px[row + x + 1];
+                int cr = (c >>> 16) & 0xFF;
+                int cg = (c >>> 8) & 0xFF;
+                int cb = c & 0xFF;
+                int br = (((u >>> 16) & 0xFF) + ((d >>> 16) & 0xFF) + ((l >>> 16) & 0xFF) + ((r >>> 16) & 0xFF)) >> 2;
+                int bg = (((u >>> 8) & 0xFF) + ((d >>> 8) & 0xFF) + ((l >>> 8) & 0xFF) + ((r >>> 8) & 0xFF)) >> 2;
+                int bb = ((u & 0xFF) + (d & 0xFF) + (l & 0xFF) + (r & 0xFF)) >> 2;
+                int nr = Math.max(0, Math.min(255, Math.round(cr + (cr - br) * amount)));
+                int ng = Math.max(0, Math.min(255, Math.round(cg + (cg - bg) * amount)));
+                int nb = Math.max(0, Math.min(255, Math.round(cb + (cb - bb) * amount)));
+                out[row + x] = (0xFF << 24) | (nr << 16) | (ng << 8) | nb;
+            }
+        }
+        Bitmap res = Bitmap.createBitmap(out, w, h, Bitmap.Config.ARGB_8888);
+        if (!src.isRecycled()) src.recycle();
+        return res;
+    }
+
+    private Bitmap yuv420888ToArgbBitmap(@NonNull ImageProxy image) {
+        int width = image.getWidth();
+        int height = image.getHeight();
+        if (width <= 0 || height <= 0 || image.getPlanes().length < 3) return null;
+        ImageProxy.PlaneProxy yPlane = image.getPlanes()[0];
+        ImageProxy.PlaneProxy uPlane = image.getPlanes()[1];
+        ImageProxy.PlaneProxy vPlane = image.getPlanes()[2];
+        ByteBuffer yBuf = yPlane.getBuffer().duplicate(); yBuf.rewind();
+        ByteBuffer uBuf = uPlane.getBuffer().duplicate(); uBuf.rewind();
+        ByteBuffer vBuf = vPlane.getBuffer().duplicate(); vBuf.rewind();
+
+        int yRowStride = yPlane.getRowStride();
+        int yPixelStride = yPlane.getPixelStride();
+        int uRowStride = uPlane.getRowStride();
+        int uPixelStride = uPlane.getPixelStride();
+        int vRowStride = vPlane.getRowStride();
+        int vPixelStride = vPlane.getPixelStride();
+        int yLimit = yBuf.limit();
+        int uLimit = uBuf.limit();
+        int vLimit = vBuf.limit();
+
+        int[] argb = new int[width * height];
+        for (int row = 0; row < height; row++) {
+            int yRowOff = row * yRowStride;
+            int uvRow = row >>> 1;
+            int uRowOff = uvRow * uRowStride;
+            int vRowOff = uvRow * vRowStride;
+            int outRow = row * width;
+            for (int col = 0; col < width; col++) {
+                int yIdx = yRowOff + col * yPixelStride;
+                int uvCol = col >>> 1;
+                int uIdx = uRowOff + uvCol * uPixelStride;
+                int vIdx = vRowOff + uvCol * vPixelStride;
+
+                int yVal = (yIdx >= 0 && yIdx < yLimit) ? (yBuf.get(yIdx) & 0xFF) : 0;
+                int uVal = ((uIdx >= 0 && uIdx < uLimit) ? (uBuf.get(uIdx) & 0xFF) : 128) - 128;
+                int vVal = ((vIdx >= 0 && vIdx < vLimit) ? (vBuf.get(vIdx) & 0xFF) : 128) - 128;
+
+                int yFixed = 1192 * Math.max(0, yVal - 16);
+                int r = yFixed + 1634 * vVal;
+                int g = yFixed - 833 * vVal - 400 * uVal;
+                int b = yFixed + 2066 * uVal;
+
+                r = (r < 0) ? 0 : (r > 262143 ? 255 : (r >> 10));
+                g = (g < 0) ? 0 : (g > 262143 ? 255 : (g >> 10));
+                b = (b < 0) ? 0 : (b > 262143 ? 255 : (b >> 10));
+
+                argb[outRow + col] = (0xFF << 24) | (r << 16) | (g << 8) | b;
+            }
+        }
+        return Bitmap.createBitmap(argb, width, height, Bitmap.Config.ARGB_8888);
+    }
+
+    private void extractLumaGrid(@NonNull ImageProxy imageProxy, boolean isFrontFacing) {
+        if (imageProxy.getPlanes().length == 0) return;
+        ImageProxy.PlaneProxy yPlane = imageProxy.getPlanes()[0];
+        ByteBuffer yBuf = yPlane.getBuffer();
+        int srcW = Math.max(1, imageProxy.getWidth());
+        int srcH = Math.max(1, imageProxy.getHeight());
+        int rowStride = yPlane.getRowStride();
+        int pixelStride = yPlane.getPixelStride();
+        int limit = yBuf.limit();
+        int rot = imageProxy.getImageInfo().getRotationDegrees();
+
+        for (int gy = 0; gy < GRID_H; gy++) {
+            float ny = (gy + 0.5f) / (float) GRID_H;
+            for (int gx = 0; gx < GRID_W; gx++) {
+                float nxRaw = (gx + 0.5f) / (float) GRID_W;
+                float nx = isFrontFacing ? (1.0f - nxRaw) : nxRaw;
+                int sx, sy;
+                if (rot == 90) {
+                    sx = Math.max(0, Math.min(srcW - 1, Math.round(ny * (srcW - 1))));
+                    sy = Math.max(0, Math.min(srcH - 1, Math.round((1.0f - nx) * (srcH - 1))));
+                } else if (rot == 180) {
+                    sx = Math.max(0, Math.min(srcW - 1, Math.round((1.0f - nx) * (srcW - 1))));
+                    sy = Math.max(0, Math.min(srcH - 1, Math.round((1.0f - ny) * (srcH - 1))));
+                } else if (rot == 270) {
+                    sx = Math.max(0, Math.min(srcW - 1, Math.round((1.0f - ny) * (srcW - 1))));
+                    sy = Math.max(0, Math.min(srcH - 1, Math.round(nx * (srcH - 1))));
+                } else {
+                    sx = Math.max(0, Math.min(srcW - 1, Math.round(nx * (srcW - 1))));
+                    sy = Math.max(0, Math.min(srcH - 1, Math.round(ny * (srcH - 1))));
+                }
+                int idx = sy * rowStride + sx * pixelStride;
+                currGrid[gy * GRID_W + gx] = (idx >= 0 && idx < limit) ? (yBuf.get(idx) & 0xFF) : 128;
+            }
+        }
+    }
+}

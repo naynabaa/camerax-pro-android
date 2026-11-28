@@ -1,11 +1,10 @@
-# CameraX Pro & AR Filter Engine for Android
+# Lumevra — Pro Offline Camera & Creative Studio for Android
 
-A complete native Android camera application built with Jetpack CameraX 1.3.0, GPUImage OpenGL ES filters, and Google MediaPipe Face Mesh AR.
+A native Android camera application featuring an offline multi-pass OpenGL ES GPU photo engine (Filters, Optical Effects, Fine Art, Studio Toon), Pro Manual controls, and MediaPipe AR Lenses.
 
 ## Features Included
-- **Jetpack CameraX**: ImageCapture and VideoCapture with Start, Pause, Resume, and Stop.
-- **Real-Time GPU Shaders**: GPUImage filter presets (Cinematic, Vintage, B&W, HDR, Cyberpunk) and live exposure compensation.
-- **MediaPipe AR Lenses**: 468 3D landmark tracking with low-latency AR Visors and Face Meshes.
+- **Offline GPU Photo Engine**: Multi-pass OpenGL ES Filmic LUTs, Pyramid Bloom Halation/Anamorphic Flare, 37-Tap Disc Bokeh, Anisotropic Brushstroke Fine Art, and Coherent FDoG Studio Toon.
+- **MediaPipe AR Lenses**: 468-point Face Mesh, Hand AR, Body Pose Segmentation, and World AR overlays.
 - **MediaStore Scoped Storage**: Automatic saving to device `Pictures/` and `Movies/` galleries.
 - **Pro Controls**: Tap-to-focus metering, pinch-to-zoom, flash modes, countdown timer, and burst mode.
 

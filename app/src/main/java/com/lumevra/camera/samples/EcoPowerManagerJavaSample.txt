@@ -1,0 +1,168 @@
+package com.lumevra.camera.power;
+
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
+import android.os.BatteryManager;
+import android.os.PowerManager;
+import android.os.SystemClock;
+import android.util.Size;
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+
+/**
+ * Java Reference: Eco Mode Power Manager using BatteryManager + PowerManager to dynamically
+ * scale CameraX ImageAnalysis frame rate and disable resource-heavy AR features.
+ */
+public class EcoPowerManager {
+
+    public enum EcoTier {
+        NORMAL, ECO_SAVER, ULTRA_ECO
+    }
+
+    public static class EcoPolicy {
+        public final EcoTier tier;
+        public final int batteryPercent;
+        public final boolean isCharging;
+        public final int targetAnalysisFps;
+        public final long minAnalysisIntervalMs;
+        public final boolean disableHeavyAr;
+        public final boolean disableMultiCamPip;
+        public final Size targetAnalysisResolution;
+
+        public EcoPolicy(EcoTier tier, int batteryPercent, boolean isCharging,
+                         int targetAnalysisFps, long minAnalysisIntervalMs,
+                         boolean disableHeavyAr, boolean disableMultiCamPip,
+                         Size targetAnalysisResolution) {
+            this.tier = tier;
+            this.batteryPercent = batteryPercent;
+            this.isCharging = isCharging;
+            this.targetAnalysisFps = targetAnalysisFps;
+            this.minAnalysisIntervalMs = minAnalysisIntervalMs;
+            this.disableHeavyAr = disableHeavyAr;
+            this.disableMultiCamPip = disableMultiCamPip;
+            this.targetAnalysisResolution = targetAnalysisResolution;
+        }
+    }
+
+    public interface Listener {
+        void onPolicyChanged(@NonNull EcoPolicy policy);
+    }
+
+    private static final int ULTRA_ECO_PCT = 12;
+    private static final int ECO_ENTER_PCT = 25;
+    private static final int ECO_EXIT_PCT = 30;
+
+    private final Context context;
+    private final Listener listener;
+    private volatile EcoPolicy currentPolicy = new EcoPolicy(
+            EcoTier.NORMAL, 100, false, 30, 0L, false, false, new Size(640, 480)
+    );
+    private volatile long lastAnalyzedMs = 0L;
+    private boolean isRegistered = false;
+
+    private final BroadcastReceiver receiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context ctx, Intent intent) {
+            evaluateFromIntent(intent);
+        }
+    };
+
+    public EcoPowerManager(@NonNull Context context, @NonNull Listener listener) {
+        this.context = context.getApplicationContext();
+        this.listener = listener;
+    }
+
+    public void register() {
+        if (!isRegistered) {
+            IntentFilter filter = new IntentFilter();
+            filter.addAction(Intent.ACTION_BATTERY_CHANGED);
+            filter.addAction(PowerManager.ACTION_POWER_SAVE_MODE_CHANGED);
+            Intent sticky = context.registerReceiver(receiver, filter);
+            evaluateFromIntent(sticky);
+            isRegistered = true;
+        }
+    }
+
+    public void unregister() {
+        if (isRegistered) {
+            try {
+                context.unregisterReceiver(receiver);
+            } catch (IllegalArgumentException ignored) {
+            }
+            isRegistered = false;
+        }
+    }
+
+    @NonNull
+    public EcoPolicy getCurrentPolicy() {
+        return currentPolicy;
+    }
+
+    /**
+     * Frame-rate throttle gate for CameraX ImageAnalysis.Analyzer:
+     * 30 FPS (0ms) -> 10 FPS (100ms in ECO) -> 4 FPS (250ms in ULTRA ECO).
+     */
+    public boolean shouldProcessAnalysisFrame() {
+        long minInterval = currentPolicy.minAnalysisIntervalMs;
+        if (minInterval <= 0L) return true;
+        long now = SystemClock.elapsedRealtime();
+        if ((now - lastAnalyzedMs) >= minInterval) {
+            lastAnalyzedMs = now;
+            return true;
+        }
+        return false;
+    }
+
+    private void evaluateFromIntent(@Nullable Intent intent) {
+        BatteryManager bm = (BatteryManager) context.getSystemService(Context.BATTERY_SERVICE);
+        PowerManager pm = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
+
+        int pct = 100;
+        if (intent != null && intent.hasExtra(BatteryManager.EXTRA_LEVEL)) {
+            int level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1);
+            int scale = Math.max(1, intent.getIntExtra(BatteryManager.EXTRA_SCALE, 100));
+            if (level >= 0) pct = Math.max(0, Math.min(100, Math.round((level * 100f) / scale)));
+        } else if (bm != null) {
+            int cap = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY);
+            if (cap >= 0 && cap <= 100) pct = cap;
+        }
+
+        int status = (intent != null) ? intent.getIntExtra(BatteryManager.EXTRA_STATUS, -1) : -1;
+        int plugged = (intent != null) ? intent.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) : 0;
+        boolean charging = (status == BatteryManager.BATTERY_STATUS_CHARGING)
+                || (status == BatteryManager.BATTERY_STATUS_FULL)
+                || (plugged != 0);
+        boolean powerSave = (pm != null && pm.isPowerSaveMode());
+
+        EcoTier prev = currentPolicy.tier;
+        EcoTier next;
+        if (charging) {
+            next = powerSave ? EcoTier.ECO_SAVER : EcoTier.NORMAL;
+        } else if (pct <= ULTRA_ECO_PCT) {
+            next = EcoTier.ULTRA_ECO;
+        } else if (pct <= ECO_ENTER_PCT || powerSave) {
+            next = EcoTier.ECO_SAVER;
+        } else if (prev != EcoTier.NORMAL && pct < ECO_EXIT_PCT) {
+            next = prev;
+        } else {
+            next = EcoTier.NORMAL;
+        }
+
+        EcoPolicy nextPolicy;
+        if (next == EcoTier.ULTRA_ECO) {
+            nextPolicy = new EcoPolicy(EcoTier.ULTRA_ECO, pct, charging, 4, 250L, true, true, new Size(320, 240));
+        } else if (next == EcoTier.ECO_SAVER) {
+            nextPolicy = new EcoPolicy(EcoTier.ECO_SAVER, pct, charging, 10, 100L, true, true, new Size(480, 360));
+        } else {
+            nextPolicy = new EcoPolicy(EcoTier.NORMAL, pct, charging, 30, 0L, false, false, new Size(640, 480));
+        }
+
+        boolean changed = (nextPolicy.tier != currentPolicy.tier) || (nextPolicy.batteryPercent != currentPolicy.batteryPercent);
+        currentPolicy = nextPolicy;
+        if (changed) {
+            listener.onPolicyChanged(nextPolicy);
+        }
+    }
+}

@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Outer lens bezel ring -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="3.8"
+        android:pathData="M54,25.5 A28.5,28.5 0,1 1,53.99 25.5 Z" />
+    <!-- 6-Blade iris aperture lines -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="2.0"
+        android:strokeLineCap="round"
+        android:pathData="M54,30 L61,46 M74,42 L61,54 M74,66 L56,62 M54,78 L47,62 M34,66 L47,54 M34,42 L52,46" />
+    <!-- Inner aperture ring -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="2.2"
+        android:pathData="M54,40.8 A13.2,13.2 0,1 1,53.99 40.8 Z" />
+    <!-- 4-Point diamond prism star -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M54,44.5 C54.7,50.2 57.8,53.3 63.5,54 C57.8,54.7 54.7,57.8 54,63.5 C53.3,57.8 50.2,54.7 44.5,54 C50.2,53.3 53.3,50.2 54,44.5 Z" />
+</vector>

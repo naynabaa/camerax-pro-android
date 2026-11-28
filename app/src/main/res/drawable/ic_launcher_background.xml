@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Deep obsidian-midnight optical studio backdrop -->
+    <path
+        android:fillColor="#FF090E1A"
+        android:pathData="M0,0h108v108h-108z" />
+    <!-- Subtle concentric optical depth halo -->
+    <path
+        android:fillColor="#FF0E172B"
+        android:pathData="M54,54m-48,0a48,48 0,1 1,96 0a48,48 0,1 1,-96 0" />
+    <path
+        android:fillColor="#FF14223D"
+        android:pathData="M54,54m-38,0a38,38 0,1 1,76 0a38,38 0,1 1,-76 0" />
+    <!-- Ambient cyan upper-left & warm gold lower-right optical studio accents -->
+    <path
+        android:fillColor="#2438BDF8"
+        android:pathData="M34,32m-24,0a24,24 0,1 1,48 0a24,24 0,1 1,-48 0" />
+    <path
+        android:fillColor="#1FF5C451"
+        android:pathData="M74,76m-24,0a24,24 0,1 1,48 0a24,24 0,1 1,-48 0" />
+    <!-- Precision optical degree ticks outside safe zone for parallax depth -->
+    <path
+        android:strokeColor="#33CBD5E1"
+        android:strokeWidth="1.1"
+        android:pathData="M54,10 L54,15 M54,93 L54,98 M10,54 L15,54 M93,54 L98,54 M23,23 L26.5,26.5 M81.5,81.5 L85,85 M85,23 L81.5,26.5 M26.5,81.5 L23,85" />
+</vector>
