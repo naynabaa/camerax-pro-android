@@ -1761,6 +1761,13 @@ class ARFaceOverlayView @JvmOverloads constructor(
         return null
     }
 
+    fun isPointOnArText(rawX: Float, rawY: Float): Boolean {
+        if (arTextItems.isEmpty() || width <= 0 || height <= 0 || visibility != View.VISIBLE) return false
+        val loc = IntArray(2)
+        getLocationOnScreen(loc)
+        return findHitArTextItem(rawX - loc[0], rawY - loc[1]) != null
+    }
+
     private val textScaleDetector = ScaleGestureDetector(
         context,
         object : ScaleGestureDetector.SimpleOnScaleGestureListener() {

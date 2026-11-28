@@ -9040,20 +9040,35 @@ class MainActivity : AppCompatActivity() {
 
     private fun navigateArFamilySwipe(step: Int) {
         val ov = viewBinding.arFaceOverlayView
+        val isPickerOpen = activeFloatingSettingId in setOf(
+            "face_lens", "hand_style", "body_style", "world_style", "beauty_style", "snap_artifact"
+        )
+
         when (activeArFamily) {
             "off" -> {
                 if (step > 0) navigateNextCameraMode() else navigatePreviousCameraMode()
                 return
             }
             "face" -> {
-                val faceIds = listOf("mesh_contour", "cyberpunk_visor", "golden_crown", "scifi_hud", "comic_frame") +
+                val faceIds = (listOf("mesh_contour", "cyberpunk_visor", "golden_crown", "scifi_hud", "comic_frame") +
                     getCategoryGlbs("face").map { it.id } +
-                    injectedCustomLenses.filter { it.category == "face" && !it.style.equals("glb_3d", ignoreCase = true) }.map { it.id }
-                val distinctIds = faceIds.distinct()
-                if (distinctIds.isEmpty()) return
-                val curIdx = distinctIds.indexOf(currentArLensName)
-                val nextIdx = if (curIdx < 0) 0 else (curIdx + step + distinctIds.size) % distinctIds.size
-                setArLens(distinctIds[nextIdx], showNotice = true, syncFloatingMenu = false)
+                    injectedCustomLenses.filter { it.category == "face" && !it.style.equals("glb_3d", ignoreCase = true) }.map { it.id }).distinct()
+                if (faceIds.isEmpty()) {
+                    selectArFamily("off")
+                    return
+                }
+                val curIdx = faceIds.indexOf(currentArLensName)
+                val rawNext = if (curIdx < 0) 0 else curIdx + step
+                if (!isPickerOpen && (rawNext < 0 || rawNext >= faceIds.size)) {
+                    selectArFamily("off")
+                    showHudNotice("AR OFF · Swipe again to switch Camera Mode")
+                    window.decorView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                    return
+                }
+                val nextIdx = ((rawNext % faceIds.size) + faceIds.size) % faceIds.size
+                val targetId = faceIds[nextIdx]
+                setArLens(targetId, showNotice = false, syncFloatingMenu = false)
+                showHudNotice("Face AR: ${targetId.replace('_', ' ').uppercase(Locale.ROOT)} (${nextIdx + 1}/${faceIds.size})")
                 refreshFloatingModeMenu()
             }
             "hand" -> {
@@ -9062,15 +9077,23 @@ class MainActivity : AppCompatActivity() {
                 val allIds = builtIn + glbs.map { it.id }
                 val currentKey = activeHandGlbId.ifEmpty { ov.handPresetId }
                 val curIdx = allIds.indexOf(currentKey)
-                val nextIdx = if (curIdx < 0) 0 else (curIdx + step + allIds.size) % allIds.size
+                val rawNext = if (curIdx < 0) 0 else curIdx + step
+                if (!isPickerOpen && (rawNext < 0 || rawNext >= allIds.size)) {
+                    selectArFamily("off")
+                    showHudNotice("AR OFF · Swipe again to switch Camera Mode")
+                    window.decorView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                    return
+                }
+                val nextIdx = ((rawNext % allIds.size) + allIds.size) % allIds.size
                 val targetId = allIds[nextIdx]
                 val glb = glbs.find { it.id == targetId }
                 if (glb != null) {
                     activateCategoryGlb("hand", glb)
+                    showHudNotice("Hand AR: ${glb.name} (${nextIdx + 1}/${allIds.size})")
                 } else {
                     activeHandGlbId = ""
                     ov.applyHandArPreset(targetId)
-                    showHudNotice("Hand AR: ${targetId.replace('_', ' ').uppercase(Locale.ROOT)}")
+                    showHudNotice("Hand AR: ${targetId.replace('_', ' ').uppercase(Locale.ROOT)} (${nextIdx + 1}/${allIds.size})")
                 }
                 refreshFloatingModeMenu()
             }
@@ -9080,15 +9103,23 @@ class MainActivity : AppCompatActivity() {
                 val allIds = builtIn + glbs.map { it.id }
                 val currentKey = activeBodyGlbId.ifEmpty { ov.bodyPresetId }
                 val curIdx = allIds.indexOf(currentKey)
-                val nextIdx = if (curIdx < 0) 0 else (curIdx + step + allIds.size) % allIds.size
+                val rawNext = if (curIdx < 0) 0 else curIdx + step
+                if (!isPickerOpen && (rawNext < 0 || rawNext >= allIds.size)) {
+                    selectArFamily("off")
+                    showHudNotice("AR OFF · Swipe again to switch Camera Mode")
+                    window.decorView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                    return
+                }
+                val nextIdx = ((rawNext % allIds.size) + allIds.size) % allIds.size
                 val targetId = allIds[nextIdx]
                 val glb = glbs.find { it.id == targetId }
                 if (glb != null) {
                     activateCategoryGlb("body", glb)
+                    showHudNotice("Body AR: ${glb.name} (${nextIdx + 1}/${allIds.size})")
                 } else {
                     activeBodyGlbId = ""
                     ov.applyBodyArPreset(targetId)
-                    showHudNotice("Body AR: ${targetId.replace('_', ' ').uppercase(Locale.ROOT)}")
+                    showHudNotice("Body AR: ${targetId.replace('_', ' ').uppercase(Locale.ROOT)} (${nextIdx + 1}/${allIds.size})")
                 }
                 refreshFloatingModeMenu()
             }
@@ -9098,16 +9129,24 @@ class MainActivity : AppCompatActivity() {
                 val allIds = builtIn + glbs.map { it.id }
                 val currentKey = activeWorldGlbId.ifEmpty { ov.worldPresetId }
                 val curIdx = allIds.indexOf(currentKey)
-                val nextIdx = if (curIdx < 0) 0 else (curIdx + step + allIds.size) % allIds.size
+                val rawNext = if (curIdx < 0) 0 else curIdx + step
+                if (!isPickerOpen && (rawNext < 0 || rawNext >= allIds.size)) {
+                    selectArFamily("off")
+                    showHudNotice("AR OFF · Swipe again to switch Camera Mode")
+                    window.decorView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                    return
+                }
+                val nextIdx = ((rawNext % allIds.size) + allIds.size) % allIds.size
                 val targetId = allIds[nextIdx]
                 val glb = glbs.find { it.id == targetId }
                 if (glb != null) {
                     activateCategoryGlb("world", glb)
+                    showHudNotice("World AR: ${glb.name} (${nextIdx + 1}/${allIds.size})")
                 } else {
                     activeWorldGlbId = ""
                     ov.applyWorldArPreset(targetId)
                     syncWorldArLifecycleAndPower()
-                    showHudNotice("World AR: ${targetId.replace('_', ' ').uppercase(Locale.ROOT)}")
+                    showHudNotice("World AR: ${targetId.replace('_', ' ').uppercase(Locale.ROOT)} (${nextIdx + 1}/${allIds.size})")
                 }
                 refreshFloatingModeMenu()
             }
@@ -9117,38 +9156,50 @@ class MainActivity : AppCompatActivity() {
                 val allIds = builtIn + glbs.map { it.id }
                 val currentKey = activeBeautyGlbId.ifEmpty { ov.faceBeautyPresetId }
                 val curIdx = allIds.indexOf(currentKey)
-                val nextIdx = if (curIdx < 0) 0 else (curIdx + step + allIds.size) % allIds.size
+                val rawNext = if (curIdx < 0) 0 else curIdx + step
+                if (!isPickerOpen && (rawNext < 0 || rawNext >= allIds.size)) {
+                    selectArFamily("off")
+                    showHudNotice("AR OFF · Swipe again to switch Camera Mode")
+                    window.decorView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                    return
+                }
+                val nextIdx = ((rawNext % allIds.size) + allIds.size) % allIds.size
                 val targetId = allIds[nextIdx]
                 val glb = glbs.find { it.id == targetId }
                 if (glb != null) {
                     activateCategoryGlb("beauty", glb)
+                    showHudNotice("Beauty AR: ${glb.name} (${nextIdx + 1}/${allIds.size})")
                 } else {
                     activeBeautyGlbId = ""
                     ov.currentLens = ARFaceOverlayView.ArLensMode.NONE
                     ov.applyFaceBeautyPreset(targetId)
-                    showHudNotice("Beauty AR: ${targetId.replace('_', ' ').uppercase(Locale.ROOT)}")
+                    showHudNotice("Beauty AR: ${targetId.replace('_', ' ').uppercase(Locale.ROOT)} (${nextIdx + 1}/${allIds.size})")
                 }
                 refreshFloatingModeMenu()
             }
             "snap_magic" -> {
                 val glbs = getCategoryGlbs("snap_magic")
-                if (glbs.isEmpty()) {
-                    if (step > 0) navigateNextCameraMode() else navigatePreviousCameraMode()
-                    return
-                }
                 val allIds = listOf("default_gauntlet") + glbs.map { it.id }
                 val currentKey = activeSnapGlbId.ifEmpty { "default_gauntlet" }
                 val curIdx = allIds.indexOf(currentKey)
-                val nextIdx = if (curIdx < 0) 0 else (curIdx + step + allIds.size) % allIds.size
+                val rawNext = if (curIdx < 0) 0 else curIdx + step
+                if (!isPickerOpen && (rawNext < 0 || rawNext >= allIds.size)) {
+                    selectArFamily("off")
+                    showHudNotice("AR OFF · Swipe again to switch Camera Mode")
+                    window.decorView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                    return
+                }
+                val nextIdx = ((rawNext % allIds.size) + allIds.size) % allIds.size
                 val targetId = allIds[nextIdx]
                 val glb = glbs.find { it.id == targetId }
                 if (glb != null) {
                     activateCategoryGlb("snap_magic", glb)
+                    showHudNotice("Snap Magic: ${glb.name} (${nextIdx + 1}/${allIds.size})")
                 } else {
                     activeSnapGlbId = ""
                     ov.snapGlbEnabled = false
                     ov.snapGauntletEnabled = true
-                    showHudNotice("Snap Magic: 6-Stone Gauntlet")
+                    showHudNotice("Snap Magic: 6-Stone Gauntlet (${nextIdx + 1}/${allIds.size})")
                 }
                 refreshFloatingModeMenu()
             }
@@ -9293,6 +9344,12 @@ class MainActivity : AppCompatActivity() {
                     isFloatingMenuOpen -> {
                         isFloatingMenuOpen = false
                         refreshFloatingModeMenu()
+                    }
+                    cameraMode == CameraMode.AR_LENS && activeArFamily != "off" -> {
+                        selectArFamily("off")
+                    }
+                    cameraMode == CameraMode.AR_LENS -> {
+                        setMode(CameraMode.PHOTO, slideDirection = -1)
                     }
                     else -> {
                         isEnabled = false
@@ -9750,7 +9807,7 @@ class MainActivity : AppCompatActivity() {
                 isMultiTouchGesture = ev.pointerCount > 1
 
                 downInModeCarousel = isPointInView(viewBinding.modeScrollView, ev.rawX, ev.rawY)
-                downInIgnoredControl =
+                downInIgnoredControl = !downInModeCarousel && (
                     isPointInView(viewBinding.pipCardContainer, ev.rawX, ev.rawY) ||
                     isPointInView(viewBinding.proModeBar, ev.rawX, ev.rawY) ||
                     isPointInView(viewBinding.bottomControls, ev.rawX, ev.rawY) ||
@@ -9763,6 +9820,7 @@ class MainActivity : AppCompatActivity() {
                         isPointInView(viewBinding.floatingModeMenu.layoutFloatingParamBar, ev.rawX, ev.rawY)) ||
                     (viewBinding.floatingModeMenu.layoutArSwipeStrip.visibility == View.VISIBLE &&
                         isPointInView(viewBinding.floatingModeMenu.layoutArSwipeStrip, ev.rawX, ev.rawY)) ||
+                    viewBinding.arFaceOverlayView.isPointOnArText(ev.rawX, ev.rawY) ||
                     (viewBinding.effectsStudioDrawer.root.visibility == View.VISIBLE && (
                         isPointInView(viewBinding.effectsStudioDrawer.layoutEffectsHeader, ev.rawX, ev.rawY) ||
                         isPointInView(viewBinding.effectsStudioDrawer.layoutEffectsSubItems, ev.rawX, ev.rawY)
@@ -9771,6 +9829,7 @@ class MainActivity : AppCompatActivity() {
                         isPointInView(viewBinding.scrollGuideChips, ev.rawX, ev.rawY) ||
                         isPointInView(viewBinding.btnCloseGuideBar, ev.rawX, ev.rawY)
                     ))
+                )
             }
             MotionEvent.ACTION_POINTER_DOWN -> {
                 isMultiTouchGesture = true
@@ -9869,6 +9928,17 @@ class MainActivity : AppCompatActivity() {
                         viewBinding.arCalibrationDrawer.visibility = View.GONE
                         viewBinding.arLensModeDock.btnArCalibrate.setBackgroundResource(R.drawable.bg_cinema_button_inactive)
                         viewBinding.arLensModeDock.btnArCalibrate.setTextColor(Color.parseColor("#38BDF8"))
+                        closedDrawer = true
+                    }
+                    if (activeFloatingSettingId != null &&
+                        viewBinding.floatingModeMenu.layoutFloatingParamBar.visibility == View.VISIBLE &&
+                        !isPointInView(viewBinding.floatingModeMenu.layoutFloatingParamBar, ev.rawX, ev.rawY) &&
+                        !isPointInView(viewBinding.floatingModeMenu.floatingRightMenuWrapper, ev.rawX, ev.rawY) &&
+                        !isPointInView(viewBinding.floatingModeMenu.layoutArSwipeStrip, ev.rawX, ev.rawY) &&
+                        !isPointInView(viewBinding.modeScrollView, ev.rawX, ev.rawY)
+                    ) {
+                        activeFloatingSettingId = null
+                        refreshFloatingModeMenu()
                         closedDrawer = true
                     }
                     if (closedDrawer) {
@@ -13592,7 +13662,9 @@ class MainActivity : AppCompatActivity() {
             lp.height = if (isLandscape) {
                 ((resources.displayMetrics.heightPixels * 0.44f).toInt()).coerceIn((130 * dp).toInt(), (215 * dp).toInt())
             } else {
-                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+                val maxPortraitH = ((resources.displayMetrics.heightPixels * 0.40f).toInt()).coerceIn((170 * dp).toInt(), (280 * dp).toInt())
+                val estItemsH = ((specs.size * 48 + 16) * dp).toInt()
+                if (estItemsH > maxPortraitH) maxPortraitH else android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
             }
             fm.scrollFloatingMenuItems.layoutParams = lp
         }
@@ -13711,6 +13783,7 @@ class MainActivity : AppCompatActivity() {
                 fm.tvFloatingParamValue.text = ""
                 fm.scrollFloatingParamOptions.visibility = View.VISIBLE
                 fm.containerFloatingParamOptions.removeAllViews()
+                var activeOptChip: TextView? = null
                 for ((optId, optLabel) in activeSpec.options) {
                     val isOptActive = (activeSpec.activeOptionId == optId)
                     val chip = TextView(this).apply {
@@ -13733,7 +13806,14 @@ class MainActivity : AppCompatActivity() {
                             activeSpec.onOptionSelect?.invoke(optId)
                         }
                     }
+                    if (isOptActive) activeOptChip = chip
                     fm.containerFloatingParamOptions.addView(chip)
+                }
+                activeOptChip?.let { targetChip ->
+                    fm.scrollFloatingParamOptions.post {
+                        val scrollTarget = (targetChip.left + targetChip.width / 2) - (fm.scrollFloatingParamOptions.width / 2)
+                        fm.scrollFloatingParamOptions.smoothScrollTo(scrollTarget.coerceAtLeast(0), 0)
+                    }
                 }
             }
         } else {

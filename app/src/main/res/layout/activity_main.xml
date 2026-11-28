@@ -497,6 +497,7 @@
         android:paddingTop="4dp"
         android:paddingBottom="4dp"
         android:background="#8C000000"
+        android:elevation="35dp"
         app:layout_constraintBottom_toTopOf="@id/bottomControls"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent">
